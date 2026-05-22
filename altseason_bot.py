@@ -1,9 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          ALTSEASON BOT 2026 — Telegram Signal Bot           ║
-║   Strategia AVANZATA: BTC Dom, ETH/BTC, TOTAL3,            ║
-║   RSI, MACD, Volume Anomaly, Fear & Greed Index            ║
-║   + Alert Prezzi, Portfolio, Riepilogo, No-Disturb         ║
+║   Con Portfolio Pre-Caricato e Guida Dettagliata           ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -64,7 +62,6 @@ ASSETS = {
     "NEAR": "near",
     "SONIC": "sonic-3",
 }
-MEME_COINS = ["PEPE", "DOGE", "SHIB", "BONK", "BOME"]
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.json")
 
@@ -104,6 +101,31 @@ def save_data(data):
         log.error(f"Errore salvataggio dati: {e}")
 
 bot_data = load_data()
+
+# PRE-CARICA IL PORTFOLIO AUTOMATICAMENTE
+if not bot_data.get("portfolio") or len(bot_data.get("portfolio", {})) == 0:
+    bot_data["portfolio"] = {
+        "XRP": {"qty": 25142, "buy_price": 1.36},
+        "SOL": {"qty": 201, "buy_price": 86.96},
+        "ETH": {"qty": 10.52, "buy_price": 2100},
+        "DOGE": {"qty": 31128, "buy_price": 0.11},
+        "BONK": {"qty": 150804881, "buy_price": 0.000022},
+        "HBAR": {"qty": 14686, "buy_price": 0.077},
+        "BNB": {"qty": 5.05, "buy_price": 655},
+        "ADA": {"qty": 4996, "buy_price": 0.25},
+        "ALGO": {"qty": 14606, "buy_price": 0.22},
+        "XLM": {"qty": 13136, "buy_price": 0.29},
+        "POL": {"qty": 24281, "buy_price": 0.22},
+        "TRX": {"qty": 5437, "buy_price": 0.26},
+        "GRT": {"qty": 43036, "buy_price": 0.12},
+        "SONIC": {"qty": 3939, "buy_price": 0.04},
+        "FET": {"qty": 3223, "buy_price": 0.55},
+        "BOME": {"qty": 244022, "buy_price": 0.0005},
+        "PEOPLE": {"qty": 7951, "buy_price": 0.006},
+        "NEAR": {"qty": 379.379, "buy_price": 2.8},
+    }
+    save_data(bot_data)
+    log.info("✅ Portfolio pre-caricato automaticamente")
 
 def get_global_data():
     if 'global' in _cache and time.time() - _cache['global']['ts'] < CACHE_TTL:
@@ -234,39 +256,29 @@ async def send_help(update):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 **/status** — Report completo del mercato
-📋 Analizza: BTC Dom, ETH/BTC, TOTAL3, RSI, MACD, Fear&Greed
-⏰ Quando: Ogni 2-3 ore per tenere il polso del mercato
-💡 Azione: Se MONITORA → tieni. Se AZIONE → ruota verso altcoin. Se USCITA → prendi profitti
+📋 Analizza: BTC Dom, ETH/BTC, TOTAL3, Fear&Greed
+⏰ Quando: Ogni 2-3 ore
+💡 Azione: Se MONITORA → tieni. Se AZIONE → ruota altcoin. Se USCITA → prendi profitti
 
 **/phase** — Quale fase del ciclo stai vivendo?
 📋 Ti dice: ACCUMULO → ALTSEASON → USCITA
-⏰ Quando: Mattina e sera
-💡 Azione: Adatta la strategia in base alla fase
+💡 Azione: Adatta strategia in base alla fase
 
-**/macro** — Dati macroeconomici
-📋 Mostra: BTC Dom, ETH/BTC, TOTAL3, Market Cap totale
-⏰ Quando: Dopo movimenti importanti
-💡 Azione: Se Dom scende → compra altcoin. Se sale → vai su BTC
+**/macro** — Dati macroeconomici crypto
+📋 Mostra: BTC Dom, ETH/BTC, TOTAL3, Market Cap
+💡 Azione: Dom ↓ → compra altcoin. Dom ↑ → vai su BTC
 
-**/feargreed** — Sentiment del mercato (0-100)
-📋 Misura: Paura vs avidità dei trader
-⏰ Quando: Prima di grandi decisioni
+**/feargreed** — Sentiment mercato (0-100)
+📋 Misura: Paura vs avidità trader
 💡 Azione: <25=compra, 25-50=accumula, 50-75=tieni, >75=vendi 25%
-
-**/rsimacd** — Indicatori tecnici BTC e ETH
-📋 Mostra: RSI (momentum) e MACD (trend)
-⏰ Quando: Per timing di ingresso/uscita
-💡 Azione: RSI<35=oversold(compra), RSI>70=overbought(vendi), MACD+ve=rialzo
 
 **/top** — Quali coin stanno salendo più?
 📋 Classifica: Asset per performance 24h
-⏰ Quando: Per capire dove va il capitale
-💡 Azione: Se top=meme → fine altseason. Se top=large cap → altseason solida
+💡 Azione: Se top=meme → fine altseason. Se top=large cap → solida
 
 **/price BTC** — Prezzo in tempo reale
 📋 Mostra: Prezzo, variazione 24h, market cap, volume
-⏰ Quando: Quando ricevi un alert di target raggiunto
-💡 Azione: Confronta con ingresso — decidi se vendere
+💡 Azione: Quando ricevi alert → controlla e decidi se vendere
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔔 *ALERT AUTOMATICI SU PREZZI*
@@ -274,11 +286,10 @@ async def send_help(update):
 
 **/alert XRP 3** — Avvisami quando XRP sale a $3
 ⏰ Timeline: Impostalo ORA prima che salga
-💡 Azione: Quando l'alert scatta → prendi il 25% della posizione
+💡 Azione: Quando scatta → prendi il 25% della posizione
 
 **/alert SOL 200 down** — Avvisami quando SOL SCENDE a $200
-⏰ Timeline: Per rientrare durante correzioni
-💡 Azione: Quando scatta → compra il 10% in più
+💡 Azione: Per rientrare durante correzioni
 
 **/alerts** — Vedi tutti i tuoi alert attivi
 **/delalert 1** — Cancella alert numero 1
@@ -287,16 +298,12 @@ async def send_help(update):
 💼 *TRACKING PORTFOLIO & P&L*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**/addcoin XRP 22571 1.36** — Registra posizione (qty, prezzo acquisto)
-⏰ Quando: Subito dopo aver comprato
-💡 Azione: Il bot calcola P&L automatico in tempo reale
-
 **/portfolio** — Vedi valore attuale di tutte le posizioni
-⏰ Quando: Ogni mattina per monitorare guadagni
+⏰ Quando: Ogni mattina
 💡 Azione: Se P&L > +100% → inizia a prendere profitto
 
-**/removecoin BTC** — Togli un asset dal tracking
-💡 Quando: L'hai venduto completamente
+**/addcoin XRP 22571 1.36** — Aggiungi posizione
+**/removecoin BTC** — Togli asset dal tracking
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌙 *IMPOSTAZIONI*
@@ -309,24 +316,23 @@ async def send_help(update):
 ⏰ *TIMELINE TIPICA ALTSEASON*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-*GIUGNO-LUGLIO*: BTC Dom scende 55-52%, ETH e SOL cominciano a salire
-→ Azione: Tieni tutto, non vendere ancora
+*GIUGNO-LUGLIO*: BTC Dom 55-52%, ETH e SOL cominciano a salire
+→ Azione: TIENI TUTTO, non vendere ancora
 
-*AGOSTO-SETTEMBRE*: BTC Dom sotto 52%, altcoin esplodono +300%
+*AGOSTO-SETTEMBRE*: BTC Dom sotto 52%, altcoin +300%
 → Azione: Prendi il 25% di profitto su ogni coin
 
 *OTTOBRE-NOVEMBRE*: Fear&Greed >80, XRP pump tardivo, DOGE/BONK +1000%
-→ Azione: ESCI dal 50-75% di tutto, sposta in stablecoin
+→ Azione: ESCI dal 50-75% di tutto, sposta in USDT
 
-*DICEMBRE*: Crollo -60/-80% dai top
-→ Azione: Chi è uscito adesso accumula BTC a prezzi stracciati
+*DICEMBRE*: Crollo -60/-80% dai massimi
+→ Azione: Chi è uscito adesso accumula BTC a prezzi bassi
 
 🚀 *QUICK START*
-1️⃣ /addcoin XRP 25142 1.36
-2️⃣ /setup
-3️⃣ /status (ogni 2-3 ore)
-4️⃣ /portfolio (ogni mattina)
-5️⃣ Quando ricevi alert → /price [COIN] → decidi se vendere
+1️⃣ /portfolio — vedi i tuoi asset già caricati
+2️⃣ /setup — imposta i 28 alert
+3️⃣ /status — controlla ogni 2-3 ore
+4️⃣ Quando ricevi alert → /price [COIN] → decidi
 
 Buona bull run! 🚀💰"""
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -558,7 +564,7 @@ async def cmd_quiet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_data["quiet_mode"] = not bot_data.get("quiet_mode", False)
     save_data(bot_data)
     if bot_data["quiet_mode"]:
-        msg = f"🌙 *No Disturb ATTIVO*\nNessuna notifica automatica dalle {QUIET_START}:00 alle {QUIET_END}:00\n\nUsa /quiet per disattivarlo."
+        msg = f"🌙 *No Disturb ATTIVO*\nNessuna notifica automatica dalle {QUIET_START}:00 alle {QUIET_END}:00"
     else:
         msg = "☀️ *No Disturb DISATTIVO*\nRiceverai tutte le notifiche normalmente."
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -594,16 +600,15 @@ async def cmd_setup_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_data["price_alerts"] = strategy_alerts
     save_data(bot_data)
     msg = (
-        "✅ *Alert strategia impostati!*\n\n"
-        "Hai ora *28 alert attivi* su:\n\n"
-        "📊 *XRP*: $3 → $5 → $8 → $12\n"
-        "☀️ *SOL*: $200 → $350 → $500 → $800\n"
-        "💎 *ETH*: $4k → $6k → $9k → $14k\n"
-        "🔶 *BNB*: $900 → $1.2k → $1.5k → $2k\n"
-        "🐕 *DOGE*: $0.30 → $0.60 → $1.00\n"
-        "🌐 *HBAR*: $0.20 → $0.40 → $0.70\n"
-        "🔵 *ADA*: $0.80 → $1.50 → $2.50\n\n"
-        "Quando una coin tocca il target ricevi subito la notifica! 🚀"
+        "✅ *28 Alert strategia impostati!*\n\n"
+        "📊 XRP: $3 → $5 → $8 → $12\n"
+        "☀️ SOL: $200 → $350 → $500 → $800\n"
+        "💎 ETH: $4k → $6k → $9k → $14k\n"
+        "🔶 BNB: $900 → $1.2k → $1.5k → $2k\n"
+        "🐕 DOGE: $0.30 → $0.60 → $1.00\n"
+        "🌐 HBAR: $0.20 → $0.40 → $0.70\n"
+        "🔵 ADA: $0.80 → $1.50 → $2.50\n\n"
+        "Pronto per la bull run! 🚀"
     )
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
@@ -623,27 +628,6 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "💰 Prezzo XRP": context.args = ["XRP"]; await cmd_price(update, context)
     elif text == "💰 Prezzo SOL": context.args = ["SOL"]; await cmd_price(update, context)
     elif text == "❓ Aiuto": await send_help(update)
-
-async def auto_monitor(app):
-    await asyncio.sleep(5)
-    while True:
-        try:
-            if is_quiet_time():
-                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-                continue
-            global_data = get_global_data()
-            prices = get_prices()
-            fg = get_fear_greed()
-            btc_dom = global_data["btc_dominance"]
-            eth_btc = prices["ETH"]["price"] / prices["BTC"]["price"] if prices["BTC"]["price"] else 0
-            total3_change = prices["ETH"]["change24"]*0.4 + prices["SOL"]["change24"]*0.2 + prices["ADA"]["change24"]*0.2 + prices["XRP"]["change24"]*0.2
-            phase = detect_phase(btc_dom, eth_btc, total3_change)
-            triggered = check_price_alerts(prices)
-            for alert_msg in triggered:
-                await app.bot.send_message(chat_id=CHAT_ID, text=alert_msg, parse_mode="Markdown")
-        except Exception as e:
-            log.error(f"Errore monitor: {e}")
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
 WEBAPP_HTML = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html'), 'r').read() if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html')) else "<h1>Altseason Bot</h1>"
 
@@ -699,14 +683,13 @@ async def main():
     log.info("🚀 Altseason Bot PRO avviato!")
     await app.bot.send_message(
         chat_id=CHAT_ID,
-        text="✅ *Altseason Bot PRO Online* 🚀\n\nNuove funzioni attive:\n🔔 Alert su prezzi specifici\n💼 Tracking portfolio con P&L\n🌙 Modalità No Disturb\n☀️ Riepilogo mattutino alle 8:00\n\nPremi ❓ Aiuto per vedere tutti i comandi!",
+        text="✅ *Altseason Bot PRO Online* 🚀\n\nPortfolio pre-caricato!\n\nPremi:\n💼 /portfolio — vedi i tuoi asset\n❓ /help — guida completa\n🎯 /setup — 28 alert automatici",
         parse_mode="Markdown"
     )
 
     async with app:
         await app.start()
         await app.updater.start_polling()
-        await auto_monitor(app)
 
 if __name__ == "__main__":
     asyncio.run(main())
