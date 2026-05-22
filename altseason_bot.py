@@ -23,6 +23,22 @@ ASSETS = {
     "XLM": "stellar", "POL": "matic-network", "TRX": "tron",
     "GRT": "the-graph", "NEAR": "near", "FET": "fetch-ai",
     "PEOPLE": "constitutiondao", "MANA": "decentraland", "SEI": "sei-network",
+    "PEPE": "pepe", "SHIB": "shiba-inu", "LUNA": "terra-luna-2",
+    "BOME": "book-of-meme", "SONIC": "sonic-3",
+}
+
+# Le tue quantità - solo coin sopra ~500€
+PORTFOLIO_QTY = {
+    "XRP": 25142,
+    "SOL": 201,
+    "ETH": 10.52,
+    "DOGE": 31128,
+    "BNB": 5.05,
+    "HBAR": 14686,
+    "BONK": 150804881,
+    "SEI": 13723,
+    "FET": 3223,
+    "LUNA": 9057,
 }
 
 DATA_FILE = "bot_data.json"
@@ -32,7 +48,8 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📊 Status"), KeyboardButton("💼 Portfolio")],
     [KeyboardButton("🎯 Fase"), KeyboardButton("😱 Fear & Greed")],
     [KeyboardButton("🏆 Top"), KeyboardButton("🔔 Alert")],
-    [KeyboardButton("⚙️ Setup Alert"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("🔄 Reset Portfolio"), KeyboardButton("⚙️ Setup Alert")],
+    [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -53,43 +70,17 @@ def save_data(d):
 
 DATA = load_data()
 
-if not DATA.get("portfolio"):
-    DATA["portfolio"] = {
-        "XRP": {"qty": 25142, "buy": 1.36},
-        "SOL": {"qty": 201, "buy": 86.96},
-        "ETH": {"qty": 10.52, "buy": 2100},
-        "DOGE": {"qty": 31128, "buy": 0.11},
-        "BONK": {"qty": 150804881, "buy": 0.000022},
-        "HBAR": {"qty": 14686, "buy": 0.077},
-        "BNB": {"qty": 5.05, "buy": 655},
-        "ADA": {"qty": 4996, "buy": 0.25},
-        "ALGO": {"qty": 14606, "buy": 0.22},
-        "XLM": {"qty": 13136, "buy": 0.29},
-        "POL": {"qty": 24281, "buy": 0.22},
-        "TRX": {"qty": 5437, "buy": 0.26},
-        "GRT": {"qty": 43036, "buy": 0.12},
-        "FET": {"qty": 3223, "buy": 0.55},
-        "PEOPLE": {"qty": 7951, "buy": 0.006},
-        "NEAR": {"qty": 379, "buy": 2.8},
-        "MANA": {"qty": 1186, "buy": 0.32},
-        "SEI": {"qty": 13723, "buy": 0.27},
-    }
-    save_data(DATA)
-
 def get_global():
     if 'g' in _cache and time.time() - _cache['g']['t'] < 180:
         return _cache['g']['d']
     try:
         r = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
         d = r.json()["data"]
-        result = {
-            "dom": d["market_cap_percentage"]["btc"],
-            "mcap": d["total_market_cap"]["usd"] / 1e12,
-        }
+        result = {"dom": d["market_cap_percentage"]["btc"], "mcap": d["total_market_cap"]["usd"] / 1e12}
         _cache['g'] = {'d': result, 't': time.time()}
         return result
     except:
-        return {"dom": 55, "mcap": 2.5}
+        return {"dom": 58, "mcap": 2.5}
 
 def get_prices():
     if 'p' in _cache and time.time() - _cache['p']['t'] < 180:
@@ -113,16 +104,35 @@ def get_fg():
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
         d = r.json()["data"][0]
-        v = int(d["value"])
-        result = {"v": v, "lbl": d["value_classification"]}
+        result = {"v": int(d["value"]), "lbl": d["value_classification"]}
         _cache['fg'] = {'d': result, 't': time.time()}
         return result
     except:
         return {"v": 50, "lbl": "Neutral"}
 
+def init_portfolio():
+    """Inizializza portfolio con prezzi attuali = P&L parte da 0%"""
+    try:
+        prices = get_prices()
+        DATA["portfolio"] = {}
+        for sym, qty in PORTFOLIO_QTY.items():
+            p = prices.get(sym, {}).get("price", 0)
+            if p > 0:
+                DATA["portfolio"][sym] = {"qty": qty, "buy": p}
+        save_data(DATA)
+        log.info(f"✅ Portfolio inizializzato: {len(DATA['portfolio'])} asset")
+        return True
+    except Exception as e:
+        log.error(f"Errore init: {e}")
+        return False
+
+# Auto-init portfolio se vuoto
+if not DATA.get("portfolio"):
+    init_portfolio()
+
 def phase(dom):
     if dom < 48:
-        return "🚨 USCITA", "Top ciclo vicino!"
+        return "🚨 USCITA", "Top ciclo vicino! Esci progressivamente."
     if dom < 52:
         return "⚡ AZIONE", "Altseason attiva — ruota verso altcoin"
     return "👀 MONITORA", "Fase accumulo — tieni le posizioni"
@@ -131,31 +141,30 @@ async def cmd_help(update, ctx):
     msg = """👋 *ALTSEASON BOT 2026*
 
 📊 *MONITORAGGIO*
-/status — Status completo
+/status — Status mercato
 /phase — Fase del ciclo
 /feargreed — Sentiment 0-100
-/top — Top performer 24h
+/top — Top 24h
 /price BTC — Prezzo asset
 
 💼 *PORTFOLIO*
-/portfolio — P&L in tempo reale
+/portfolio — P&L tempo reale
+/reset — Reset con prezzi attuali
 /addcoin XRP 1000 1.36 — Aggiungi
 /removecoin BTC — Rimuovi
 
 🔔 *ALERT*
-/alert XRP 3 — Avvisami sale a $3
-/alert SOL 200 down — Avvisami scende
+/alert XRP 3 — Avvisami a $3
 /alerts — Lista alert
-/delalert 1 — Cancella alert
 /setup — 25 alert strategia
 
-⏰ *TIMELINE*
+⏰ *TIMELINE ALTSEASON*
 GIU-LUG: BTC Dom 55-52% → TIENI
 AGO-SET: Dom <52% → Vendi 25%
 OTT-NOV: F&G >80 → ESCI 50-75%
 DIC: Crollo → Accumula BTC
 
-Buona bull run! 🚀"""
+🚀 Buona bull run!"""
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_start(update, ctx):
@@ -218,7 +227,7 @@ async def cmd_price(update, ctx):
 async def cmd_portfolio(update, ctx):
     pf = DATA.get("portfolio", {})
     if not pf:
-        await update.message.reply_text("Portfolio vuoto", reply_markup=KEYBOARD)
+        await update.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
     try:
         prices = get_prices()
@@ -236,16 +245,26 @@ async def cmd_portfolio(update, ctx):
             pnl = cur - inv
             pct = ((pr - buy) / buy * 100) if buy else 0
             a = "🟢" if pnl >= 0 else "🔴"
-            lines.append(f"{a} *{sym}*: `{pct:+.1f}%` `${pnl:+,.0f}`")
+            lines.append(f"{a} *{sym}*: `{pct:+.1f}%` (`${pnl:+,.0f}`)")
             ti += inv
             tc += cur
         tp = tc - ti
         tpct = ((tc - ti) / ti * 100) if ti else 0
         a = "🟢" if tp >= 0 else "🔴"
-        lines.append(f"\n{a} *TOT*: `{tpct:+.1f}%` (`${tp:+,.0f}`)")
+        lines.append(f"\n💰 Investito: `${ti:,.0f}`")
+        lines.append(f"💎 Attuale: `${tc:,.0f}`")
+        lines.append(f"{a} *P&L TOT*: `{tpct:+.1f}%` (`${tp:+,.0f}`)")
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
+async def cmd_reset(update, ctx):
+    """Reset portfolio con prezzi attuali (P&L parte da 0%)"""
+    if init_portfolio():
+        n = len(DATA["portfolio"])
+        await update.message.reply_text(f"✅ *Portfolio resettato!*\n\n{n} asset inizializzati con prezzi attuali. P&L parte da 0%.", parse_mode="Markdown", reply_markup=KEYBOARD)
+    else:
+        await update.message.reply_text("❌ Errore nel reset", reply_markup=KEYBOARD)
 
 async def cmd_addcoin(update, ctx):
     if len(ctx.args) < 3:
@@ -260,7 +279,7 @@ async def cmd_addcoin(update, ctx):
         buy = float(ctx.args[2].replace(",", ""))
         DATA["portfolio"][s] = {"qty": qty, "buy": buy}
         save_data(DATA)
-        await update.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.2f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
+        await update.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.4f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
         await update.message.reply_text("❌ Valori non validi", reply_markup=KEYBOARD)
 
@@ -304,7 +323,7 @@ async def cmd_alerts(update, ctx):
     lines = ["🔔 *Alert*\n"]
     for i, a in enumerate(al, 1):
         d = "↗️" if a["above"] else "↘️"
-        lines.append(f"{i}. *{a['sym']}* {d} `${a['price']:,.2f}`")
+        lines.append(f"{i}. *{a['sym']}* {d} `${a['price']:,.4f}`")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_delalert(update, ctx):
@@ -332,14 +351,14 @@ async def cmd_setup(update, ctx):
         "BNB": [900, 1200, 1500, 2000],
         "DOGE": [0.30, 0.60, 1.00],
         "HBAR": [0.20, 0.40, 0.70],
-        "ADA": [0.80, 1.50, 2.50],
+        "SEI": [0.80, 1.50, 3.00],
     }
     for sym, prices in targets.items():
         for p in prices:
             alerts.append({"sym": sym, "price": p, "above": True})
     DATA["alerts"] = alerts
     save_data(DATA)
-    await update.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP, SOL, ETH, BNB, DOGE, HBAR, ADA", parse_mode="Markdown", reply_markup=KEYBOARD)
+    await update.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP, SOL, ETH, BNB, DOGE, HBAR, SEI", parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def handle_text(update, ctx):
     t = update.message.text
@@ -349,6 +368,7 @@ async def handle_text(update, ctx):
     elif t == "😱 Fear & Greed": await cmd_feargreed(update, ctx)
     elif t == "🏆 Top": await cmd_top(update, ctx)
     elif t == "🔔 Alert": await cmd_alerts(update, ctx)
+    elif t == "🔄 Reset Portfolio": await cmd_reset(update, ctx)
     elif t == "⚙️ Setup Alert": await cmd_setup(update, ctx)
     elif t == "❓ Aiuto": await cmd_help(update, ctx)
 
@@ -383,6 +403,7 @@ async def main():
     app.add_handler(CommandHandler("top", cmd_top))
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+    app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("addcoin", cmd_addcoin))
     app.add_handler(CommandHandler("removecoin", cmd_removecoin))
     app.add_handler(CommandHandler("alert", cmd_alert))
@@ -395,7 +416,7 @@ async def main():
 
     log.info("Bot online")
     try:
-        await app.bot.send_message(chat_id=CHAT_ID, text="✅ Bot Online! Premi ❓ Aiuto", reply_markup=KEYBOARD)
+        await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Bot Online*\n\n💼 Portfolio caricato con prezzi attuali\n🔄 /reset per ricaricare\n❓ /help guida", parse_mode="Markdown")
     except:
         pass
 
