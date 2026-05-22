@@ -1,6 +1,9 @@
 services:
-  - type: worker
+  - type: web
     name: altseason-bot
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python altseason_bot.py
+    envVars:
+      - key: PORT
+        value: 8080

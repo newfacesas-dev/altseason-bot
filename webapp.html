@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Altseason Bot 2026</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+    --orange: #ffa657;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  .header { background: var(--card); border-bottom: 1px solid var(--border); padding: 16px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 100; }
+  .header-icon { font-size: 28px; }
+  .header-title { font-size: 18px; font-weight: 700; }
+  .header-sub { font-size: 12px; color: var(--muted); }
+  .refresh-btn { margin-left: auto; background: var(--blue); border: none; color: white; padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; }
+  .refresh-btn:active { opacity: 0.8; }
+
+  .tabs { display: flex; background: var(--card); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tab { padding: 12px 20px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  .content { padding: 16px; max-width: 600px; margin: 0 auto; }
+  .section { display: none; }
+  .section.active { display: block; }
+
+  .phase-card { border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; }
+  .phase-card.MONITORA { background: linear-gradient(135deg, #1c2a1c, #1a2f1a); border: 1px solid #3fb950; }
+  .phase-card.AZIONE   { background: linear-gradient(135deg, #1e1e0f, #2a2a10); border: 1px solid #d29922; }
+  .phase-card.USCITA   { background: linear-gradient(135deg, #2a1010, #2f1414); border: 1px solid #f85149; }
+  .phase-emoji { font-size: 40px; margin-bottom: 8px; }
+  .phase-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .phase-level { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+  .phase-level.MONITORA { background: rgba(63,185,80,0.2); color: var(--green); }
+  .phase-level.AZIONE   { background: rgba(210,153,34,0.2); color: var(--yellow); }
+  .phase-level.USCITA   { background: rgba(248,81,73,0.2); color: var(--red); }
+  .phase-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .metric-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .metric-value { font-size: 22px; font-weight: 700; }
+  .metric-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .prices-list { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+  .price-row { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .price-row:last-child { border-bottom: none; }
+  .price-sym { font-weight: 700; width: 50px; }
+  .price-val { flex: 1; font-size: 15px; }
+  .price-change { font-size: 13px; font-weight: 600; padding: 3px 8px; border-radius: 6px; }
+  .price-change.up { background: rgba(63,185,80,0.15); color: var(--green); }
+  .price-change.down { background: rgba(248,81,73,0.15); color: var(--red); }
+
+  .fg-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; }
+  .fg-value { font-size: 48px; font-weight: 700; }
+  .fg-label { font-size: 16px; color: var(--muted); margin-top: 4px; }
+  .fg-bar { height: 8px; border-radius: 4px; margin: 16px 0 8px; background: linear-gradient(to right, #f85149, #d29922, #3fb950); position: relative; }
+  .fg-needle { position: absolute; top: -4px; width: 16px; height: 16px; background: white; border-radius: 50%; transform: translateX(-50%); transition: left 0.5s; box-shadow: 0 0 6px rgba(0,0,0,0.5); }
+  .fg-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+
+  .indicator-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .indicator-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .indicator-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .indicator-row:last-child { border-bottom: none; }
+  .ind-label { font-size: 12px; color: var(--muted); }
+  .ind-value { font-size: 14px; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.green { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.red { background: rgba(248,81,73,0.2); color: var(--red); }
+  .badge.yellow { background: rgba(210,153,34,0.2); color: var(--yellow); }
+  .badge.blue { background: rgba(88,166,255,0.2); color: var(--blue); }
+
+  .alerts-list { margin-bottom: 16px; }
+  .alert-item { background: var(--card); border-radius: 10px; padding: 14px; margin-bottom: 10px; display: flex; gap: 10px; align-items: flex-start; }
+  .alert-item.warning { border-left: 3px solid var(--yellow); }
+  .alert-item.danger  { border-left: 3px solid var(--red); }
+  .alert-item.info    { border-left: 3px solid var(--blue); }
+  .alert-item.success { border-left: 3px solid var(--green); }
+  .alert-emoji { font-size: 20px; }
+  .alert-text { font-size: 13px; line-height: 1.5; }
+
+  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .chart-title { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 12px; }
+
+  .loading { text-align: center; padding: 40px; color: var(--muted); }
+  .loading-spinner { font-size: 32px; animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .last-update { text-align: center; font-size: 11px; color: var(--muted); padding: 8px; }
+
+  .step-list { list-style: none; }
+  .step-list li { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; gap: 8px; }
+  .step-list li:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<script>
+  if (window.Telegram && window.Telegram.WebApp) {
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.ready();
+    if (tg.colorScheme === 'light') {
+      document.documentElement.style.setProperty('--bg', '#ffffff');
+      document.documentElement.style.setProperty('--card', '#f0f0f0');
+      document.documentElement.style.setProperty('--text', '#000000');
+    }
+  }
+</script>
+<div class="header">
+  <div class="header-icon">🤖</div>
+  <div>
+    <div class="header-title">Altseason Bot 2026</div>
+    <div class="header-sub">Strategia Bull Run Avanzata</div>
+  </div>
+  <button class="refresh-btn" onclick="loadAll()">🔄 Aggiorna</button>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('dashboard')">📊 Dashboard</div>
+  <div class="tab" onclick="showTab('prezzi')">💰 Prezzi</div>
+  <div class="tab" onclick="showTab('indicatori')">📉 Indicatori</div>
+  <div class="tab" onclick="showTab('strategia')">🎯 Strategia</div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="content">
+<div id="tab-dashboard" class="section active">
+  <div id="phase-section"><div class="loading"><div class="loading-spinner">⏳</div><br>Caricamento fase...</div></div>
+  <div class="grid-2" id="macro-grid"></div>
+  <div id="fg-section"></div>
+  <div id="alerts-section"></div>
+</div>
+
+<!-- PREZZI -->
+<div id="tab-prezzi" class="section">
+  <div id="prices-section"><div class="loading"><div class="loading-spinner">⏳</div></div></div>
+</div>
+
+<!-- INDICATORI -->
+<div id="tab-indicatori" class="section">
+  <div id="indicators-section"><div class="loading"><div class="loading-spinner">⏳</div></div></div>
+</div>
+
+<!-- STRATEGIA -->
+<div id="tab-strategia" class="section">
+  <div id="strategy-section"><div class="loading"><div class="loading-spinner">⏳</div></div></div>
+</div>
+
+<div class="last-update" id="last-update"></div>
+</div>
+
+<script>
+const ASSETS = ['BTC','ETH','XRP','SOL','ADA','BNB','DOGE','PEPE','SHIB'];
+const CG_IDS = {BTC:'bitcoin',ETH:'ethereum',XRP:'ripple',SOL:'solana',ADA:'cardano',BNB:'binancecoin',DOGE:'dogecoin',PEPE:'pepe',SHIB:'shiba-inu'};
+
+let globalData = null, pricesData = null, fgData = null;
+
+function showTab(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+async function fetchGlobal() {
+  const r = await fetch('/api/global');
+  const d = await r.json();
+  const data = d.data;
+  const total = data.total_market_cap.usd;
+  const btcM = data.market_cap_percentage.btc / 100 * total;
+  const ethM = (data.market_cap_percentage.eth || 0) / 100 * total;
+  return {
+    btc_dom: data.market_cap_percentage.btc,
+    total3_b: (total - btcM - ethM) / 1e9,
+    total_mcap: total
+  };
+}
+
+async function fetchPrices() {
+  const ids = Object.values(CG_IDS).join(',');
+  const r = await fetch('/api/prices');
+  const raw = await r.json();
+  const result = {};
+  for (const [sym, id] of Object.entries(CG_IDS)) {
+    const d = raw[id] || {};
+    result[sym] = { price: d.usd||0, change24: d.usd_24h_change||0, mcap: d.usd_market_cap||0, vol: d.usd_24h_vol||0 };
+  }
+  return result;
+}
+
+async function fetchFG() {
+  const r = await fetch('/api/fg');
+  const d = await r.json();
+  const v = parseInt(d.data[0].value);
+  const label = d.data[0].value_classification;
+  let emoji = v<=25?'😱':v<=45?'😰':v<=55?'😐':v<=75?'😊':'🤑';
+  let color = v<=25?'#f85149':v<=45?'#ffa657':v<=55?'#8b949e':v<=75?'#3fb950':'#3fb950';
+  return { value: v, label, emoji, color };
+}
+
+function detectPhase(btcDom) {
+  if (btcDom < 48) return { phase:'⚠️ EUFORIA / TOP CICLO', level:'USCITA', emoji:'🚨', desc:'BTC Dom sotto 48% — segnale storico di top ciclo. Prese profitto aggressive.' };
+  if (btcDom < 52) return { phase:'📈 ALTSEASON ATTIVA', level:'AZIONE', emoji:'⚡', desc:'BTC Dom sotto soglia. Le altcoin sono in espansione. Rotazione capitale.' };
+  return { phase:'🔍 ACCUMULO / PRE-ALTSEASON', level:'MONITORA', emoji:'👀', desc:`BTC Dom a ${btcDom.toFixed(1)}% — ancora alta. Costruzione posizioni graduale.` };
+}
+
+function renderPhase(phase) {
+  document.getElementById('phase-section').innerHTML = `
+    <div class="phase-card ${phase.level}">
+      <div class="phase-emoji">${phase.emoji}</div>
+      <div class="phase-name">${phase.phase}</div>
+      <span class="phase-level ${phase.level}">${phase.level}</span>
+      <div class="phase-desc">${phase.desc}</div>
+    </div>`;
+}
+
+function renderMacro(global, fg) {
+  const btcDomColor = global.btc_dom < 48 ? 'var(--red)' : global.btc_dom < 52 ? 'var(--yellow)' : 'var(--green)';
+  document.getElementById('macro-grid').innerHTML = `
+    <div class="metric-card">
+      <div class="metric-label">BTC Dominance</div>
+      <div class="metric-value" style="color:${btcDomColor}">${global.btc_dom.toFixed(1)}%</div>
+      <div class="metric-sub">${global.btc_dom < 52 ? '🟢 Altseason' : '🔴 BTC domina'}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">TOTAL3</div>
+      <div class="metric-value" style="color:var(--blue)">$${global.total3_b.toFixed(0)}B</div>
+      <div class="metric-sub">Altcoin market cap</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Total Market Cap</div>
+      <div class="metric-value" style="color:var(--purple)">$${(global.total_mcap/1e12).toFixed(2)}T</div>
+      <div class="metric-sub">Mercato totale</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Fear & Greed</div>
+      <div class="metric-value" style="color:${fg.color}">${fg.value}</div>
+      <div class="metric-sub">${fg.emoji} ${fg.label}</div>
+    </div>`;
+}
+
+function renderFG(fg) {
+  const pct = fg.value + '%';
+  document.getElementById('fg-section').innerHTML = `
+    <div class="fg-card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">😱 FEAR & GREED INDEX</div>
+      <div class="fg-value" style="color:${fg.color}">${fg.value}</div>
+      <div class="fg-label">${fg.emoji} ${fg.label}</div>
+      <div class="fg-bar"><div class="fg-needle" style="left:${pct}"></div></div>
+      <div class="fg-labels"><span>Paura Estrema</span><span>Neutro</span><span>Avidità Estrema</span></div>
+    </div>`;
+}
+
+function renderAlerts(prices, phase, global) {
+  const alerts = [];
+  const xrp = prices['XRP'];
+  if (xrp && xrp.change24 > 15 && phase.level !== 'MONITORA')
+    alerts.push({type:'warning', emoji:'⚠️', text:`XRP pump tardivo +${xrp.change24.toFixed(1)}% — possibile segnale di top ciclo vicino`});
+  const memes = ['PEPE','DOGE','SHIB'].filter(s => prices[s]?.change24 > 8);
+  if (memes.length >= 2)
+    alerts.push({type:'danger', emoji:'🎰', text:`Meme Coin Mania: ${memes.map(s=>s+' +'+prices[s].change24.toFixed(1)+'%').join(' | ')} — fase euforia finale`});
+  if (global.btc_dom < 48)
+    alerts.push({type:'danger', emoji:'🚨', text:'BTC Dominance sotto 48% — zona storica di top ciclo. Considera uscite aggressive.'});
+  else if (global.btc_dom < 52)
+    alerts.push({type:'info', emoji:'⚡', text:'BTC Dominance sotto 52% — Altseason attiva. Rotazione verso altcoin.'});
+  if (alerts.length === 0)
+    alerts.push({type:'success', emoji:'✅', text:'Nessun alert urgente. Mercato nella norma.'});
+  document.getElementById('alerts-section').innerHTML = `
+    <div class="alerts-list">${alerts.map(a=>`
+      <div class="alert-item ${a.type}">
+        <div class="alert-emoji">${a.emoji}</div>
+        <div class="alert-text">${a.text}</div>
+      </div>`).join('')}
+    </div>`;
+}
+
+function renderPrices(prices) {
+  const sorted = ASSETS.map(s => ({sym:s, ...prices[s]})).sort((a,b) => b.change24 - a.change24);
+  document.getElementById('prices-section').innerHTML = `
+    <div class="prices-list">
+      ${sorted.map(p => `
+        <div class="price-row">
+          <div class="price-sym">${p.sym}</div>
+          <div class="price-val">$${p.price > 1 ? p.price.toLocaleString('en-US',{maximumFractionDigits:2}) : p.price.toFixed(6)}</div>
+          <span class="price-change ${p.change24>=0?'up':'down'}">${p.change24>=0?'+':''}${p.change24.toFixed(2)}%</span>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderIndicators(prices, global) {
+  const ethBtc = prices['ETH'].price / prices['BTC'].price;
+  document.getElementById('indicators-section').innerHTML = `
+    <div class="indicator-card">
+      <div class="indicator-title">📊 Ratio & Macro</div>
+      <div class="indicator-row">
+        <span class="ind-label">ETH/BTC Ratio</span>
+        <span class="ind-value">${ethBtc.toFixed(5)} <span class="badge ${ethBtc>0.06?'green':'yellow'}">${ethBtc>0.06?'Breakout':'Sotto soglia'}</span></span>
+      </div>
+      <div class="indicator-row">
+        <span class="ind-label">BTC Dominance</span>
+        <span class="ind-value">${global.btc_dom.toFixed(2)}% <span class="badge ${global.btc_dom<48?'red':global.btc_dom<52?'yellow':'blue'}">${global.btc_dom<48?'Euforia':global.btc_dom<52?'Altseason':'Accumulazione'}</span></span>
+      </div>
+      <div class="indicator-row">
+        <span class="ind-label">TOTAL3</span>
+        <span class="ind-value">$${global.total3_b.toFixed(1)}B</span>
+      </div>
+    </div>
+    <div class="indicator-card">
+      <div class="indicator-title">💰 Volume 24h</div>
+      ${['BTC','ETH','XRP','SOL'].map(s => `
+        <div class="indicator-row">
+          <span class="ind-label">${s}</span>
+          <span class="ind-value">$${(prices[s].vol/1e9).toFixed(2)}B</span>
+        </div>`).join('')}
+    </div>
+    <div class="indicator-card">
+      <div class="indicator-title">🏆 Performance 24h</div>
+      ${ASSETS.slice(0,7).sort((a,b)=>prices[b].change24-prices[a].change24).map(s => `
+        <div class="indicator-row">
+          <span class="ind-label">${s}</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:80px;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div style="width:${Math.min(100,Math.abs(prices[s].change24)*3)}%;height:100%;background:${prices[s].change24>=0?'var(--green)':'var(--red)'};border-radius:3px"></div>
+            </div>
+            <span class="ind-value" style="color:${prices[s].change24>=0?'var(--green)':'var(--red)'}">${prices[s].change24>=0?'+':''}${prices[s].change24.toFixed(1)}%</span>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderStrategy(phase) {
+  const steps = phase.level === 'MONITORA'
+    ? ['Accumula ETH, SOL, XRP gradualmente nelle fasi di debolezza','Aspetta BTC Dom < 52% per aumentare esposizione','Mantieni stoploss su ogni posizione','Non overleverage — massimo 20% del portafoglio per posizione']
+    : phase.level === 'AZIONE'
+    ? ['Ruota capitale verso altcoin a maggiore beta (SOL, ADA, DOT)','Lascia correre le posizioni in profitto — non vendere troppo presto','Prima tranche di take profit su +100% da ingresso','Monitora XRP: pump tardivo = segnale di top vicino']
+    : ['Prendi profitto progressivo: 25% subito, 25% dopo +20% ulteriore','Sposta liquidità in USDT/USDC','Monitora BTC Dom: se rimbalza sopra 55% → USCITA TOTALE','Non rientrare finché BTC Dom non scende di nuovo'];
+
+  document.getElementById('strategy-section').innerHTML = `
+    <div class="phase-card ${phase.level}" style="margin-bottom:16px">
+      <div class="phase-emoji">${phase.emoji}</div>
+      <div class="phase-name">${phase.phase}</div>
+      <span class="phase-level ${phase.level}">${phase.level}</span>
+      <div class="phase-desc">${phase.desc}</div>
+    </div>
+    <div class="indicator-card">
+      <div class="indicator-title">📋 Piano Operativo</div>
+      <ul class="step-list">
+        ${steps.map((s,i)=>`<li><span style="color:var(--blue);font-weight:700">${i+1}.</span> ${s}</li>`).join('')}
+      </ul>
+    </div>
+    <div class="indicator-card">
+      <div class="indicator-title">⚠️ Segnali di Top Ciclo</div>
+      <ul class="step-list">
+        <li><span style="color:var(--red)">🔴</span> BTC Dominance sotto 48%</li>
+        <li><span style="color:var(--red)">🔴</span> XRP pump +15% in fase avanzata</li>
+        <li><span style="color:var(--red)">🔴</span> Fear & Greed sopra 85 per 3+ giorni</li>
+        <li><span style="color:var(--red)">🔴</span> 2+ Meme coin pump +8% in 24h</li>
+        <li><span style="color:var(--red)">🔴</span> Tutti parlano di crypto sui social</li>
+      </ul>
+    </div>`;
+}
+
+async function loadAll() {
+  try {
+    document.getElementById('phase-section').innerHTML = '<div class="loading"><div class="loading-spinner">⏳</div></div>';
+    const [global, prices, fg] = await Promise.all([fetchGlobal(), fetchPrices(), fetchFG()]);
+    globalData = global; pricesData = prices; fgData = fg;
+    const phase = detectPhase(global.btc_dom);
+    renderPhase(phase);
+    renderMacro(global, fg);
+    renderFG(fg);
+    renderAlerts(prices, phase, global);
+    renderPrices(prices);
+    renderIndicators(prices, global);
+    renderStrategy(phase);
+    document.getElementById('last-update').textContent = '🕐 Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
+  } catch(e) {
+    console.error(e);
+    document.getElementById('phase-section').innerHTML = `<div class="loading">❌ Errore caricamento dati<br><small>${e.message}</small></div>`;
+  }
+}
+
+loadAll();
+setInterval(loadAll, 60000); // auto-refresh ogni minuto
+</script>
+</body>
+</html>

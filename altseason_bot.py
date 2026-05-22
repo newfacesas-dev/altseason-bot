@@ -14,6 +14,8 @@ import pandas as pd
 import time
 import json
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, time as dtime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -776,6 +778,63 @@ async def auto_monitor(app):
 #  🚀 MAIN
 # ══════════════════════════════════════════════
 
+# ══════════════════════════════════════════════
+#  🌐 WEB SERVER (per Mini App e health check)
+# ══════════════════════════════════════════════
+
+WEBAPP_HTML = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html'), 'r').read() if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html')) else "<h1>Altseason Bot 2026</h1>"
+
+class WebHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        elif self.path in ('/', '/webapp.html'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(WEBAPP_HTML.encode())
+        elif self.path.startswith('/api/'):
+            routes = {
+                '/api/global':  'https://api.coingecko.com/api/v3/global',
+                '/api/prices':  'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,ripple,solana,cardano,binancecoin,dogecoin,pepe,shiba-inu,matic-network,tron,stellar,algorand,the-graph,hedera-hashgraph,bonk,sei-network,fetch-ai,terra-luna-2,book-of-meme,decentraland,constitutiondao,near,sonic-3&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true',
+                '/api/fg':      'https://api.alternative.me/fng/?limit=1',
+            }
+            url = routes.get(self.path)
+            if url:
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'accept': 'application/json'})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        data = resp.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
+
+def start_web_server():
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('', port), WebHandler)
+    log.info(f"🌐 Web server avviato su porta {port}")
+    server.serve_forever()
+
+
 async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start",      cmd_start))
@@ -796,6 +855,10 @@ async def main():
     app.add_handler(CommandHandler("quiet",      cmd_quiet))
     app.add_handler(CommandHandler("setup",      cmd_setup_alerts))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+
+    # Avvia web server in background
+    web_thread = threading.Thread(target=start_web_server, daemon=True)
+    web_thread.start()
 
     log.info("🚀 Altseason Bot PRO avviato!")
     await app.bot.send_message(
