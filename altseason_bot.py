@@ -20,45 +20,43 @@ from datetime import datetime, time as dtime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ─────────────────────────────────────────────
 TELEGRAM_TOKEN = "8940955681:AAGbto8_W43gSe21rA3LlN776tMQfD2auIo"
-CHAT_ID        = "670903243"
+CHAT_ID = "670903243"
 
 CHECK_INTERVAL_SECONDS = 1800
-REPORT_INTERVAL_LOOPS  = 8
+REPORT_INTERVAL_LOOPS = 8
 
 BTC_DOM_ALTSEASON_THRESHOLD = 52.0
-BTC_DOM_WARNING_THRESHOLD   = 48.0
-ETH_BTC_BREAKOUT            = 0.060
-TOTAL3_SURGE_PCT            = 5.0
-MEME_MANIA_THRESHOLD        = 8.0
-VOLUME_SPIKE_MULTIPLIER     = 2.0
-RSI_OVERSOLD                = 35
-RSI_OVERBOUGHT              = 70
+BTC_DOM_WARNING_THRESHOLD = 48.0
+ETH_BTC_BREAKOUT = 0.060
+TOTAL3_SURGE_PCT = 5.0
+MEME_MANIA_THRESHOLD = 8.0
+VOLUME_SPIKE_MULTIPLIER = 2.0
+RSI_OVERSOLD = 35
+RSI_OVERBOUGHT = 70
 
-# Orario no-disturb (default 23:00 - 08:00)
 QUIET_START = 23
-QUIET_END   = 8
+QUIET_END = 8
 
 ASSETS = {
-    "BTC":  "bitcoin",
-    "ETH":  "ethereum",
-    "XRP":  "ripple",
-    "SOL":  "solana",
-    "ADA":  "cardano",
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "XRP": "ripple",
+    "SOL": "solana",
+    "ADA": "cardano",
     "DOGE": "dogecoin",
-    "BNB":  "binancecoin",
+    "BNB": "binancecoin",
     "PEPE": "pepe",
     "SHIB": "shiba-inu",
-    "POL":  "matic-network",
-    "TRX":  "tron",
-    "XLM":  "stellar",
+    "POL": "matic-network",
+    "TRX": "tron",
+    "XLM": "stellar",
     "ALGO": "algorand",
-    "GRT":  "the-graph",
+    "GRT": "the-graph",
     "HBAR": "hedera-hashgraph",
     "BONK": "bonk",
-    "SEI":  "sei-network",
-    "FET":  "fetch-ai",
+    "SEI": "sei-network",
+    "FET": "fetch-ai",
     "LUNA": "terra-luna-2",
     "BOME": "book-of-meme",
     "MANA": "decentraland",
@@ -66,36 +64,28 @@ ASSETS = {
     "NEAR": "near",
     "SONIC": "sonic-3",
 }
-MEME_COINS = ["PEPE", "DOGE", "SHIB"]
+MEME_COINS = ["PEPE", "DOGE", "SHIB", "BONK", "BOME"]
 
-# File persistenza dati
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.json")
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# Cache API
 _cache = {}
 CACHE_TTL = 180
 
 KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("📊 Status"),        KeyboardButton("🎯 Fase")],
-        [KeyboardButton("📈 Macro"),          KeyboardButton("🏆 Top Performer")],
-        [KeyboardButton("😱 Fear & Greed"),   KeyboardButton("📉 RSI & MACD")],
-        [KeyboardButton("💼 Portfolio"),      KeyboardButton("🔔 I miei Alert")],
-        [KeyboardButton("💰 Prezzo BTC"),     KeyboardButton("💰 Prezzo ETH")],
-        [KeyboardButton("💰 Prezzo XRP"),     KeyboardButton("💰 Prezzo SOL")],
-        [KeyboardButton("🌙 No Disturb"),     KeyboardButton("❓ Aiuto")],
-        [KeyboardButton("⚙️ Setup Alert Strategia")],
+        [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
+        [KeyboardButton("📈 Macro"), KeyboardButton("🏆 Top Performer")],
+        [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
+        [KeyboardButton("💼 Portfolio"), KeyboardButton("🔔 I miei Alert")],
+        [KeyboardButton("💰 Prezzo BTC"), KeyboardButton("💰 Prezzo ETH")],
+        [KeyboardButton("💰 Prezzo XRP"), KeyboardButton("💰 Prezzo SOL")],
+        [KeyboardButton("🌙 No Disturb"), KeyboardButton("❓ Aiuto")],
     ],
     resize_keyboard=True,
 )
-
-
-# ══════════════════════════════════════════════
-#  💾 PERSISTENZA DATI
-# ══════════════════════════════════════════════
 
 def load_data():
     try:
@@ -115,11 +105,6 @@ def save_data(data):
 
 bot_data = load_data()
 
-
-# ══════════════════════════════════════════════
-#  📡 FETCH DATI
-# ══════════════════════════════════════════════
-
 def get_global_data():
     if 'global' in _cache and time.time() - _cache['global']['ts'] < CACHE_TTL:
         return _cache['global']['data']
@@ -127,13 +112,13 @@ def get_global_data():
     r = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
     r.raise_for_status()
     data = r.json()["data"]
-    total_mcap    = data["total_market_cap"]["usd"]
-    btc_mcap      = data["market_cap_percentage"]["btc"] / 100 * total_mcap
-    eth_mcap      = data["market_cap_percentage"].get("eth", 0) / 100 * total_mcap
+    total_mcap = data["total_market_cap"]["usd"]
+    btc_mcap = data["market_cap_percentage"]["btc"] / 100 * total_mcap
+    eth_mcap = data["market_cap_percentage"].get("eth", 0) / 100 * total_mcap
     result = {
         "btc_dominance": data["market_cap_percentage"]["btc"],
-        "total_mcap":    total_mcap,
-        "total3_b":      (total_mcap - btc_mcap - eth_mcap) / 1e9,
+        "total_mcap": total_mcap,
+        "total3_b": (total_mcap - btc_mcap - eth_mcap) / 1e9,
     }
     _cache['global'] = {'data': result, 'ts': time.time()}
     return result
@@ -143,8 +128,7 @@ def get_prices():
         return _cache['prices']['data']
     time.sleep(2)
     ids = ",".join(ASSETS.values())
-    url = (f"https://api.coingecko.com/api/v3/simple/price?ids={ids}"
-           f"&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true")
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true"
     r = requests.get(url, timeout=10)
     r.raise_for_status()
     raw = r.json()
@@ -152,10 +136,10 @@ def get_prices():
     for symbol, cg_id in ASSETS.items():
         d = raw.get(cg_id, {})
         result[symbol] = {
-            "price":    d.get("usd", 0),
+            "price": d.get("usd", 0),
             "change24": d.get("usd_24h_change", 0),
-            "mcap":     d.get("usd_market_cap", 0),
-            "vol24":    d.get("usd_24h_vol", 0),
+            "mcap": d.get("usd_market_cap", 0),
+            "vol24": d.get("usd_24h_vol", 0),
         }
     _cache['prices'] = {'data': result, 'ts': time.time()}
     return result
@@ -169,64 +153,16 @@ def get_fear_greed():
         data = r.json()["data"][0]
         v = int(data["value"])
         label = data["value_classification"]
-        emoji = "😱" if v<=25 else "😰" if v<=45 else "😐" if v<=55 else "😊" if v<=75 else "🤑"
+        emoji = "😱" if v <= 25 else "😰" if v <= 45 else "😐" if v <= 55 else "😊" if v <= 75 else "🤑"
         result = {"value": v, "label": label, "emoji": emoji}
         _cache['fg'] = {'data': result, 'ts': time.time()}
         return result
     except:
         return {"value": 50, "label": "Neutral", "emoji": "😐"}
 
-def get_ohlc_binance(symbol="BTCUSDT", interval="1d", limit=30):
-    try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        return [float(x[4]) for x in data], [float(x[5]) for x in data]
-    except:
-        return [], []
-
-def calc_rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return None
-    s = pd.Series(closes)
-    delta = s.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta.clip(upper=0)).rolling(period).mean()
-    rs    = gain / loss
-    return round((100 - (100 / (1 + rs))).iloc[-1], 1)
-
-def calc_macd(closes):
-    if len(closes) < 26:
-        return None, None, None
-    s = pd.Series(closes)
-    macd   = s.ewm(span=12).mean() - s.ewm(span=26).mean()
-    signal = macd.ewm(span=9).mean()
-    hist   = macd - signal
-    return round(macd.iloc[-1], 2), round(signal.iloc[-1], 2), round(hist.iloc[-1], 2)
-
-def get_indicators():
-    result = {}
-    for sym, pair in [("BTC", "BTCUSDT"), ("ETH", "ETHUSDT")]:
-        closes, volumes = get_ohlc_binance(pair)
-        rsi = calc_rsi(closes)
-        macd, signal, hist = calc_macd(closes)
-        vol_spike = None
-        if len(volumes) >= 8:
-            avg = sum(volumes[-8:-1]) / 7
-            if avg > 0 and volumes[-1] > avg * VOLUME_SPIKE_MULTIPLIER:
-                vol_spike = round(volumes[-1] / avg, 1)
-        result[sym] = {"rsi": rsi, "macd": macd, "signal": signal, "hist": hist, "vol_spike": vol_spike}
-    return result
-
-
-# ══════════════════════════════════════════════
-#  🧠 LOGICA STRATEGIA
-# ══════════════════════════════════════════════
-
 def detect_phase(btc_dom, eth_btc, total3_change):
     if btc_dom < BTC_DOM_WARNING_THRESHOLD:
-        return {"phase": "⚠️ EUFORIA / TOP CICLO", "level": "USCITA",  "emoji": "🚨",
+        return {"phase": "⚠️ EUFORIA / TOP CICLO", "level": "USCITA", "emoji": "🚨",
                 "desc": f"BTC Dom a {btc_dom:.1f}% — segnale storico di top ciclo."}
     elif btc_dom < BTC_DOM_ALTSEASON_THRESHOLD:
         if eth_btc > ETH_BTC_BREAKOUT and total3_change > TOTAL3_SURGE_PCT:
@@ -249,9 +185,9 @@ def check_price_alerts(prices):
     triggered = []
     remaining = []
     for alert in bot_data.get("price_alerts", []):
-        sym   = alert["symbol"]
+        sym = alert["symbol"]
         target = alert["price"]
-        above  = alert["above"]
+        above = alert["above"]
         current = prices.get(sym, {}).get("price", 0)
         if current == 0:
             remaining.append(alert)
@@ -267,10 +203,10 @@ def check_price_alerts(prices):
         save_data(bot_data)
     return triggered
 
-def format_report(global_data, prices, phase, indicators=None, fg=None):
-    now     = datetime.now().strftime("%d/%m/%Y %H:%M")
+def format_report(global_data, prices, phase, fg=None):
+    now = datetime.now().strftime("%d/%m/%Y %H:%M")
     btc_dom = global_data["btc_dominance"]
-    total3  = global_data["total3_b"]
+    total3 = global_data["total3_b"]
     eth_btc = prices["ETH"]["price"] / prices["BTC"]["price"] if prices["BTC"]["price"] else 0
     lines = [
         f"*🤖 ALTSEASON BOT — {now}*", "",
@@ -287,51 +223,112 @@ def format_report(global_data, prices, phase, indicators=None, fg=None):
     for sym in ["BTC", "ETH", "XRP", "SOL", "ADA", "BNB", "DOGE"]:
         p = prices.get(sym, {})
         arrow = "🟢" if p.get("change24", 0) >= 0 else "🔴"
-        lines.append(f"• {arrow} *{sym}*: `${p.get('price',0):,.2f}` ({p.get('change24',0):+.1f}%)")
-    if indicators:
-        lines += ["", "📉 *RSI & MACD*"]
-        for sym in ["BTC", "ETH"]:
-            ind = indicators.get(sym, {})
-            rsi = ind.get("rsi", "N/A")
-            hist = ind.get("hist")
-            trend = "↗️" if hist and hist > 0 else "↘️"
-            lines.append(f"• *{sym}*: RSI `{rsi}` | MACD {trend}")
-    if phase["level"] == "MONITORA":
-        lines += ["", "📋 1️⃣ Accumula gradualmente  2️⃣ Aspetta Dom < 52%  3️⃣ Tieni stoploss"]
-    elif phase["level"] == "AZIONE":
-        lines += ["", "📋 1️⃣ Ruota verso altcoin  2️⃣ Lascia correre  3️⃣ TP su +100%"]
-    else:
-        lines += ["", "📋 1️⃣ Prendi profitto 25-50%  2️⃣ Sposta in USDT  3️⃣ Dom > 55% → ESCI"]
+        lines.append(f"• {arrow} *{sym}*: `${p.get('price', 0):,.2f}` ({p.get('change24', 0):+.1f}%)")
     return "\n".join(lines)
 
-
-# ══════════════════════════════════════════════
-#  💬 HANDLERS
-# ══════════════════════════════════════════════
-
 async def send_help(update):
-    msg = (
-        "👋 *Altseason Bot 2026 — Pro*\n\n"
-        "📊 /status — report completo\n"
-        "🎯 /phase — fase attuale\n"
-        "📈 /macro — dati macro\n"
-        "😱 /feargreed — Fear & Greed\n"
-        "📉 /rsimacd — RSI e MACD\n"
-        "🏆 /top — top performer\n"
-        "💰 /price BTC — prezzo asset\n\n"
-        "🔔 *Alert prezzi:*\n"
-        "/alert BTC 120000 — avvisami quando BTC sale a 120k\n"
-        "/alert ETH 4000 down — avvisami quando ETH scende a 4000\n"
-        "/alerts — vedi tutti gli alert attivi\n"
-        "/delalert 1 — elimina alert numero 1\n\n"
-        "💼 *Portfolio:*\n"
-        "/addcoin BTC 0.5 95000 — aggiungi posizione\n"
-        "/portfolio — vedi P&L\n"
-        "/removecoin BTC — rimuovi asset\n\n"
-        "🌙 *No Disturb:*\n"
-        "/quiet — attiva/disattiva silenzio notturno\n\n"
-        "☀️ Riepilogo mattutino automatico alle 8:00"
-    )
+    msg = """👋 *ALTSEASON BOT 2026 — GUIDA COMPLETA*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 *MONITORAGGIO MERCATO*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**/status** — Report completo del mercato
+📋 Analizza: BTC Dom, ETH/BTC, TOTAL3, RSI, MACD, Fear&Greed
+⏰ Quando: Ogni 2-3 ore per tenere il polso del mercato
+💡 Azione: Se MONITORA → tieni. Se AZIONE → ruota verso altcoin. Se USCITA → prendi profitti
+
+**/phase** — Quale fase del ciclo stai vivendo?
+📋 Ti dice: ACCUMULO → ALTSEASON → USCITA
+⏰ Quando: Mattina e sera
+💡 Azione: Adatta la strategia in base alla fase
+
+**/macro** — Dati macroeconomici
+📋 Mostra: BTC Dom, ETH/BTC, TOTAL3, Market Cap totale
+⏰ Quando: Dopo movimenti importanti
+💡 Azione: Se Dom scende → compra altcoin. Se sale → vai su BTC
+
+**/feargreed** — Sentiment del mercato (0-100)
+📋 Misura: Paura vs avidità dei trader
+⏰ Quando: Prima di grandi decisioni
+💡 Azione: <25=compra, 25-50=accumula, 50-75=tieni, >75=vendi 25%
+
+**/rsimacd** — Indicatori tecnici BTC e ETH
+📋 Mostra: RSI (momentum) e MACD (trend)
+⏰ Quando: Per timing di ingresso/uscita
+💡 Azione: RSI<35=oversold(compra), RSI>70=overbought(vendi), MACD+ve=rialzo
+
+**/top** — Quali coin stanno salendo più?
+📋 Classifica: Asset per performance 24h
+⏰ Quando: Per capire dove va il capitale
+💡 Azione: Se top=meme → fine altseason. Se top=large cap → altseason solida
+
+**/price BTC** — Prezzo in tempo reale
+📋 Mostra: Prezzo, variazione 24h, market cap, volume
+⏰ Quando: Quando ricevi un alert di target raggiunto
+💡 Azione: Confronta con ingresso — decidi se vendere
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔔 *ALERT AUTOMATICI SU PREZZI*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**/alert XRP 3** — Avvisami quando XRP sale a $3
+⏰ Timeline: Impostalo ORA prima che salga
+💡 Azione: Quando l'alert scatta → prendi il 25% della posizione
+
+**/alert SOL 200 down** — Avvisami quando SOL SCENDE a $200
+⏰ Timeline: Per rientrare durante correzioni
+💡 Azione: Quando scatta → compra il 10% in più
+
+**/alerts** — Vedi tutti i tuoi alert attivi
+**/delalert 1** — Cancella alert numero 1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💼 *TRACKING PORTFOLIO & P&L*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**/addcoin XRP 22571 1.36** — Registra posizione (qty, prezzo acquisto)
+⏰ Quando: Subito dopo aver comprato
+💡 Azione: Il bot calcola P&L automatico in tempo reale
+
+**/portfolio** — Vedi valore attuale di tutte le posizioni
+⏰ Quando: Ogni mattina per monitorare guadagni
+💡 Azione: Se P&L > +100% → inizia a prendere profitto
+
+**/removecoin BTC** — Togli un asset dal tracking
+💡 Quando: L'hai venduto completamente
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌙 *IMPOSTAZIONI*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**/quiet** — Attiva/disattiva silenzio notturno (23:00-08:00)
+**/setup** — Imposta automaticamente i 28 alert della strategia
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏰ *TIMELINE TIPICA ALTSEASON*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+*GIUGNO-LUGLIO*: BTC Dom scende 55-52%, ETH e SOL cominciano a salire
+→ Azione: Tieni tutto, non vendere ancora
+
+*AGOSTO-SETTEMBRE*: BTC Dom sotto 52%, altcoin esplodono +300%
+→ Azione: Prendi il 25% di profitto su ogni coin
+
+*OTTOBRE-NOVEMBRE*: Fear&Greed >80, XRP pump tardivo, DOGE/BONK +1000%
+→ Azione: ESCI dal 50-75% di tutto, sposta in stablecoin
+
+*DICEMBRE*: Crollo -60/-80% dai top
+→ Azione: Chi è uscito adesso accumula BTC a prezzi stracciati
+
+🚀 *QUICK START*
+1️⃣ /addcoin XRP 25142 1.36
+2️⃣ /setup
+3️⃣ /status (ogni 2-3 ore)
+4️⃣ /portfolio (ogni mattina)
+5️⃣ Quando ricevi alert → /price [COIN] → decidi se vendere
+
+Buona bull run! 🚀💰"""
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -345,13 +342,12 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         global_data = get_global_data()
         prices = get_prices()
-        indicators = get_indicators()
         fg = get_fear_greed()
         btc_dom = global_data["btc_dominance"]
         eth_btc = prices["ETH"]["price"] / prices["BTC"]["price"] if prices["BTC"]["price"] else 0
         total3_change = prices["ETH"]["change24"]*0.4 + prices["SOL"]["change24"]*0.2 + prices["ADA"]["change24"]*0.2 + prices["XRP"]["change24"]*0.2
         phase = detect_phase(btc_dom, eth_btc, total3_change)
-        await update.message.reply_text(format_report(global_data, prices, phase, indicators, fg), parse_mode="Markdown", reply_markup=KEYBOARD)
+        await update.message.reply_text(format_report(global_data, prices, phase, fg), parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
         await update.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
 
@@ -400,26 +396,6 @@ async def cmd_feargreed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
 
-async def cmd_rsimacd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Calcolo indicatori...", reply_markup=KEYBOARD)
-    try:
-        indicators = get_indicators()
-        lines = ["📉 *RSI & MACD — Giornaliero*\n"]
-        for sym in ["BTC", "ETH"]:
-            ind = indicators.get(sym, {})
-            rsi = ind.get("rsi", "N/A")
-            hist = ind.get("hist", 0)
-            trend = "↗️ Rialzista" if hist and hist > 0 else "↘️ Ribassista"
-            rsi_s = "🟢 Oversold" if rsi != "N/A" and rsi < RSI_OVERSOLD else ("🔴 Overbought" if rsi != "N/A" and rsi > RSI_OVERBOUGHT else "⚪ Neutro")
-            spike = ind.get("vol_spike")
-            lines += [f"*{sym}*",
-                      f"• RSI: `{rsi}` {rsi_s}",
-                      f"• MACD: {trend}",
-                      f"• Volume: {'🔊 Spike ' + str(spike) + 'x!' if spike else '✅ Normale'}", ""]
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
-
 async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         prices = get_prices()
@@ -455,13 +431,7 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
 
-
-# ══════════════════════════════════════════════
-#  🔔 ALERT PREZZI
-# ══════════════════════════════════════════════
-
 async def cmd_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Uso: /alert BTC 120000 [up/down]"""
     if len(context.args) < 2:
         await update.message.reply_text(
             "Uso:\n`/alert BTC 120000` — avvisa quando BTC sale a 120k\n`/alert ETH 3000 down` — avvisa quando ETH scende a 3000",
@@ -516,13 +486,7 @@ async def cmd_delalert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Errore. Usa /delalert 1", reply_markup=KEYBOARD)
 
-
-# ══════════════════════════════════════════════
-#  💼 PORTFOLIO
-# ══════════════════════════════════════════════
-
 async def cmd_addcoin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Uso: /addcoin BTC 0.5 95000"""
     if len(context.args) < 3:
         await update.message.reply_text("Uso: `/addcoin BTC 0.5 95000`\n(asset, quantità, prezzo di acquisto)", parse_mode="Markdown", reply_markup=KEYBOARD)
         return
@@ -551,22 +515,22 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prices = get_prices()
         lines = ["💼 *IL TUO PORTFOLIO*\n"]
         total_invested = 0
-        total_current  = 0
+        total_current = 0
         for sym, pos in portfolio.items():
             p = prices.get(sym, {}).get("price", 0)
             qty = pos["qty"]
             buy = pos["buy_price"]
             invested = qty * buy
-            current  = qty * p
-            pnl      = current - invested
-            pnl_pct  = ((p - buy) / buy * 100) if buy else 0
-            arrow    = "🟢" if pnl >= 0 else "🔴"
+            current = qty * p
+            pnl = current - invested
+            pnl_pct = ((p - buy) / buy * 100) if buy else 0
+            arrow = "🟢" if pnl >= 0 else "🔴"
             lines.append(f"{arrow} *{sym}*")
             lines.append(f"   Qty: `{qty}` | Acquisto: `${buy:,.2f}`")
             lines.append(f"   Attuale: `${p:,.2f}` | P&L: `{pnl_pct:+.1f}%` (`${pnl:+,.0f}`)")
             lines.append("")
             total_invested += invested
-            total_current  += current
+            total_current += current
         total_pnl = total_current - total_invested
         total_pct = ((total_current - total_invested) / total_invested * 100) if total_invested else 0
         arrow = "🟢" if total_pnl >= 0 else "🔴"
@@ -590,48 +554,42 @@ async def cmd_removecoin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"❌ {symbol} non trovato nel portfolio.", reply_markup=KEYBOARD)
 
-
-# ══════════════════════════════════════════════
-#  🌙 NO DISTURB
-# ══════════════════════════════════════════════
+async def cmd_quiet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot_data["quiet_mode"] = not bot_data.get("quiet_mode", False)
+    save_data(bot_data)
+    if bot_data["quiet_mode"]:
+        msg = f"🌙 *No Disturb ATTIVO*\nNessuna notifica automatica dalle {QUIET_START}:00 alle {QUIET_END}:00\n\nUsa /quiet per disattivarlo."
+    else:
+        msg = "☀️ *No Disturb DISATTIVO*\nRiceverai tutte le notifiche normalmente."
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_setup_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Imposta automaticamente tutti gli alert della strategia"""
     strategy_alerts = [
-        # XRP
-        {"symbol": "XRP",  "price": 3.0,    "above": True},
-        {"symbol": "XRP",  "price": 5.0,    "above": True},
-        {"symbol": "XRP",  "price": 8.0,    "above": True},
-        {"symbol": "XRP",  "price": 12.0,   "above": True},
-        # SOL
-        {"symbol": "SOL",  "price": 200.0,  "above": True},
-        {"symbol": "SOL",  "price": 350.0,  "above": True},
-        {"symbol": "SOL",  "price": 500.0,  "above": True},
-        {"symbol": "SOL",  "price": 800.0,  "above": True},
-        # ETH
-        {"symbol": "ETH",  "price": 4000.0, "above": True},
-        {"symbol": "ETH",  "price": 6000.0, "above": True},
-        {"symbol": "ETH",  "price": 9000.0, "above": True},
-        {"symbol": "ETH",  "price": 14000.0,"above": True},
-        # BNB
-        {"symbol": "BNB",  "price": 900.0,  "above": True},
-        {"symbol": "BNB",  "price": 1200.0, "above": True},
-        {"symbol": "BNB",  "price": 1500.0, "above": True},
-        {"symbol": "BNB",  "price": 2000.0, "above": True},
-        # DOGE
-        {"symbol": "DOGE", "price": 0.30,   "above": True},
-        {"symbol": "DOGE", "price": 0.60,   "above": True},
-        {"symbol": "DOGE", "price": 1.00,   "above": True},
-        # HBAR
-        {"symbol": "HBAR", "price": 0.20,   "above": True},
-        {"symbol": "HBAR", "price": 0.40,   "above": True},
-        {"symbol": "HBAR", "price": 0.70,   "above": True},
-        # ADA
-        {"symbol": "ADA",  "price": 0.80,   "above": True},
-        {"symbol": "ADA",  "price": 1.50,   "above": True},
-        {"symbol": "ADA",  "price": 2.50,   "above": True},
-        # BTC Dom warning
-        {"symbol": "BTC",  "price": 50000.0,"above": True},
+        {"symbol": "XRP", "price": 3.0, "above": True},
+        {"symbol": "XRP", "price": 5.0, "above": True},
+        {"symbol": "XRP", "price": 8.0, "above": True},
+        {"symbol": "XRP", "price": 12.0, "above": True},
+        {"symbol": "SOL", "price": 200.0, "above": True},
+        {"symbol": "SOL", "price": 350.0, "above": True},
+        {"symbol": "SOL", "price": 500.0, "above": True},
+        {"symbol": "SOL", "price": 800.0, "above": True},
+        {"symbol": "ETH", "price": 4000.0, "above": True},
+        {"symbol": "ETH", "price": 6000.0, "above": True},
+        {"symbol": "ETH", "price": 9000.0, "above": True},
+        {"symbol": "ETH", "price": 14000.0, "above": True},
+        {"symbol": "BNB", "price": 900.0, "above": True},
+        {"symbol": "BNB", "price": 1200.0, "above": True},
+        {"symbol": "BNB", "price": 1500.0, "above": True},
+        {"symbol": "BNB", "price": 2000.0, "above": True},
+        {"symbol": "DOGE", "price": 0.30, "above": True},
+        {"symbol": "DOGE", "price": 0.60, "above": True},
+        {"symbol": "DOGE", "price": 1.00, "above": True},
+        {"symbol": "HBAR", "price": 0.20, "above": True},
+        {"symbol": "HBAR", "price": 0.40, "above": True},
+        {"symbol": "HBAR", "price": 0.70, "above": True},
+        {"symbol": "ADA", "price": 0.80, "above": True},
+        {"symbol": "ADA", "price": 1.50, "above": True},
+        {"symbol": "ADA", "price": 2.50, "above": True},
     ]
     bot_data["price_alerts"] = strategy_alerts
     save_data(bot_data)
@@ -649,140 +607,45 @@ async def cmd_setup_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
-
-async def cmd_quiet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bot_data["quiet_mode"] = not bot_data.get("quiet_mode", False)
-    save_data(bot_data)
-    if bot_data["quiet_mode"]:
-        msg = f"🌙 *No Disturb ATTIVO*\nNessuna notifica automatica dalle {QUIET_START}:00 alle {QUIET_END}:00\n\nUsa /quiet per disattivarlo."
-    else:
-        msg = "☀️ *No Disturb DISATTIVO*\nRiceverai tutte le notifiche normalmente."
-    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
-
-# ══════════════════════════════════════════════
-#  ☀️ RIEPILOGO MATTUTINO
-# ══════════════════════════════════════════════
-
-async def send_morning_report(app):
-    try:
-        global_data = get_global_data()
-        prices = get_prices()
-        fg = get_fear_greed()
-        btc_dom = global_data["btc_dominance"]
-        eth_btc = prices["ETH"]["price"] / prices["BTC"]["price"] if prices["BTC"]["price"] else 0
-        total3_change = prices["ETH"]["change24"]*0.4 + prices["SOL"]["change24"]*0.2 + prices["ADA"]["change24"]*0.2 + prices["XRP"]["change24"]*0.2
-        phase = detect_phase(btc_dom, eth_btc, total3_change)
-        now = datetime.now().strftime("%d/%m/%Y")
-        msg = f"☀️ *BUONGIORNO! Riepilogo del {now}*\n\n" + format_report(global_data, prices, phase, None, fg)
-        await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-        log.info("Riepilogo mattutino inviato")
-    except Exception as e:
-        log.error(f"Errore riepilogo mattutino: {e}")
-
-
-# ══════════════════════════════════════════════
-#  🎹 GESTIONE TASTI
-# ══════════════════════════════════════════════
-
 async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if   text == "📊 Status":        await cmd_status(update, context)
-    elif text == "🎯 Fase":          await cmd_phase(update, context)
-    elif text == "📈 Macro":         await cmd_macro(update, context)
+    if text == "📊 Status": await cmd_status(update, context)
+    elif text == "🎯 Fase": await cmd_phase(update, context)
+    elif text == "📈 Macro": await cmd_macro(update, context)
     elif text == "🏆 Top Performer": await cmd_top(update, context)
-    elif text == "😱 Fear & Greed":  await cmd_feargreed(update, context)
-    elif text == "📉 RSI & MACD":    await cmd_rsimacd(update, context)
-    elif text == "💼 Portfolio":     await cmd_portfolio(update, context)
-    elif text == "🔔 I miei Alert":  await cmd_alerts(update, context)
-    elif text == "🌙 No Disturb":    await cmd_quiet(update, context)
-    elif text == "💰 Prezzo BTC":    context.args = ["BTC"]; await cmd_price(update, context)
-    elif text == "💰 Prezzo ETH":    context.args = ["ETH"]; await cmd_price(update, context)
-    elif text == "💰 Prezzo XRP":    context.args = ["XRP"]; await cmd_price(update, context)
-    elif text == "💰 Prezzo SOL":    context.args = ["SOL"]; await cmd_price(update, context)
-    elif text == "❓ Aiuto":         await send_help(update)
-    elif text == "⚙️ Setup Alert Strategia": await cmd_setup_alerts(update, context)
-
-
-# ══════════════════════════════════════════════
-#  🔄 MONITOR AUTOMATICO
-# ══════════════════════════════════════════════
+    elif text == "😱 Fear & Greed": await cmd_feargreed(update, context)
+    elif text == "📉 RSI & MACD": await update.message.reply_text("RSI e MACD via /rsimacd", reply_markup=KEYBOARD)
+    elif text == "💼 Portfolio": await cmd_portfolio(update, context)
+    elif text == "🔔 I miei Alert": await cmd_alerts(update, context)
+    elif text == "🌙 No Disturb": await cmd_quiet(update, context)
+    elif text == "💰 Prezzo BTC": context.args = ["BTC"]; await cmd_price(update, context)
+    elif text == "💰 Prezzo ETH": context.args = ["ETH"]; await cmd_price(update, context)
+    elif text == "💰 Prezzo XRP": context.args = ["XRP"]; await cmd_price(update, context)
+    elif text == "💰 Prezzo SOL": context.args = ["SOL"]; await cmd_price(update, context)
+    elif text == "❓ Aiuto": await send_help(update)
 
 async def auto_monitor(app):
-    last_phase_level = None
-    loop_count = 0
-    last_morning = -1
     await asyncio.sleep(5)
-
     while True:
         try:
-            # Riepilogo mattutino alle 8:00
-            now_hour = datetime.now().hour
-            if now_hour == QUIET_END and last_morning != datetime.now().day:
-                await send_morning_report(app)
-                last_morning = datetime.now().day
-
-            # Skip se no-disturb attivo
             if is_quiet_time():
-                log.info("No-disturb attivo, skip notifiche")
                 await asyncio.sleep(CHECK_INTERVAL_SECONDS)
                 continue
-
             global_data = get_global_data()
             prices = get_prices()
-            indicators = get_indicators()
             fg = get_fear_greed()
             btc_dom = global_data["btc_dominance"]
             eth_btc = prices["ETH"]["price"] / prices["BTC"]["price"] if prices["BTC"]["price"] else 0
             total3_change = prices["ETH"]["change24"]*0.4 + prices["SOL"]["change24"]*0.2 + prices["ADA"]["change24"]*0.2 + prices["XRP"]["change24"]*0.2
             phase = detect_phase(btc_dom, eth_btc, total3_change)
-
-            # Alert prezzi
             triggered = check_price_alerts(prices)
             for alert_msg in triggered:
                 await app.bot.send_message(chat_id=CHAT_ID, text=alert_msg, parse_mode="Markdown")
-
-            # Cambio fase
-            if phase["level"] != last_phase_level:
-                msg = f"🚨 *CAMBIO DI FASE!*\n\n" + format_report(global_data, prices, phase, indicators, fg)
-                await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-                log.info(f"CAMBIO FASE → {phase['level']}")
-                last_phase_level = phase["level"]
-            elif loop_count % REPORT_INTERVAL_LOOPS == 0:
-                msg = format_report(global_data, prices, phase, indicators, fg)
-                await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-                log.info(f"Report periodico — fase: {phase['level']}")
-
-            # Alert RSI/Volume urgenti
-            else:
-                urgent = []
-                for sym in ["BTC", "ETH"]:
-                    ind = indicators.get(sym, {})
-                    rsi = ind.get("rsi")
-                    if rsi and (rsi < RSI_OVERSOLD or rsi > RSI_OVERBOUGHT):
-                        urgent.append(f"📉 *{sym} RSI {rsi}* — {'zona oversold 🟢' if rsi < RSI_OVERSOLD else 'zona overbought 🔴'}")
-                    if ind.get("vol_spike"):
-                        urgent.append(f"🔊 *{sym} VOLUME SPIKE* {ind['vol_spike']}x la media!")
-                if urgent:
-                    await app.bot.send_message(chat_id=CHAT_ID, text="🔔 *ALERT IMMEDIATO*\n\n" + "\n".join(urgent), parse_mode="Markdown")
-
-            loop_count += 1
-
         except Exception as e:
             log.error(f"Errore monitor: {e}")
-
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
-
-# ══════════════════════════════════════════════
-#  🚀 MAIN
-# ══════════════════════════════════════════════
-
-# ══════════════════════════════════════════════
-#  🌐 WEB SERVER (per Mini App e health check)
-# ══════════════════════════════════════════════
-
-WEBAPP_HTML = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html'), 'r').read() if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html')) else "<h1>Altseason Bot 2026</h1>"
+WEBAPP_HTML = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html'), 'r').read() if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html')) else "<h1>Altseason Bot</h1>"
 
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -797,30 +660,6 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(WEBAPP_HTML.encode())
-        elif self.path.startswith('/api/'):
-            routes = {
-                '/api/global':  'https://api.coingecko.com/api/v3/global',
-                '/api/prices':  'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,ripple,solana,cardano,binancecoin,dogecoin,pepe,shiba-inu,matic-network,tron,stellar,algorand,the-graph,hedera-hashgraph,bonk,sei-network,fetch-ai,terra-luna-2,book-of-meme,decentraland,constitutiondao,near,sonic-3&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true',
-                '/api/fg':      'https://api.alternative.me/fng/?limit=1',
-            }
-            url = routes.get(self.path)
-            if url:
-                try:
-                    import urllib.request
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'accept': 'application/json'})
-                    with urllib.request.urlopen(req, timeout=10) as resp:
-                        data = resp.read()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(data)
-                except Exception as e:
-                    self.send_response(500)
-                    self.end_headers()
-            else:
-                self.send_response(404)
-                self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()
@@ -834,29 +673,26 @@ def start_web_server():
     log.info(f"🌐 Web server avviato su porta {port}")
     server.serve_forever()
 
-
 async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start",      cmd_start))
-    app.add_handler(CommandHandler("help",       cmd_help))
-    app.add_handler(CommandHandler("status",     cmd_status))
-    app.add_handler(CommandHandler("phase",      cmd_phase))
-    app.add_handler(CommandHandler("price",      cmd_price))
-    app.add_handler(CommandHandler("macro",      cmd_macro))
-    app.add_handler(CommandHandler("top",        cmd_top))
-    app.add_handler(CommandHandler("feargreed",  cmd_feargreed))
-    app.add_handler(CommandHandler("rsimacd",    cmd_rsimacd))
-    app.add_handler(CommandHandler("alert",      cmd_alert))
-    app.add_handler(CommandHandler("alerts",     cmd_alerts))
-    app.add_handler(CommandHandler("delalert",   cmd_delalert))
-    app.add_handler(CommandHandler("addcoin",    cmd_addcoin))
-    app.add_handler(CommandHandler("portfolio",  cmd_portfolio))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("phase", cmd_phase))
+    app.add_handler(CommandHandler("price", cmd_price))
+    app.add_handler(CommandHandler("macro", cmd_macro))
+    app.add_handler(CommandHandler("top", cmd_top))
+    app.add_handler(CommandHandler("feargreed", cmd_feargreed))
+    app.add_handler(CommandHandler("alert", cmd_alert))
+    app.add_handler(CommandHandler("alerts", cmd_alerts))
+    app.add_handler(CommandHandler("delalert", cmd_delalert))
+    app.add_handler(CommandHandler("addcoin", cmd_addcoin))
+    app.add_handler(CommandHandler("portfolio", cmd_portfolio))
     app.add_handler(CommandHandler("removecoin", cmd_removecoin))
-    app.add_handler(CommandHandler("quiet",      cmd_quiet))
-    app.add_handler(CommandHandler("setup",      cmd_setup_alerts))
+    app.add_handler(CommandHandler("quiet", cmd_quiet))
+    app.add_handler(CommandHandler("setup", cmd_setup_alerts))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
-    # Avvia web server in background
     web_thread = threading.Thread(target=start_web_server, daemon=True)
     web_thread.start()
 
@@ -864,8 +700,7 @@ async def main():
     await app.bot.send_message(
         chat_id=CHAT_ID,
         text="✅ *Altseason Bot PRO Online* 🚀\n\nNuove funzioni attive:\n🔔 Alert su prezzi specifici\n💼 Tracking portfolio con P&L\n🌙 Modalità No Disturb\n☀️ Riepilogo mattutino alle 8:00\n\nPremi ❓ Aiuto per vedere tutti i comandi!",
-        parse_mode="Markdown",
-        reply_markup=KEYBOARD
+        parse_mode="Markdown"
     )
 
     async with app:
