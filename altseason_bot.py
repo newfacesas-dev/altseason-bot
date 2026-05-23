@@ -54,6 +54,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("💰 Prezzo BTC"), KeyboardButton("💰 Prezzo ETH")],
     [KeyboardButton("💰 Prezzo XRP"), KeyboardButton("💰 Prezzo SOL")],
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
+    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("🌙 No Disturb"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
@@ -534,6 +535,73 @@ HBAR: $0.20→$0.40→$0.70
 • BTC Dom <48% → ESCI tutto"""
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
+
+async def cmd_exit_plan(u, c):
+    msg = (
+        "📤 *PIANO DI USCITA GRADUALE*\n\n"
+        "━━━━━━━━━\n"
+        "🟡 *BLOCCO 1 - Inizio Euforia*\n"
+        "━━━━━━━━━\n"
+        "Trigger: Fear&Greed >75 per 2 giorni\n"
+        "Azione: Vendi 10-15% di tutto\n"
+        "Timing: 3-7 giorni graduali\n"
+        "Priority: Meme coin prima (DOGE, BONK)\n\n"
+        "━━━━━━━━━\n"
+        "🟠 *BLOCCO 2 - Mercato Accelerato*\n"
+        "━━━━━━━━━\n"
+        "Trigger: BTC Dom <50% + F&G >80\n"
+        "Azione: Vendi 20-30% aggiuntivo\n"
+        "Timing: 5-14 giorni graduali\n"
+        "Priority: AI speculative, meme, small cap\n\n"
+        "━━━━━━━━━\n"
+        "🔴 *BLOCCO 3 - Blow-off Top*\n"
+        "━━━━━━━━━\n"
+        "Trigger: XRP pump + meme isterici + retail impazzito\n"
+        "Azione: Vendi 30-40% aggiuntivo\n"
+        "Timing: 48h-7 giorni VELOCI\n"
+        "Priority: Tutto tranne BTC e ETH\n\n"
+        "━━━━━━━━━\n"
+        "🚨 *STOP LOSS EMERGENZA*\n"
+        "━━━━━━━━━\n"
+        "Trigger: Mercato crolla -30% in 7 giorni\n"
+        "Azione: Esci dal 50% IMMEDIATAMENTE\n\n"
+        "💡 *REGOLE D'ORO*\n"
+        "- MAI vendere tutto in un giorno\n"
+        "- MAI rientrare per FOMO\n"
+        "- Preleva 30% profitti in fiat\n"
+        "- Bear market: accumula BTC gradualmente\n"
+        "- Portfolio futuro: 70% BTC, 20% alt, 10% operativo"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
+
+async def cmd_stoploss(u, c):
+    try:
+        p = get_prices()
+        g = get_global()
+        fg = get_fg()
+        warnings = []
+        if fg["v"] > 80:
+            warnings.append(f"🔴 *BLOCCO 2 ATTIVO*\nFear&Greed `{fg['v']}` — Vendi 20-30% progressivamente")
+        elif fg["v"] > 75:
+            warnings.append(f"🟡 *BLOCCO 1 ATTIVO*\nFear&Greed `{fg['v']}` — Inizia a vendere 10-15%")
+        if g["dom"] < 48:
+            warnings.append(f"🔴 *BTC DOM CRITICA* `{g['dom']:.1f}%`\nZona storica top ciclo — accelera uscite!")
+        memes = [(s, p[s]["ch"]) for s in ["DOGE","BONK","PEPE"] if p.get(s, {}).get("ch", 0) > 15]
+        if memes:
+            meme_str = ", ".join([f"{s} +{c:.0f}%" for s,c in memes])
+            warnings.append(f"🎰 *MEME MANIA AVANZATA*\n{meme_str}\nSegnale top ciclo — ESCI dai meme!")
+        if p.get("XRP", {}).get("ch", 0) > 15 and g["dom"] < 52:
+            warnings.append(f"⚠️ *XRP PUMP TARDIVO* +{p['XRP']['ch']:.1f}%\nStoricamente indica TOP CICLO — Esci dal 50%!")
+        if warnings:
+            msg = "🚨 *ALERT PIANO DI USCITA*\n\n" + "\n\n".join(warnings)
+        else:
+            msg = f"✅ *Nessun segnale di uscita urgente*\n\nFear&Greed: `{fg['v']}` sotto soglia\nBTC Dom: `{g['dom']:.1f}%` nella norma\nNessuna meme mania in corso"
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
+
+
 async def cmd_quiet(u, c):
     DATA["quiet_mode"] = not DATA.get("quiet_mode", False)
     save_data(DATA)
@@ -553,6 +621,8 @@ async def handle_text(u, c):
     elif t == "📅 Timeline": await cmd_timeline(u, c)
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
+    elif t == "📤 Piano Uscita": await cmd_exit_plan(u, c)
+    elif t == "🚨 Check Uscita": await cmd_stoploss(u, c)
     elif t == "💰 Prezzo BTC": c.args = ["BTC"]; await cmd_price(u, c)
     elif t == "💰 Prezzo ETH": c.args = ["ETH"]; await cmd_price(u, c)
     elif t == "💰 Prezzo XRP": c.args = ["XRP"]; await cmd_price(u, c)
@@ -617,6 +687,8 @@ async def main():
         ("removecoin", cmd_removecoin), ("alert", cmd_alert), ("alerts", cmd_alerts),
         ("delalert", cmd_delalert), ("setup", cmd_setup), ("timeline", cmd_timeline),
         ("quiet", cmd_quiet),
+        ("exitplan", cmd_exit_plan),
+        ("stoploss", cmd_stoploss),
     ]
     for cmd, fn in cmds:
         app.add_handler(CommandHandler(cmd, fn))
