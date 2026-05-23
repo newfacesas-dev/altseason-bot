@@ -2,401 +2,391 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Altseason Bot 2026</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 <style>
-  :root {
-    --bg: #0d1117;
-    --card: #161b22;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --green: #3fb950;
-    --red: #f85149;
-    --yellow: #d29922;
-    --blue: #58a6ff;
-    --purple: #bc8cff;
-    --orange: #ffa657;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+:root {
+  --bg: #060d06;
+  --bg2: #0a140a;
+  --bg3: #0e1e0e;
+  --card: #0f1f0f;
+  --card2: #142014;
+  --border: rgba(0,255,65,0.12);
+  --border2: rgba(0,255,65,0.25);
+  --green: #00e440;
+  --green2: #00b832;
+  --green3: rgba(0,228,64,0.08);
+  --red: #ff4444;
+  --yellow: #ffcc00;
+  --blue: #00ccff;
+  --muted: rgba(0,228,64,0.45);
+  --text: #e8ffe8;
+  --text2: rgba(232,255,232,0.6);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; min-height: 100vh; overflow-x: hidden; }
 
-  .header { background: var(--card); border-bottom: 1px solid var(--border); padding: 16px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 100; }
-  .header-icon { font-size: 28px; }
-  .header-title { font-size: 18px; font-weight: 700; }
-  .header-sub { font-size: 12px; color: var(--muted); }
-  .refresh-btn { margin-left: auto; background: var(--blue); border: none; color: white; padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; }
-  .refresh-btn:active { opacity: 0.8; }
+.header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 16px 12px; position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: 10px; }
+.logo { width: 34px; height: 34px; background: var(--green3); border: 1px solid var(--border2); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--green); font-size: 18px; }
+.header-info { flex: 1; }
+.header-title { font-size: 15px; font-weight: 500; color: var(--text); }
+.header-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.refresh-btn { width: 34px; height: 34px; background: var(--green3); border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--green); cursor: pointer; font-size: 16px; }
+.refresh-btn:active { opacity: 0.7; }
 
-  .tabs { display: flex; background: var(--card); border-bottom: 1px solid var(--border); overflow-x: auto; }
-  .tab { padding: 12px 20px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
-  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+.tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { padding: 11px 16px; font-size: 12px; font-weight: 500; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.tab.active { color: var(--green); border-bottom-color: var(--green); }
 
-  .content { padding: 16px; max-width: 600px; margin: 0 auto; }
-  .section { display: none; }
-  .section.active { display: block; }
+.content { padding: 12px; }
+.section { display: none; }
+.section.active { display: block; }
 
-  .phase-card { border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; }
-  .phase-card.MONITORA { background: linear-gradient(135deg, #1c2a1c, #1a2f1a); border: 1px solid #3fb950; }
-  .phase-card.AZIONE   { background: linear-gradient(135deg, #1e1e0f, #2a2a10); border: 1px solid #d29922; }
-  .phase-card.USCITA   { background: linear-gradient(135deg, #2a1010, #2f1414); border: 1px solid #f85149; }
-  .phase-emoji { font-size: 40px; margin-bottom: 8px; }
-  .phase-name { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-  .phase-level { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; margin-bottom: 8px; }
-  .phase-level.MONITORA { background: rgba(63,185,80,0.2); color: var(--green); }
-  .phase-level.AZIONE   { background: rgba(210,153,34,0.2); color: var(--yellow); }
-  .phase-level.USCITA   { background: rgba(248,81,73,0.2); color: var(--red); }
-  .phase-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.phase-card { border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid; text-align: center; }
+.phase-MONITORA { background: rgba(0,228,64,0.05); border-color: rgba(0,228,64,0.2); }
+.phase-AZIONE { background: rgba(255,204,0,0.05); border-color: rgba(255,204,0,0.2); }
+.phase-USCITA { background: rgba(255,68,68,0.05); border-color: rgba(255,68,68,0.2); }
+.phase-icon { font-size: 32px; margin-bottom: 6px; }
+.phase-name { font-size: 17px; font-weight: 500; margin-bottom: 4px; }
+.phase-badge { display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 500; margin-bottom: 8px; }
+.badge-MONITORA { background: rgba(0,228,64,0.15); color: var(--green); }
+.badge-AZIONE { background: rgba(255,204,0,0.15); color: var(--yellow); }
+.badge-USCITA { background: rgba(255,68,68,0.15); color: var(--red); }
+.phase-desc { font-size: 12px; color: var(--text2); line-height: 1.5; }
 
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-  .metric-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
-  .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-  .metric-value { font-size: 22px; font-weight: 700; }
-  .metric-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.metric { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.metric-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px; }
+.metric-value { font-size: 20px; font-weight: 500; }
+.metric-sub { font-size: 10px; color: var(--text2); margin-top: 2px; }
+.green { color: var(--green); }
+.red { color: var(--red); }
+.yellow { color: var(--yellow); }
+.blue { color: var(--blue); }
 
-  .prices-list { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-  .price-row { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-  .price-row:last-child { border-bottom: none; }
-  .price-sym { font-weight: 700; width: 50px; }
-  .price-val { flex: 1; font-size: 15px; }
-  .price-change { font-size: 13px; font-weight: 600; padding: 3px 8px; border-radius: 6px; }
-  .price-change.up { background: rgba(63,185,80,0.15); color: var(--green); }
-  .price-change.down { background: rgba(248,81,73,0.15); color: var(--red); }
+.section-label { font-size: 10px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin: 14px 0 8px; }
 
-  .fg-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; }
-  .fg-value { font-size: 48px; font-weight: 700; }
-  .fg-label { font-size: 16px; color: var(--muted); margin-top: 4px; }
-  .fg-bar { height: 8px; border-radius: 4px; margin: 16px 0 8px; background: linear-gradient(to right, #f85149, #d29922, #3fb950); position: relative; }
-  .fg-needle { position: absolute; top: -4px; width: 16px; height: 16px; background: white; border-radius: 50%; transform: translateX(-50%); transition: left 0.5s; box-shadow: 0 0 6px rgba(0,0,0,0.5); }
-  .fg-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+.prices-list { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+.price-row { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); gap: 8px; }
+.price-row:last-child { border-bottom: none; }
+.price-row:active { background: var(--card2); }
+.price-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.price-sym { font-size: 13px; font-weight: 500; width: 46px; color: var(--text); }
+.price-val { flex: 1; font-size: 13px; color: var(--text); }
+.price-change { font-size: 12px; font-weight: 500; padding: 2px 7px; border-radius: 5px; }
+.up-bg { background: rgba(0,228,64,0.12); color: var(--green); }
+.down-bg { background: rgba(255,68,68,0.12); color: var(--red); }
 
-  .indicator-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
-  .indicator-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-  .indicator-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
-  .indicator-row:last-child { border-bottom: none; }
-  .ind-label { font-size: 12px; color: var(--muted); }
-  .ind-value { font-size: 14px; font-weight: 600; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-  .badge.green { background: rgba(63,185,80,0.2); color: var(--green); }
-  .badge.red { background: rgba(248,81,73,0.2); color: var(--red); }
-  .badge.yellow { background: rgba(210,153,34,0.2); color: var(--yellow); }
-  .badge.blue { background: rgba(88,166,255,0.2); color: var(--blue); }
+.fg-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; text-align: center; }
+.fg-number { font-size: 52px; font-weight: 500; line-height: 1; }
+.fg-label { font-size: 13px; color: var(--text2); margin-top: 4px; }
+.fg-bar { height: 6px; border-radius: 3px; background: linear-gradient(to right, #ff4444, #ffcc00, #00e440); margin: 14px 0 6px; position: relative; }
+.fg-needle { position: absolute; top: -5px; width: 16px; height: 16px; background: var(--text); border-radius: 50%; transform: translateX(-50%); transition: left 0.8s cubic-bezier(.34,1.56,.64,1); }
+.fg-hints { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
 
-  .alerts-list { margin-bottom: 16px; }
-  .alert-item { background: var(--card); border-radius: 10px; padding: 14px; margin-bottom: 10px; display: flex; gap: 10px; align-items: flex-start; }
-  .alert-item.warning { border-left: 3px solid var(--yellow); }
-  .alert-item.danger  { border-left: 3px solid var(--red); }
-  .alert-item.info    { border-left: 3px solid var(--blue); }
-  .alert-item.success { border-left: 3px solid var(--green); }
-  .alert-emoji { font-size: 20px; }
-  .alert-text { font-size: 13px; line-height: 1.5; }
+.ind-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+.ind-header { font-size: 13px; font-weight: 500; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.ind-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.ind-row:last-child { border-bottom: none; }
+.ind-key { font-size: 11px; color: var(--text2); }
+.ind-val { font-size: 12px; font-weight: 500; }
 
-  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  .chart-title { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 12px; }
+.alert-item { background: var(--card); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 8px; align-items: flex-start; border-left: 2px solid; }
+.alert-green { border-color: var(--green); }
+.alert-yellow { border-color: var(--yellow); }
+.alert-red { border-color: var(--red); }
+.alert-blue { border-color: var(--blue); }
+.alert-icon { font-size: 16px; margin-top: 1px; }
+.alert-text { font-size: 12px; line-height: 1.5; color: var(--text); }
 
-  .loading { text-align: center; padding: 40px; color: var(--muted); }
-  .loading-spinner { font-size: 32px; animation: spin 1s linear infinite; display: inline-block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+.perf-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.perf-row:last-child { border-bottom: none; }
+.perf-sym { font-size: 12px; font-weight: 500; width: 46px; color: var(--text); }
+.perf-bar-wrap { flex: 1; height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+.perf-bar { height: 100%; border-radius: 3px; transition: width 0.6s; }
+.perf-pct { font-size: 11px; font-weight: 500; min-width: 42px; text-align: right; }
 
-  .last-update { text-align: center; font-size: 11px; color: var(--muted); padding: 8px; }
+.chart-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.chart-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
 
-  .step-list { list-style: none; }
-  .step-list li { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; gap: 8px; }
-  .step-list li:last-child { border-bottom: none; }
+.update-line { text-align: center; font-size: 10px; color: var(--muted); padding: 10px 0 4px; }
+
+.loading { text-align: center; padding: 40px 20px; color: var(--muted); }
+.spinner { display: inline-block; width: 24px; height: 24px; border: 2px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 10px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.pulse { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 </style>
 </head>
 <body>
 
-<script>
-  if (window.Telegram && window.Telegram.WebApp) {
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.ready();
-    if (tg.colorScheme === 'light') {
-      document.documentElement.style.setProperty('--bg', '#ffffff');
-      document.documentElement.style.setProperty('--card', '#f0f0f0');
-      document.documentElement.style.setProperty('--text', '#000000');
-    }
-  }
-</script>
 <div class="header">
-  <div class="header-icon">🤖</div>
-  <div>
+  <div class="logo"><i class="ti ti-chart-line" aria-hidden="true"></i></div>
+  <div class="header-info">
     <div class="header-title">Altseason Bot 2026</div>
-    <div class="header-sub">Strategia Bull Run Avanzata</div>
+    <div class="header-sub" id="header-phase">Caricamento...</div>
   </div>
-  <button class="refresh-btn" onclick="loadAll()">🔄 Aggiorna</button>
+  <div class="refresh-btn" onclick="loadAll()" aria-label="Aggiorna dati">
+    <i class="ti ti-refresh" aria-hidden="true"></i>
+  </div>
 </div>
 
 <div class="tabs">
-  <div class="tab active" onclick="showTab('dashboard')">📊 Dashboard</div>
-  <div class="tab" onclick="showTab('prezzi')">💰 Prezzi</div>
-  <div class="tab" onclick="showTab('indicatori')">📉 Indicatori</div>
-  <div class="tab" onclick="showTab('strategia')">🎯 Strategia</div>
+  <div class="tab active" onclick="showTab('dashboard',this)"><i class="ti ti-layout-dashboard" style="font-size:13px" aria-hidden="true"></i> Dashboard</div>
+  <div class="tab" onclick="showTab('prezzi',this)"><i class="ti ti-currency-dollar" style="font-size:13px" aria-hidden="true"></i> Prezzi</div>
+  <div class="tab" onclick="showTab('indicatori',this)"><i class="ti ti-chart-bar" style="font-size:13px" aria-hidden="true"></i> Indicatori</div>
+  <div class="tab" onclick="showTab('strategia',this)"><i class="ti ti-target" style="font-size:13px" aria-hidden="true"></i> Strategia</div>
 </div>
 
-<!-- DASHBOARD -->
 <div class="content">
+
 <div id="tab-dashboard" class="section active">
-  <div id="phase-section"><div class="loading"><div class="loading-spinner">⏳</div><br>Caricamento fase...</div></div>
-  <div class="grid-2" id="macro-grid"></div>
-  <div id="fg-section"></div>
-  <div id="alerts-section"></div>
+  <div id="phase-box"><div class="loading"><div class="spinner"></div><br>Analisi mercato...</div></div>
+  <div class="grid2" id="macro-grid"></div>
+  <div id="fg-box"></div>
+  <div class="section-label">Alert attivi</div>
+  <div id="alerts-box"></div>
+  <div class="chart-wrap">
+    <div class="chart-title">Performance 24h — top asset</div>
+    <div style="position:relative;height:180px"><canvas id="perfChart" role="img" aria-label="Grafico performance 24h degli asset principali"></canvas></div>
+  </div>
 </div>
 
-<!-- PREZZI -->
 <div id="tab-prezzi" class="section">
-  <div id="prices-section"><div class="loading"><div class="loading-spinner">⏳</div></div></div>
+  <div id="prices-box"><div class="loading"><div class="spinner"></div></div></div>
 </div>
 
-<!-- INDICATORI -->
 <div id="tab-indicatori" class="section">
-  <div id="indicators-section"><div class="loading"><div class="loading-spinner">⏳</div></div></div>
+  <div id="ind-box"><div class="loading"><div class="spinner"></div></div></div>
 </div>
 
-<!-- STRATEGIA -->
 <div id="tab-strategia" class="section">
-  <div id="strategy-section"><div class="loading"><div class="loading-spinner">⏳</div></div></div>
+  <div id="strat-box"><div class="loading"><div class="spinner"></div></div></div>
 </div>
 
-<div class="last-update" id="last-update"></div>
+<div class="update-line" id="update-line"></div>
 </div>
 
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
-const ASSETS = ['BTC','ETH','XRP','SOL','ADA','BNB','DOGE','PEPE','SHIB'];
-const CG_IDS = {BTC:'bitcoin',ETH:'ethereum',XRP:'ripple',SOL:'solana',ADA:'cardano',BNB:'binancecoin',DOGE:'dogecoin',PEPE:'pepe',SHIB:'shiba-inu'};
+if(window.Telegram?.WebApp){ const tg=window.Telegram.WebApp; tg.expand(); tg.ready(); }
 
-let globalData = null, pricesData = null, fgData = null;
+const CG={BTC:'bitcoin',ETH:'ethereum',XRP:'ripple',SOL:'solana',ADA:'cardano',BNB:'binancecoin',DOGE:'dogecoin',HBAR:'hedera-hashgraph',BONK:'bonk',POL:'matic-network',XLM:'stellar',ALGO:'algorand',TRX:'tron'};
+let G=null,P=null,FG=null,chart=null;
 
-function showTab(name) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('tab-' + name).classList.add('active');
-  event.target.classList.add('active');
+async function api(path){
+  const r=await fetch(path);
+  if(!r.ok) throw new Error(r.status);
+  return r.json();
 }
 
-async function fetchGlobal() {
-  const r = await fetch('/api/global');
-  const d = await r.json();
-  const data = d.data;
-  const total = data.total_market_cap.usd;
-  const btcM = data.market_cap_percentage.btc / 100 * total;
-  const ethM = (data.market_cap_percentage.eth || 0) / 100 * total;
-  return {
-    btc_dom: data.market_cap_percentage.btc,
-    total3_b: (total - btcM - ethM) / 1e9,
-    total_mcap: total
-  };
-}
-
-async function fetchPrices() {
-  const ids = Object.values(CG_IDS).join(',');
-  const r = await fetch('/api/prices');
-  const raw = await r.json();
-  const result = {};
-  for (const [sym, id] of Object.entries(CG_IDS)) {
-    const d = raw[id] || {};
-    result[sym] = { price: d.usd||0, change24: d.usd_24h_change||0, mcap: d.usd_market_cap||0, vol: d.usd_24h_vol||0 };
+async function fetchAll(){
+  const [g,p,fg]=await Promise.all([
+    api('/api/global'),
+    api('/api/prices'),
+    api('/api/fg')
+  ]);
+  const d=g.data;
+  const tot=d.total_market_cap.usd;
+  const btcM=d.market_cap_percentage.btc/100*tot;
+  const ethM=(d.market_cap_percentage.eth||0)/100*tot;
+  G={dom:d.market_cap_percentage.btc,total3:(tot-btcM-ethM)/1e9,mcap:tot};
+  P={};
+  for(const[sym,id] of Object.entries(CG)){
+    const x=p[id]||{};
+    P[sym]={price:x.usd||0,ch:x.usd_24h_change||0,mcap:x.usd_market_cap||0,vol:x.usd_24h_vol||0};
   }
-  return result;
+  const v=parseInt(fg.data[0].value);
+  const lbl=fg.data[0].value_classification;
+  const em=v<=25?'😱':v<=45?'😰':v<=55?'😐':v<=75?'😊':'🤑';
+  const col=v<=25?'#ff4444':v<=45?'#ffaa00':v<=55?'#8bb':v<=75?'#00e440':'#00e440';
+  FG={v,lbl,em,col};
 }
 
-async function fetchFG() {
-  const r = await fetch('/api/fg');
-  const d = await r.json();
-  const v = parseInt(d.data[0].value);
-  const label = d.data[0].value_classification;
-  let emoji = v<=25?'😱':v<=45?'😰':v<=55?'😐':v<=75?'😊':'🤑';
-  let color = v<=25?'#f85149':v<=45?'#ffa657':v<=55?'#8b949e':v<=75?'#3fb950':'#3fb950';
-  return { value: v, label, emoji, color };
+function phase(){
+  if(!G) return {name:'Caricamento...',level:'MONITORA',emoji:'⏳',desc:'...'};
+  const d=G.dom;
+  if(d<48) return {name:'Euforia / Top Ciclo',level:'USCITA',emoji:'🚨',desc:`BTC Dom ${d.toFixed(1)}% — zona storica di top ciclo. Prese profitto aggressive.`};
+  if(d<52) return {name:'Altseason Attiva',level:'AZIONE',emoji:'⚡',desc:'BTC Dom sotto soglia. Altcoin in espansione. Rotazione capitale.'};
+  return {name:'Accumulo / Pre-Altseason',level:'MONITORA',emoji:'👀',desc:`BTC Dom ${d.toFixed(1)}% — fase accumulo. Costruzione posizioni graduale.`};
 }
 
-function detectPhase(btcDom) {
-  if (btcDom < 48) return { phase:'⚠️ EUFORIA / TOP CICLO', level:'USCITA', emoji:'🚨', desc:'BTC Dom sotto 48% — segnale storico di top ciclo. Prese profitto aggressive.' };
-  if (btcDom < 52) return { phase:'📈 ALTSEASON ATTIVA', level:'AZIONE', emoji:'⚡', desc:'BTC Dom sotto soglia. Le altcoin sono in espansione. Rotazione capitale.' };
-  return { phase:'🔍 ACCUMULO / PRE-ALTSEASON', level:'MONITORA', emoji:'👀', desc:`BTC Dom a ${btcDom.toFixed(1)}% — ancora alta. Costruzione posizioni graduale.` };
-}
-
-function renderPhase(phase) {
-  document.getElementById('phase-section').innerHTML = `
-    <div class="phase-card ${phase.level}">
-      <div class="phase-emoji">${phase.emoji}</div>
-      <div class="phase-name">${phase.phase}</div>
-      <span class="phase-level ${phase.level}">${phase.level}</span>
-      <div class="phase-desc">${phase.desc}</div>
+function renderDashboard(){
+  const ph=phase();
+  document.getElementById('header-phase').textContent=ph.emoji+' '+ph.level;
+  document.getElementById('phase-box').innerHTML=`
+    <div class="phase-card phase-${ph.level}">
+      <div class="phase-icon">${ph.emoji}</div>
+      <div class="phase-name">${ph.name}</div>
+      <span class="phase-badge badge-${ph.level}">${ph.level}</span>
+      <div class="phase-desc">${ph.desc}</div>
     </div>`;
-}
-
-function renderMacro(global, fg) {
-  const btcDomColor = global.btc_dom < 48 ? 'var(--red)' : global.btc_dom < 52 ? 'var(--yellow)' : 'var(--green)';
-  document.getElementById('macro-grid').innerHTML = `
-    <div class="metric-card">
-      <div class="metric-label">BTC Dominance</div>
-      <div class="metric-value" style="color:${btcDomColor}">${global.btc_dom.toFixed(1)}%</div>
-      <div class="metric-sub">${global.btc_dom < 52 ? '🟢 Altseason' : '🔴 BTC domina'}</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-label">TOTAL3</div>
-      <div class="metric-value" style="color:var(--blue)">$${global.total3_b.toFixed(0)}B</div>
-      <div class="metric-sub">Altcoin market cap</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-label">Total Market Cap</div>
-      <div class="metric-value" style="color:var(--purple)">$${(global.total_mcap/1e12).toFixed(2)}T</div>
-      <div class="metric-sub">Mercato totale</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-label">Fear & Greed</div>
-      <div class="metric-value" style="color:${fg.color}">${fg.value}</div>
-      <div class="metric-sub">${fg.emoji} ${fg.label}</div>
-    </div>`;
-}
-
-function renderFG(fg) {
-  const pct = fg.value + '%';
-  document.getElementById('fg-section').innerHTML = `
+  const eth=P.ETH,btc=P.BTC;
+  const ethbtc=eth&&btc&&btc.price?eth.price/btc.price:0;
+  const dc=G.dom<48?'red':G.dom<52?'yellow':'green';
+  document.getElementById('macro-grid').innerHTML=`
+    <div class="metric"><div class="metric-label"><i class="ti ti-percentage" style="font-size:11px" aria-hidden="true"></i>BTC Dom</div><div class="metric-value ${dc}">${G.dom.toFixed(1)}%</div><div class="metric-sub">${G.dom<52?'Altseason':'BTC domina'}</div></div>
+    <div class="metric"><div class="metric-label"><i class="ti ti-coins" style="font-size:11px" aria-hidden="true"></i>TOTAL3</div><div class="metric-value blue">$${G.total3.toFixed(0)}B</div><div class="metric-sub">Altcoin mcap</div></div>
+    <div class="metric"><div class="metric-label"><i class="ti ti-trending-up" style="font-size:11px" aria-hidden="true"></i>ETH/BTC</div><div class="metric-value ${ethbtc>0.06?'green':'yellow'}">${ethbtc.toFixed(4)}</div><div class="metric-sub">${ethbtc>0.06?'Breakout!':'Sotto soglia'}</div></div>
+    <div class="metric"><div class="metric-label"><i class="ti ti-mood-smile" style="font-size:11px" aria-hidden="true"></i>Fear&Greed</div><div class="metric-value" style="color:${FG.col}">${FG.v}</div><div class="metric-sub">${FG.em} ${FG.lbl}</div></div>`;
+  const fgPct=FG.v+'%';
+  document.getElementById('fg-box').innerHTML=`
     <div class="fg-card">
-      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">😱 FEAR & GREED INDEX</div>
-      <div class="fg-value" style="color:${fg.color}">${fg.value}</div>
-      <div class="fg-label">${fg.emoji} ${fg.label}</div>
-      <div class="fg-bar"><div class="fg-needle" style="left:${pct}"></div></div>
-      <div class="fg-labels"><span>Paura Estrema</span><span>Neutro</span><span>Avidità Estrema</span></div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Fear & Greed Index</div>
+      <div class="fg-number" style="color:${FG.col}">${FG.v}</div>
+      <div class="fg-label">${FG.em} ${FG.lbl}</div>
+      <div class="fg-bar"><div class="fg-needle" style="left:${fgPct}"></div></div>
+      <div class="fg-hints"><span>Paura</span><span>Neutro</span><span>Avidità</span></div>
     </div>`;
+  const alerts=[];
+  if(P.XRP&&P.XRP.ch>15&&ph.level!='MONITORA') alerts.push({cl:'alert-yellow',ic:'ti-alert-triangle',t:`XRP pump +${P.XRP.ch.toFixed(1)}% tardivo — possibile segnale di top ciclo vicino`});
+  const memes=['DOGE','BONK'].filter(s=>P[s]&&P[s].ch>8);
+  if(memes.length>=1) alerts.push({cl:'alert-red',ic:'ti-flame',t:`Meme coin mania: ${memes.map(s=>s+' +'+P[s].ch.toFixed(1)+'%').join(' ')} — euforia in corso`});
+  if(G.dom<48) alerts.push({cl:'alert-red',ic:'ti-alarm',t:'BTC Dom sotto 48% — zona storica di top. Considera uscite immediate.'});
+  else if(G.dom<52) alerts.push({cl:'alert-green',ic:'ti-rocket',t:'Altseason attiva — ruota verso altcoin a maggiore beta.'});
+  if(FG.v>80) alerts.push({cl:'alert-red',ic:'ti-mood-crazy-happy',t:`Fear & Greed ${FG.v} — avidità estrema. Attenzione al top.`});
+  if(FG.v<25) alerts.push({cl:'alert-green',ic:'ti-shopping-cart',t:`Fear & Greed ${FG.v} — paura estrema. Storicamente zona di accumulo.`});
+  if(!alerts.length) alerts.push({cl:'alert-green',ic:'ti-check',t:'Nessun alert urgente. Mercato nella norma.'});
+  document.getElementById('alerts-box').innerHTML=alerts.map(a=>`<div class="alert-item ${a.cl}"><i class="ti ${a.ic} alert-icon" aria-hidden="true"></i><div class="alert-text">${a.t}</div></div>`).join('');
+  renderPerfChart();
 }
 
-function renderAlerts(prices, phase, global) {
-  const alerts = [];
-  const xrp = prices['XRP'];
-  if (xrp && xrp.change24 > 15 && phase.level !== 'MONITORA')
-    alerts.push({type:'warning', emoji:'⚠️', text:`XRP pump tardivo +${xrp.change24.toFixed(1)}% — possibile segnale di top ciclo vicino`});
-  const memes = ['PEPE','DOGE','SHIB'].filter(s => prices[s]?.change24 > 8);
-  if (memes.length >= 2)
-    alerts.push({type:'danger', emoji:'🎰', text:`Meme Coin Mania: ${memes.map(s=>s+' +'+prices[s].change24.toFixed(1)+'%').join(' | ')} — fase euforia finale`});
-  if (global.btc_dom < 48)
-    alerts.push({type:'danger', emoji:'🚨', text:'BTC Dominance sotto 48% — zona storica di top ciclo. Considera uscite aggressive.'});
-  else if (global.btc_dom < 52)
-    alerts.push({type:'info', emoji:'⚡', text:'BTC Dominance sotto 52% — Altseason attiva. Rotazione verso altcoin.'});
-  if (alerts.length === 0)
-    alerts.push({type:'success', emoji:'✅', text:'Nessun alert urgente. Mercato nella norma.'});
-  document.getElementById('alerts-section').innerHTML = `
-    <div class="alerts-list">${alerts.map(a=>`
-      <div class="alert-item ${a.type}">
-        <div class="alert-emoji">${a.emoji}</div>
-        <div class="alert-text">${a.text}</div>
+function renderPerfChart(){
+  const syms=['BTC','ETH','SOL','XRP','BNB','DOGE','ADA'];
+  const vals=syms.map(s=>P[s]?parseFloat(P[s].ch.toFixed(2)):0);
+  const colors=vals.map(v=>v>=0?'rgba(0,228,64,0.7)':'rgba(255,68,68,0.7)');
+  if(chart) chart.destroy();
+  chart=new Chart(document.getElementById('perfChart'),{
+    type:'bar',
+    data:{labels:syms,datasets:[{data:vals,backgroundColor:colors,borderRadius:4,borderSkipped:false}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{
+      x:{ticks:{color:'rgba(0,228,64,0.5)',font:{size:10}},grid:{color:'rgba(0,228,64,0.05)'},border:{color:'rgba(0,228,64,0.1)'}},
+      y:{ticks:{color:'rgba(0,228,64,0.5)',font:{size:10},callback:v=>v+'%'},grid:{color:'rgba(0,228,64,0.05)'},border:{color:'rgba(0,228,64,0.1)'}}
+    }}
+  });
+}
+
+function renderPrices(){
+  const sorted=Object.entries(P).sort((a,b)=>b[1].ch-a[1].ch);
+  document.getElementById('prices-box').innerHTML=`
+    <div class="section-label">Tutti gli asset</div>
+    <div class="prices-list">${sorted.map(([s,p])=>`
+      <div class="price-row">
+        <div class="price-dot" style="background:${p.ch>=0?'var(--green)':'var(--red)'}"></div>
+        <div class="price-sym">${s}</div>
+        <div class="price-val">$${p.price>1?p.price.toLocaleString('en-US',{maximumFractionDigits:2}):p.price>0.001?p.price.toFixed(5):p.price.toFixed(8)}</div>
+        <span class="price-change ${p.ch>=0?'up-bg':'down-bg'}">${p.ch>=0?'+':''}${p.ch.toFixed(2)}%</span>
       </div>`).join('')}
     </div>`;
 }
 
-function renderPrices(prices) {
-  const sorted = ASSETS.map(s => ({sym:s, ...prices[s]})).sort((a,b) => b.change24 - a.change24);
-  document.getElementById('prices-section').innerHTML = `
-    <div class="prices-list">
-      ${sorted.map(p => `
-        <div class="price-row">
-          <div class="price-sym">${p.sym}</div>
-          <div class="price-val">$${p.price > 1 ? p.price.toLocaleString('en-US',{maximumFractionDigits:2}) : p.price.toFixed(6)}</div>
-          <span class="price-change ${p.change24>=0?'up':'down'}">${p.change24>=0?'+':''}${p.change24.toFixed(2)}%</span>
+function renderIndicators(){
+  const eth=P.ETH,btc=P.BTC;
+  const ethbtc=eth&&btc&&btc.price?(eth.price/btc.price).toFixed(5):'N/A';
+  const sorted=Object.entries(P).sort((a,b)=>b[1].ch-a[1].ch).slice(0,8);
+  const maxAbs=Math.max(...sorted.map(([,p])=>Math.abs(p.ch)),1);
+  document.getElementById('ind-box').innerHTML=`
+    <div class="section-label">Macro</div>
+    <div class="ind-card">
+      <div class="ind-row"><span class="ind-key">BTC Dominance</span><span class="ind-val ${G.dom<48?'red':G.dom<52?'yellow':'green'}">${G.dom.toFixed(2)}%</span></div>
+      <div class="ind-row"><span class="ind-key">ETH/BTC Ratio</span><span class="ind-val ${parseFloat(ethbtc)>0.06?'green':'yellow'}">${ethbtc}</span></div>
+      <div class="ind-row"><span class="ind-key">TOTAL3</span><span class="ind-val blue">$${G.total3.toFixed(1)}B</span></div>
+      <div class="ind-row"><span class="ind-key">Market Cap Totale</span><span class="ind-val">$${(G.mcap/1e12).toFixed(2)}T</span></div>
+      <div class="ind-row"><span class="ind-key">Fear & Greed</span><span class="ind-val" style="color:${FG.col}">${FG.v} — ${FG.lbl}</span></div>
+    </div>
+    <div class="section-label">Performance 24h</div>
+    <div class="ind-card">
+      ${sorted.map(([s,p])=>`
+        <div class="perf-row">
+          <div class="perf-sym">${s}</div>
+          <div class="perf-bar-wrap"><div class="perf-bar" style="width:${Math.abs(p.ch)/maxAbs*100}%;background:${p.ch>=0?'var(--green)':'var(--red)'}"></div></div>
+          <div class="perf-pct ${p.ch>=0?'green':'red'}">${p.ch>=0?'+':''}${p.ch.toFixed(1)}%</div>
         </div>`).join('')}
+    </div>
+    <div class="section-label">Volume 24h</div>
+    <div class="ind-card">
+      ${['BTC','ETH','SOL','XRP','BNB'].map(s=>`
+        <div class="ind-row"><span class="ind-key">${s}</span><span class="ind-val">$${P[s]?(P[s].vol/1e9).toFixed(2):'0'}B</span></div>`).join('')}
     </div>`;
 }
 
-function renderIndicators(prices, global) {
-  const ethBtc = prices['ETH'].price / prices['BTC'].price;
-  document.getElementById('indicators-section').innerHTML = `
-    <div class="indicator-card">
-      <div class="indicator-title">📊 Ratio & Macro</div>
-      <div class="indicator-row">
-        <span class="ind-label">ETH/BTC Ratio</span>
-        <span class="ind-value">${ethBtc.toFixed(5)} <span class="badge ${ethBtc>0.06?'green':'yellow'}">${ethBtc>0.06?'Breakout':'Sotto soglia'}</span></span>
-      </div>
-      <div class="indicator-row">
-        <span class="ind-label">BTC Dominance</span>
-        <span class="ind-value">${global.btc_dom.toFixed(2)}% <span class="badge ${global.btc_dom<48?'red':global.btc_dom<52?'yellow':'blue'}">${global.btc_dom<48?'Euforia':global.btc_dom<52?'Altseason':'Accumulazione'}</span></span>
-      </div>
-      <div class="indicator-row">
-        <span class="ind-label">TOTAL3</span>
-        <span class="ind-value">$${global.total3_b.toFixed(1)}B</span>
-      </div>
+function renderStrategy(){
+  const ph=phase();
+  const steps=ph.level==='MONITORA'
+    ?['Tieni le posizioni — Fear & Greed basso = zona di accumulo','Non vendere nulla in questa fase, lascia correre','Monitora BTC Dom: quando scende sotto 52% → rotazione','Imposta gli alert sui target T1 di ogni coin']
+    :ph.level==='AZIONE'
+    ?['Ruota verso altcoin a maggiore beta (SOL, ADA, HBAR)','Lascia correre le posizioni in profitto','Prima tranche take profit su +50-100% da ingresso','Monitora XRP: pump tardivo = segnale di top vicino']
+    :['Prendi profitto progressivo: 25% subito','Sposta liquidità in USDT/USDC','DOGE e BONK escono per primi — sono meme coin','Se BTC Dom rimbalza sopra 55% → uscita totale'];
+  const targets=[
+    {sym:'XRP',now:P.XRP?.price||1.36,t:[[3,'T1'],[5,'T2'],[8,'T3'],[12,'T4']]},
+    {sym:'SOL',now:P.SOL?.price||87,t:[[200,'T1'],[350,'T2'],[500,'T3'],[800,'T4']]},
+    {sym:'ETH',now:P.ETH?.price||2100,t:[[4000,'T1'],[6000,'T2'],[9000,'T3'],[14000,'T4']]},
+    {sym:'DOGE',now:P.DOGE?.price||0.11,t:[[0.30,'T1'],[0.60,'T2'],[1.00,'ESCI']]},
+    {sym:'HBAR',now:P.HBAR?.price||0.077,t:[[0.20,'T1'],[0.40,'T2'],[0.70,'T3']]},
+  ];
+  document.getElementById('strat-box').innerHTML=`
+    <div class="phase-card phase-${ph.level}" style="margin-bottom:12px">
+      <div class="phase-icon">${ph.emoji}</div>
+      <div class="phase-name">${ph.name}</div>
+      <span class="phase-badge badge-${ph.level}">${ph.level}</span>
     </div>
-    <div class="indicator-card">
-      <div class="indicator-title">💰 Volume 24h</div>
-      ${['BTC','ETH','XRP','SOL'].map(s => `
-        <div class="indicator-row">
-          <span class="ind-label">${s}</span>
-          <span class="ind-value">$${(prices[s].vol/1e9).toFixed(2)}B</span>
-        </div>`).join('')}
+    <div class="section-label">Piano operativo</div>
+    <div class="ind-card" style="margin-bottom:12px">
+      ${steps.map((s,i)=>`<div class="ind-row" style="padding:7px 0"><span class="ind-key" style="color:var(--green);font-weight:500;margin-right:6px">${i+1}.</span><span style="font-size:12px;color:var(--text);line-height:1.4">${s}</span></div>`).join('')}
     </div>
-    <div class="indicator-card">
-      <div class="indicator-title">🏆 Performance 24h</div>
-      ${ASSETS.slice(0,7).sort((a,b)=>prices[b].change24-prices[a].change24).map(s => `
-        <div class="indicator-row">
-          <span class="ind-label">${s}</span>
-          <div style="display:flex;align-items:center;gap:8px">
-            <div style="width:80px;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-              <div style="width:${Math.min(100,Math.abs(prices[s].change24)*3)}%;height:100%;background:${prices[s].change24>=0?'var(--green)':'var(--red)'};border-radius:3px"></div>
-            </div>
-            <span class="ind-value" style="color:${prices[s].change24>=0?'var(--green)':'var(--red)'}">${prices[s].change24>=0?'+':''}${prices[s].change24.toFixed(1)}%</span>
-          </div>
-        </div>`).join('')}
+    <div class="section-label">Target di uscita</div>
+    ${targets.map(({sym,now,t})=>`
+      <div class="ind-card" style="margin-bottom:8px">
+        <div class="ind-header"><i class="ti ti-coin" style="font-size:14px;color:var(--green)" aria-hidden="true"></i>${sym} <span style="font-size:11px;color:var(--text2);font-weight:400">ora $${now>1?now.toLocaleString('en-US',{maximumFractionDigits:2}):now.toFixed(5)}</span></div>
+        <div style="display:grid;grid-template-columns:repeat(${t.length},1fr);gap:6px">
+          ${t.map(([tp,lbl],i)=>{
+            const pct=((tp-now)/now*100);
+            const cols=['rgba(0,228,64,0.1)','rgba(0,204,255,0.1)','rgba(255,204,0,0.1)','rgba(255,68,68,0.1)'];
+            const tc=['var(--green)','var(--blue)','var(--yellow)','var(--red)'];
+            return `<div style="background:${cols[i]||cols[3]};border-radius:7px;padding:7px 4px;text-align:center">
+              <div style="font-size:9px;color:var(--muted);margin-bottom:2px">${lbl}</div>
+              <div style="font-size:12px;font-weight:500;color:${tc[i]||tc[3]}">$${tp>=1?tp.toLocaleString('en-US'):tp.toFixed(4)}</div>
+              <div style="font-size:9px;color:var(--text2);margin-top:1px">+${pct.toFixed(0)}%</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`).join('')}
+    <div class="section-label">Segnali di top ciclo</div>
+    <div class="ind-card">
+      <div class="ind-row"><span class="ind-key">BTC Dom scende sotto 48%</span><span style="font-size:11px;color:var(--red);font-weight:500">ESCI SUBITO</span></div>
+      <div class="ind-row"><span class="ind-key">XRP pump tardivo +15%</span><span style="font-size:11px;color:var(--red);font-weight:500">ESCI 50%</span></div>
+      <div class="ind-row"><span class="ind-key">Fear & Greed sopra 85</span><span style="font-size:11px;color:var(--yellow);font-weight:500">ATTENZIONE</span></div>
+      <div class="ind-row"><span class="ind-key">Meme mania (DOGE+BONK)</span><span style="font-size:11px;color:var(--yellow);font-weight:500">ESCI MEME</span></div>
+      <div class="ind-row" style="border:none"><span class="ind-key">Tutti parlano di crypto</span><span style="font-size:11px;color:var(--red);font-weight:500">TOP VICINO</span></div>
     </div>`;
 }
 
-function renderStrategy(phase) {
-  const steps = phase.level === 'MONITORA'
-    ? ['Accumula ETH, SOL, XRP gradualmente nelle fasi di debolezza','Aspetta BTC Dom < 52% per aumentare esposizione','Mantieni stoploss su ogni posizione','Non overleverage — massimo 20% del portafoglio per posizione']
-    : phase.level === 'AZIONE'
-    ? ['Ruota capitale verso altcoin a maggiore beta (SOL, ADA, DOT)','Lascia correre le posizioni in profitto — non vendere troppo presto','Prima tranche di take profit su +100% da ingresso','Monitora XRP: pump tardivo = segnale di top vicino']
-    : ['Prendi profitto progressivo: 25% subito, 25% dopo +20% ulteriore','Sposta liquidità in USDT/USDC','Monitora BTC Dom: se rimbalza sopra 55% → USCITA TOTALE','Non rientrare finché BTC Dom non scende di nuovo'];
-
-  document.getElementById('strategy-section').innerHTML = `
-    <div class="phase-card ${phase.level}" style="margin-bottom:16px">
-      <div class="phase-emoji">${phase.emoji}</div>
-      <div class="phase-name">${phase.phase}</div>
-      <span class="phase-level ${phase.level}">${phase.level}</span>
-      <div class="phase-desc">${phase.desc}</div>
-    </div>
-    <div class="indicator-card">
-      <div class="indicator-title">📋 Piano Operativo</div>
-      <ul class="step-list">
-        ${steps.map((s,i)=>`<li><span style="color:var(--blue);font-weight:700">${i+1}.</span> ${s}</li>`).join('')}
-      </ul>
-    </div>
-    <div class="indicator-card">
-      <div class="indicator-title">⚠️ Segnali di Top Ciclo</div>
-      <ul class="step-list">
-        <li><span style="color:var(--red)">🔴</span> BTC Dominance sotto 48%</li>
-        <li><span style="color:var(--red)">🔴</span> XRP pump +15% in fase avanzata</li>
-        <li><span style="color:var(--red)">🔴</span> Fear & Greed sopra 85 per 3+ giorni</li>
-        <li><span style="color:var(--red)">🔴</span> 2+ Meme coin pump +8% in 24h</li>
-        <li><span style="color:var(--red)">🔴</span> Tutti parlano di crypto sui social</li>
-      </ul>
-    </div>`;
+function showTab(id,el){
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  if(el) el.classList.add('active');
+  if(id==='prezzi'&&P) renderPrices();
+  if(id==='indicatori'&&G) renderIndicators();
+  if(id==='strategia'&&P) renderStrategy();
 }
 
-async function loadAll() {
+async function loadAll(){
   try {
-    document.getElementById('phase-section').innerHTML = '<div class="loading"><div class="loading-spinner">⏳</div></div>';
-    const [global, prices, fg] = await Promise.all([fetchGlobal(), fetchPrices(), fetchFG()]);
-    globalData = global; pricesData = prices; fgData = fg;
-    const phase = detectPhase(global.btc_dom);
-    renderPhase(phase);
-    renderMacro(global, fg);
-    renderFG(fg);
-    renderAlerts(prices, phase, global);
-    renderPrices(prices);
-    renderIndicators(prices, global);
-    renderStrategy(phase);
-    document.getElementById('last-update').textContent = '🕐 Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
+    await fetchAll();
+    renderDashboard();
+    document.getElementById('update-line').textContent='Aggiornato: '+new Date().toLocaleTimeString('it-IT');
   } catch(e) {
-    console.error(e);
-    document.getElementById('phase-section').innerHTML = `<div class="loading">❌ Errore caricamento dati<br><small>${e.message}</small></div>`;
+    document.getElementById('phase-box').innerHTML=`<div class="loading" style="color:var(--red)"><i class="ti ti-alert-circle" style="font-size:24px" aria-hidden="true"></i><br>Errore caricamento<br><span style="font-size:11px">${e.message}</span></div>`;
   }
 }
 
 loadAll();
-setInterval(loadAll, 60000); // auto-refresh ogni minuto
+setInterval(loadAll, 60000);
 </script>
 </body>
 </html>
