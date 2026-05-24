@@ -33,6 +33,7 @@ ASSETS = {
     "GRT": "the-graph", "NEAR": "near", "FET": "fetch-ai",
     "SEI": "sei-network", "LUNA": "terra-luna-2", "MANA": "decentraland",
     "PEPE": "pepe", "SHIB": "shiba-inu",
+    "AGIX": "singularitynet", "RENDER": "render-token", "INJ": "injective-protocol", "TIA": "celestia",
 }
 
 PORTFOLIO_QTY = {
