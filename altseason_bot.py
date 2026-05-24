@@ -1125,6 +1125,7 @@ async def handle_text(u, c):
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
     elif t == "💳 Abbonati": await cmd_pay(u, c)
+    elif t == "🔗 Referral": await cmd_referral(u, c)
     elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
     elif t == "👥 I miei Utenti": await cmd_users(u, c)
     elif t == "📊 Stats Admin": await cmd_admin(u, c)
