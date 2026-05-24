@@ -13,18 +13,35 @@ from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
+# ============================================================
+# CONFIGURAZIONE
+# ============================================================
 TELEGRAM_TOKEN = "8940955681:AAGbto8_W43gSe21rA3LlN776tMQfD2auIo"
+ADMIN_ID = "670903243"
 CHAT_ID = "670903243"
-
-CHECK_INTERVAL_SECONDS = 1800
+CHECK_INTERVAL = 1800
 BTC_DOM_THRESHOLD = 52.0
 BTC_DOM_WARNING = 48.0
-ETH_BTC_BREAKOUT = 0.060
 RSI_OVERSOLD = 35
 RSI_OVERBOUGHT = 70
-VOLUME_SPIKE_MULTIPLIER = 2.0
+VOLUME_SPIKE = 2.0
 QUIET_START = 23
 QUIET_END = 8
+AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
+
+ADMIN_PORTFOLIO = {
+    "XRP": {"qty": 25142, "buy": 1.36},
+    "SOL": {"qty": 201, "buy": 85.9},
+    "ETH": {"qty": 10.52, "buy": 2117},
+    "DOGE": {"qty": 31128, "buy": 0.10},
+    "BNB": {"qty": 5.05, "buy": 590},
+    "HBAR": {"qty": 14686, "buy": 0.07},
+    "BONK": {"qty": 150804881, "buy": 0.000006},
+    "SEI": {"qty": 13723, "buy": 0.40},
+    "FET": {"qty": 3223, "buy": 0.21},
+    "LUNA": {"qty": 9057, "buy": 0.50},
+    "GRT": {"qty": 43036, "buy": 0.12},
+}
 
 ASSETS = {
     "BTC": "bitcoin", "ETH": "ethereum", "XRP": "ripple", "SOL": "solana",
@@ -33,24 +50,43 @@ ASSETS = {
     "XLM": "stellar", "POL": "matic-network", "TRX": "tron",
     "GRT": "the-graph", "NEAR": "near", "FET": "fetch-ai",
     "SEI": "sei-network", "LUNA": "terra-luna-2", "MANA": "decentraland",
-    "PEPE": "pepe", "SHIB": "shiba-inu",
-    "AGIX": "singularitynet", "RENDER": "render-token", "INJ": "injective-protocol", "TIA": "celestia",
+    "PEPE": "pepe", "SHIB": "shiba-inu", "AGIX": "singularitynet",
+    "RENDER": "render-token", "INJ": "injective-protocol", "TIA": "celestia",
 }
 
-PORTFOLIO_QTY = {
-    "XRP": 25142, "SOL": 201, "ETH": 10.52, "DOGE": 31128,
-    "BNB": 5.05, "HBAR": 14686, "BONK": 150804881,
-    "SEI": 13723, "FET": 3223, "LUNA": 9057,
-}
+# ============================================================
+# LOGGING
+# ============================================================
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
+log = logging.getLogger(__name__)
+_cache = {}
+CACHE_TTL = 180
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.json")
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users")
-os.makedirs(DATA_DIR, exist_ok=True)
-AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
+# ============================================================
+# KEYBOARD
+# ============================================================
+KEYBOARD = ReplyKeyboardMarkup([
+    [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
+    [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
+    [KeyboardButton("🏆 Top Performer"), KeyboardButton("💱 Forex & Indici")],
+    [KeyboardButton("📰 News"), KeyboardButton("📅 Timeline")],
+    [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
+    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
+    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
+    [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
+    [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
+    [KeyboardButton("📢 Condividi"), KeyboardButton("👥 Utenti")],
+    [KeyboardButton("❓ Aiuto")],
+], resize_keyboard=True)
 
+ADMIN_KEYBOARD = ReplyKeyboardMarkup([
+    [KeyboardButton("👥 I miei Utenti"), KeyboardButton("📊 Stats Admin")],
+    [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
+], resize_keyboard=True)
 
-ADMIN_ID = "670903243"
-
+# ============================================================
+# REDIS / STORAGE
+# ============================================================
 def get_redis():
     try:
         url = os.environ.get("REDIS_URL", "")
@@ -66,23 +102,14 @@ def load_user(chat_id):
             data = r.get(f"user:{chat_id}")
             if data:
                 return json.loads(data)
-        else:
-            f = os.path.join(DATA_DIR, f"user_{chat_id}.json")
-            if os.path.exists(f):
-                with open(f) as fp:
-                    return json.load(fp)
     except: pass
-    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0}
+    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0, "referrals": 0, "ref_earnings": 0.0}
 
 def save_user(chat_id, data):
     try:
         r = get_redis()
         if r:
             r.set(f"user:{chat_id}", json.dumps(data))
-        else:
-            f = os.path.join(DATA_DIR, f"user_{chat_id}.json")
-            with open(f, "w") as fp:
-                json.dump(data, fp, indent=2)
     except Exception as e:
         log.error(f"Save error: {e}")
 
@@ -92,64 +119,15 @@ def list_users():
         if r:
             keys = r.keys("user:*")
             return [k.replace("user:", "") for k in keys]
-        else:
-            files = list_users()
-            return [f.replace("user_","").replace(".json","") for f in files]
-    except: return []
+    except: pass
+    return []
 
 def get_uid(update):
     return str(update.message.chat_id)
-logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
-log = logging.getLogger(__name__)
-_cache = {}
-CACHE_TTL = 180
 
-KEYBOARD = ReplyKeyboardMarkup([
-    [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
-    [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
-    [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
-    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
-    [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
-    [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
-    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
-    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
-    [KeyboardButton("👥 Utenti"), KeyboardButton("❓ Aiuto")],
-], resize_keyboard=True)
-
-def load_data():
-    try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as f:
-                return json.load(f)
-    except: pass
-    return {"portfolio": {}, "alerts": [], "quiet_mode": False}
-
-def save_data(d):
-    try:
-        with open(DATA_FILE, 'w') as f:
-            json.dump(d, f, indent=2)
-    except Exception as e:
-        log.error(f"Save error: {e}")
-
-DATA = load_data()
-
-def init_portfolio():
-    try:
-        prices = get_prices()
-        DATA["portfolio"] = {}
-        for sym, qty in PORTFOLIO_QTY.items():
-            p = prices.get(sym, {}).get("price", 0)
-            if p > 0:
-                DATA["portfolio"][sym] = {"qty": qty, "buy": p}
-        save_data(DATA)
-        log.info(f"Portfolio inizializzato: {len(DATA['portfolio'])} asset")
-        return True
-    except Exception as e:
-        log.error(f"Init portfolio error: {e}")
-        return False
-
+# ============================================================
+# API DATI
+# ============================================================
 def get_global():
     if 'g' in _cache and time.time() - _cache['g']['t'] < CACHE_TTL:
         return _cache['g']['d']
@@ -161,11 +139,7 @@ def get_global():
         tot = d["total_market_cap"]["usd"]
         btcm = d["market_cap_percentage"]["btc"] / 100 * tot
         ethm = d["market_cap_percentage"].get("eth", 0) / 100 * tot
-        result = {
-            "dom": d["market_cap_percentage"]["btc"],
-            "mcap": tot / 1e12,
-            "total3": (tot - btcm - ethm) / 1e9,
-        }
+        result = {"dom": d["market_cap_percentage"]["btc"], "mcap": tot/1e12, "total3": (tot-btcm-ethm)/1e9}
         _cache['g'] = {'d': result, 't': time.time()}
         return result
     except:
@@ -183,12 +157,7 @@ def get_prices():
         result = {}
         for sym, cid in ASSETS.items():
             d = raw.get(cid, {})
-            result[sym] = {
-                "price": d.get("usd", 0),
-                "ch": d.get("usd_24h_change", 0),
-                "mcap": d.get("usd_market_cap", 0),
-                "vol": d.get("usd_24h_vol", 0),
-            }
+            result[sym] = {"price": d.get("usd", 0), "ch": d.get("usd_24h_change", 0), "mcap": d.get("usd_market_cap", 0), "vol": d.get("usd_24h_vol", 0)}
         _cache['p'] = {'d': result, 't': time.time()}
         return result
     except:
@@ -213,15 +182,12 @@ def get_ohlc(symbol="BTCUSDT", limit=30):
     try:
         r = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit={limit}", timeout=10)
         data = r.json()
-        closes = [float(x[4]) for x in data]
-        vols = [float(x[5]) for x in data]
-        return closes, vols
+        return [float(x[4]) for x in data], [float(x[5]) for x in data]
     except:
         return [], []
 
 def calc_rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return None
+    if len(closes) < period + 1: return None
     s = pd.Series(closes)
     delta = s.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
@@ -230,8 +196,7 @@ def calc_rsi(closes, period=14):
     return round((100 - (100 / (1 + rs))).iloc[-1], 1)
 
 def calc_macd(closes):
-    if len(closes) < 26:
-        return None, None, None
+    if len(closes) < 26: return None, None, None
     s = pd.Series(closes)
     macd = s.ewm(span=12).mean() - s.ewm(span=26).mean()
     signal = macd.ewm(span=9).mean()
@@ -247,26 +212,58 @@ def get_indicators():
         vol_spike = None
         if len(vols) >= 8:
             avg = sum(vols[-8:-1]) / 7
-            if avg > 0 and vols[-1] > avg * VOLUME_SPIKE_MULTIPLIER:
+            if avg > 0 and vols[-1] > avg * VOLUME_SPIKE:
                 vol_spike = round(vols[-1] / avg, 1)
         result[sym] = {"rsi": rsi, "macd": macd, "signal": signal, "hist": hist, "vol_spike": vol_spike}
     return result
 
+def get_forex():
+    if 'forex' in _cache and time.time() - _cache['forex']['t'] < 300:
+        return _cache['forex']['d']
+    try:
+        symbols = {
+            "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X",
+            "USD/JPY": "JPY=X", "USD/CHF": "CHF=X",
+            "AUD/USD": "AUDUSD=X", "XAU/USD": "GC=F",
+            "XAG/USD": "SI=F", "S&P500": "^GSPC",
+            "NASDAQ": "^IXIC", "DXY": "DX-Y.NYB",
+        }
+        result = {}
+        for name, sym in symbols.items():
+            try:
+                r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                data = r.json()["chart"]["result"][0]
+                closes = [c for c in data["indicators"]["quote"][0]["close"] if c is not None]
+                if len(closes) >= 2:
+                    price = closes[-1]
+                    ch = ((price - closes[-2]) / closes[-2]) * 100
+                    result[name] = {"price": price, "ch": ch}
+            except: pass
+        _cache['forex'] = {'d': result, 't': time.time()}
+        return result
+    except:
+        return {}
+
+def phase(dom):
+    if dom < BTC_DOM_WARNING: return "🚨 USCITA", "TOP CICLO! Prendi profitto subito", "USCITA"
+    if dom < BTC_DOM_THRESHOLD: return "⚡ ALTSEASON ATTIVA", "BTC Dom sotto 52% — ruota verso altcoin", "AZIONE"
+    return "👀 ACCUMULO", f"BTC Dom {dom:.1f}% — tieni le posizioni", "MONITORA"
 
 def get_claude_response(user_msg, market_context, chat_id=None):
     try:
         api_key = os.environ.get('ANTHROPIC_API_KEY', '')
-        if not api_key:
-            return 'API key non configurata.'
+        if not api_key: return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(load_user(chat_id).get('portfolio', {})) if chat_id else '{}'
         today = datetime.now().strftime('%d/%m/%Y')
-        system = (f'Sei un esperto trader crypto E forex. Oggi e {today} - MAGGIO 2026.\n'
+        system = (
+            f'Sei un esperto trader crypto E forex. Oggi e {today} - MAGGIO 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO UTENTE: ' + pf_str + '\n'
-            'Rispondi in italiano, max 200 parole, usa emoji, sii pratico e diretto.')
+            'Rispondi in italiano, max 200 parole, usa emoji, sii pratico e diretto.'
+        )
         msg = client.messages.create(
-            model='claude-sonnet-4-5',
+            model='claude-haiku-4-5-20251001',
             max_tokens=1000,
             system=system,
             messages=[{'role': 'user', 'content': user_msg}]
@@ -275,74 +272,13 @@ def get_claude_response(user_msg, market_context, chat_id=None):
     except Exception as e:
         return f'Errore AI: {e}'
 
-
-def get_forex():
-    """Fetch forex and indices prices from Yahoo Finance API"""
-    if 'forex' in _cache and time.time() - _cache['forex']['t'] < 300:
-        return _cache['forex']['d']
-    try:
-        symbols = {
-            "EUR/USD": "EURUSD=X",
-            "GBP/USD": "GBPUSD=X", 
-            "USD/JPY": "JPY=X",
-            "USD/CHF": "CHF=X",
-            "AUD/USD": "AUDUSD=X",
-            "XAU/USD": "GC=F",
-            "XAG/USD": "SI=F",
-            "S&P500": "^GSPC",
-            "NASDAQ": "^IXIC",
-            "DXY": "DX-Y.NYB",
-        }
-        result = {}
-        for name, sym in symbols.items():
-            try:
-                r = requests.get(
-                    f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d",
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=5
-                )
-                data = r.json()["chart"]["result"][0]
-                closes = data["indicators"]["quote"][0]["close"]
-                closes = [c for c in closes if c is not None]
-                if len(closes) >= 2:
-                    price = closes[-1]
-                    prev = closes[-2]
-                    ch = ((price - prev) / prev) * 100
-                    result[name] = {"price": price, "ch": ch}
-            except:
-                pass
-        _cache['forex'] = {'d': result, 't': time.time()}
-        return result
-    except Exception as e:
-        log.error(f"Forex error: {e}")
-        return {}
-
-def phase(dom):
-    if dom < BTC_DOM_WARNING:
-        return "🚨 USCITA", "TOP CICLO! Prendi profitto subito", "USCITA"
-    if dom < BTC_DOM_THRESHOLD:
-        return "⚡ ALTSEASON ATTIVA", "BTC Dom sotto 52% — ruota verso altcoin", "AZIONE"
-    return "👀 ACCUMULO", f"BTC Dom {dom:.1f}% — tieni le posizioni", "MONITORA"
-
-def is_quiet():
-    if not DATA.get("quiet_mode", False):
-        return False
-    h = datetime.now().hour
-    if QUIET_START > QUIET_END:
-        return h >= QUIET_START or h < QUIET_END
-    return QUIET_START <= h < QUIET_END
-
-def check_alerts(prices):
-    triggered = []
-    remaining = []
-    for a in DATA.get("alerts", []):
-        sym = a["sym"]
-        target = a["price"]
-        above = a["above"]
+def check_alerts_user(chat_id, prices):
+    ud = load_user(chat_id)
+    triggered, remaining = [], []
+    for a in ud.get("alerts", []):
+        sym, target, above = a["sym"], a["price"], a["above"]
         cur = prices.get(sym, {}).get("price", 0)
-        if cur == 0:
-            remaining.append(a)
-            continue
+        if cur == 0: remaining.append(a); continue
         hit = (above and cur >= target) or (not above and cur <= target)
         if hit:
             d = "↗️" if above else "↘️"
@@ -350,71 +286,80 @@ def check_alerts(prices):
         else:
             remaining.append(a)
     if triggered:
-        DATA["alerts"] = remaining
-        save_data(DATA)
+        ud["alerts"] = remaining
+        save_user(chat_id, ud)
     return triggered
 
-async def cmd_help(u, c):
-    msg = """👋 *ALTSEASON BOT 2026 — GUIDA COMPLETA*
+# ============================================================
+# COMANDI BOT
+# ============================================================
+async def cmd_start(u, c): await cmd_help(u, c)
 
-📊 *MONITORAGGIO*
+async def cmd_help(u, c):
+    msg = """👋 *ALTSEASON BOT 2026*
+
+📊 *MERCATO*
 /status — Report completo
 /phase — Fase del ciclo
-/macro — BTC Dom, ETH/BTC, TOTAL3
-/feargreed — Sentiment 0-100
-/rsimacd — RSI e MACD indicatori
-/top — Top performer 24h
-/price BTC — Prezzo asset
+/feargreed — Sentiment
+/rsimacd — RSI e MACD
+/top — Top performer
+/forex — Forex & Indici
+/news — Ultime notizie
 
-💼 *PORTFOLIO & P&L*
+💼 *PORTFOLIO*
 /portfolio — P&L in tempo reale
-/reset — Reset con prezzi attuali
-/addcoin XRP 1000 1.36 — Aggiungi
-/removecoin BTC — Rimuovi
+/add — Aggiungi coin (wizard)
+/addcoin SYM QTY PRICE — Aggiungi
+/removecoin SYM — Rimuovi
+/reset — Reset portfolio
 
-🔔 *ALERT PREZZI*
-/alert XRP 3 — Avvisami sale a $3
-/alert SOL 200 down — Avvisami scende
-/alerts — Lista alert attivi
-/delalert 1 — Cancella alert #1
-/setup — 28 alert strategia automatici
+🔔 *ALERT*
+/alert XRP 3 — Alert prezzo
+/alerts — Lista alert
+/delalert 1 — Cancella alert
+/setup — 28 alert strategia
 
-📅 /timeline — Roadmap altseason 2026
+📅 *STRATEGIA*
+/timeline — Roadmap 2026
+/exitplan — Piano uscita
+/stoploss — Check uscita
 
-🌙 /quiet — Silenzio notturno 23:00-08:00
+💰 *ACCOUNT*
+/myplan — Il tuo piano
+/upgrade — Info piani
+/pay — Abbonati
+/referral — Tuo link referral
+/share — Condividi bot
+/admin — Pannello admin
 
-⏰ *TIMELINE RAPIDA*
-GIU-LUG: TIENI tutto
-AGO-SET: Vendi 25% ogni coin
-OTT-NOV: ESCI 50-75%
-DIC: Accumula BTC
-
-🚀 Buona bull run! 💰"""
+🤖 Scrivi qualsiasi domanda per parlare con l'AI!"""
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
-async def cmd_start(u, c): await cmd_help(u, c)
 
 async def cmd_status(u, c):
     await u.message.reply_text("⏳ Recupero dati...", reply_markup=KEYBOARD)
     try:
-        g = get_global()
-        p = get_prices()
-        fg = get_fg()
+        g = get_global(); p = get_prices(); fg = get_fg()
         ph, desc, level = phase(g["dom"])
         eth_btc = p["ETH"]["price"] / p["BTC"]["price"] if p["BTC"]["price"] else 0
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
-        msg = f"*🤖 STATUS — {now}*\n\n{ph} (`{level}`)\n_{desc}_\n\n📊 *MACRO*\n• BTC Dom: `{g['dom']:.2f}%`\n• ETH/BTC: `{eth_btc:.5f}`\n• TOTAL3: `${g['total3']:.1f}B`\n• Fear&Greed: {fg['em']} `{fg['v']} — {fg['lbl']}`\n\n💰 *PREZZI*\n• 🟢/🔴 BTC: `${p['BTC']['price']:,.0f}` ({p['BTC']['ch']:+.1f}%)\n• ETH: `${p['ETH']['price']:,.0f}` ({p['ETH']['ch']:+.1f}%)\n• XRP: `${p['XRP']['price']:,.3f}` ({p['XRP']['ch']:+.1f}%)\n• SOL: `${p['SOL']['price']:,.1f}` ({p['SOL']['ch']:+.1f}%)"
+        msg = (f"*🤖 STATUS — {now}*\n\n{ph} (`{level}`)\n_{desc}_\n\n"
+               f"📊 *MACRO*\n• BTC Dom: `{g['dom']:.2f}%`\n• ETH/BTC: `{eth_btc:.5f}`\n"
+               f"• TOTAL3: `${g['total3']:.1f}B`\n• Fear&Greed: {fg['em']} `{fg['v']} — {fg['lbl']}`\n\n"
+               f"💰 *PREZZI*\n• BTC: `${p['BTC']['price']:,.0f}` ({p['BTC']['ch']:+.1f}%)\n"
+               f"• ETH: `${p['ETH']['price']:,.0f}` ({p['ETH']['ch']:+.1f}%)\n"
+               f"• XRP: `${p['XRP']['price']:,.3f}` ({p['XRP']['ch']:+.1f}%)\n"
+               f"• SOL: `${p['SOL']['price']:,.1f}` ({p['SOL']['ch']:+.1f}%)")
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
-        await u.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_phase(u, c):
     try:
-        g = get_global()
-        ph, desc, level = phase(g["dom"])
+        g = get_global(); ph, desc, level = phase(g["dom"])
         actions = {
             "MONITORA": "1️⃣ Tieni tutto\n2️⃣ Aspetta BTC Dom <52%\n3️⃣ Non vendere ancora",
-            "AZIONE": "1️⃣ Ruota verso altcoin\n2️⃣ Vendi 25% quando +100%\n3️⃣ Monitora XRP",
+            "AZIONE": "1️⃣ Ruota verso altcoin\n2️⃣ Vendi 25% quando +100%\n3️⃣ Monitora XRP pump tardivo",
             "USCITA": "1️⃣ ESCI progressivamente\n2️⃣ Sposta in USDT\n3️⃣ DOGE e BONK escono primi",
         }
         msg = f"{ph}\n\n_{desc}_\n\nBTC Dom: `{g['dom']:.2f}%`\n\n📋 *Cosa fare ora:*\n{actions[level]}"
@@ -422,21 +367,9 @@ async def cmd_phase(u, c):
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
-async def cmd_macro(u, c):
-    try:
-        g = get_global()
-        p = get_prices()
-        fg = get_fg()
-        eth_btc = p["ETH"]["price"] / p["BTC"]["price"] if p["BTC"]["price"] else 0
-        msg = f"📊 *MACRO*\n\n• BTC Dom: `{g['dom']:.2f}%` {'🔴 Altseason!' if g['dom'] < 52 else '🟡 BTC domina'}\n• ETH/BTC: `{eth_btc:.5f}` {'🟢 Breakout!' if eth_btc > 0.06 else '⚪ Sotto soglia'}\n• TOTAL3: `${g['total3']:.1f}B`\n• MCap: `${g['mcap']:.2f}T`\n• Fear&Greed: {fg['em']} `{fg['v']} — {fg['lbl']}`"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-    except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
-
 async def cmd_feargreed(u, c):
     try:
-        fg = get_fg()
-        v = fg["v"]
+        fg = get_fg(); v = fg["v"]
         desc = "Paura estrema — COMPRA 🛒" if v <= 25 else "Paura — Accumula" if v <= 45 else "Neutro" if v <= 55 else "Avidità — Attenzione" if v <= 75 else "Avidità estrema — VENDI ⚠️"
         msg = f"😱 *FEAR & GREED*\n\n{fg['em']} `{v}/100 — {fg['lbl']}`\n\n_{desc}_"
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -450,10 +383,17 @@ async def cmd_rsimacd(u, c):
         lines = ["📉 *RSI & MACD*\n"]
         for sym in ["BTC", "ETH"]:
             ind = inds.get(sym, {})
-            rsi = ind.get("rsi", "N/A")
+            rsi = ind.get("rsi")
             hist = ind.get("hist", 0)
             trend = "↗️ Rialzista" if hist and hist > 0 else "↘️ Ribassista"
-            rsi_s = "🟢 Oversold — COMPRA" if rsi is not None and rsi != "N/A" and float(rsi) < RSI_OVERSOLD else ("🔴 Overbought — ATTENZIONE" if rsi is not None and rsi != "N/A" and float(rsi) > RSI_OVERBOUGHT else "⚪ Neutro")
+            if rsi is None:
+                rsi_s = "⚪ Dati non disponibili"
+            elif float(rsi) < RSI_OVERSOLD:
+                rsi_s = "🟢 Oversold — COMPRA"
+            elif float(rsi) > RSI_OVERBOUGHT:
+                rsi_s = "🔴 Overbought — ATTENZIONE"
+            else:
+                rsi_s = "⚪ Neutro"
             spike = ind.get("vol_spike")
             lines += [f"*{sym}*", f"• RSI: `{rsi}` {rsi_s}", f"• MACD: {trend}", f"• Volume: {'🔊 SPIKE ' + str(spike) + 'x!' if spike else '✅ Normale'}", ""]
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -472,45 +412,103 @@ async def cmd_top(u, c):
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
-async def cmd_price(u, c):
-    if not c.args:
-        await u.message.reply_text("Uso: /price BTC", reply_markup=KEYBOARD)
-        return
-    s = c.args[0].upper()
-    if s not in ASSETS:
-        await u.message.reply_text(f"❌ Disponibili: {', '.join(list(ASSETS.keys())[:10])}", reply_markup=KEYBOARD)
-        return
+async def cmd_forex(u, c):
+    await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=KEYBOARD)
     try:
-        p = get_prices()[s]
-        a = "🟢" if p["ch"] >= 0 else "🔴"
-        msg = f"{a} *{s}*\n\n💵 `${p['price']:,.4f}`\n📈 24h: `{p['ch']:+.2f}%`\n💎 MCap: `${p['mcap']/1e9:.1f}B`\n📊 Vol: `${p['vol']/1e6:.1f}M`"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+        data = get_forex()
+        if not data:
+            await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=KEYBOARD)
+            return
+        lines = ["💱 *FOREX & INDICI*\n", "🌍 *Valute principali*"]
+        for sym in ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD"]:
+            if sym in data:
+                d = data[sym]; a = "🟢" if d["ch"] >= 0 else "🔴"
+                lines.append(f"{a} *{sym}*: `{d['price']:.4f}` ({d['ch']:+.2f}%)")
+        lines.append("\n📈 *Indici & Commodities*")
+        for sym in ["S&P500", "NASDAQ", "XAU/USD", "XAG/USD", "DXY"]:
+            if sym in data:
+                d = data[sym]; a = "🟢" if d["ch"] >= 0 else "🔴"
+                pfmt = f"{d['price']:,.2f}" if d['price'] > 100 else f"{d['price']:.4f}"
+                lines.append(f"{a} *{sym}*: `{pfmt}` ({d['ch']:+.2f}%)")
+        lines.append("\n_Scrivi: Analizza EUR/USD per analisi AI_")
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
+async def cmd_news(u, c):
+    await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
+    try:
+        r = requests.get("https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies=BTC,ETH,XRP,SOL&kind=news&public=true", timeout=10)
+        results = r.json().get("results", [])[:6]
+        if not results:
+            await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
+            return
+        lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
+        for news in results:
+            title = news.get("title", "")[:80]
+            url = news.get("url", "")
+            currencies = [c["code"] for c in news.get("currencies", [])]
+            coins = " ".join([f"`{c}`" for c in currencies[:3]]) if currencies else ""
+            lines.append(f"• {coins} [{title}]({url})")
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
+async def cmd_timeline(u, c):
+    msg = """📅 *TIMELINE ALTSEASON 2026*
+
+🌱 *GIUGNO-LUGLIO — ACCUMULO*
+BTC Dom: 55-52% — Fear&Greed <40
+→ TIENI tutto, non vendere nulla
+→ ETH e SOL iniziano a salire
+
+⚡ *AGOSTO-SETTEMBRE — ROTAZIONE*
+BTC Dom <52% — Altcoin +300%
+→ Vendi 25% al T1
+→ Target: XRP $3, SOL $200, ETH $4k
+
+🚀 *OTTOBRE-NOVEMBRE — EUFORIA*
+Fear&Greed >80 — XRP pump tardivo
+→ ESCI dal 50-75% di tutto
+→ DOGE e BONK escono PRIMI
+
+📉 *DICEMBRE — TOP CICLO*
+Crollo -60/-80%
+→ Chi è uscito accumula BTC
+
+🎯 *TARGET FINALI*
+XRP: $3→$5→$8→$12
+SOL: $200→$350→$500→$800
+ETH: $4k→$6k→$9k→$14k
+BNB: $900→$1.2k→$1.5k→$2k
+
+🚨 *SEGNALI DI TOP*
+XRP +15% tardivo → ESCI 50%
+Fear&Greed >85 tre giorni → ESCI
+BTC Dom <48% → ESCI tutto"""
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_portfolio(u, c):
-    pf = DATA.get("portfolio", {})
+    uid = get_uid(u)
+    ud = load_user(uid)
+    pf = ud.get("portfolio", {})
     if not pf:
-        await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
+        await u.message.reply_text("💼 Portfolio vuoto!\n\nUsa /add per aggiungere le tue coin\noppure /reset per caricare il portfolio di default", reply_markup=KEYBOARD)
         return
     try:
         prices = get_prices()
         lines = ["💼 *PORTFOLIO*\n"]
-        ti = 0
-        tc = 0
+        ti = tc = 0
         for sym, pos in sorted(pf.items()):
             pr = prices.get(sym, {}).get("price", 0)
             if pr == 0: continue
-            qty = pos["qty"]
-            buy = pos["buy"]
-            inv = qty * buy
-            cur = qty * pr
+            qty, buy = pos["qty"], pos["buy"]
+            inv, cur = qty * buy, qty * pr
             pnl = cur - inv
             pct = ((pr - buy) / buy * 100) if buy else 0
             a = "🟢" if pnl >= 0 else "🔴"
             lines.append(f"{a} *{sym}*: `{pct:+.1f}%` (`${pnl:+,.0f}`)")
-            ti += inv
-            tc += cur
+            ti += inv; tc += cur
         tp = tc - ti
         tpct = ((tc - ti) / ti * 100) if ti else 0
         a = "🟢" if tp >= 0 else "🔴"
@@ -522,10 +520,18 @@ async def cmd_portfolio(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_reset(u, c):
-    if init_portfolio():
-        await u.message.reply_text(f"✅ Portfolio resettato con prezzi attuali!\n{len(DATA['portfolio'])} asset. P&L parte da 0%.", reply_markup=KEYBOARD)
+    uid = get_uid(u)
+    ud = load_user(uid)
+    if uid == ADMIN_ID:
+        ud["portfolio"] = ADMIN_PORTFOLIO.copy()
+        ud["plan"] = "pro"
+        ud["ai_msgs"] = 0
+        save_user(uid, ud)
+        await u.message.reply_text(f"✅ Portfolio admin caricato!\n{len(ADMIN_PORTFOLIO)} coin — Piano Pro", reply_markup=KEYBOARD)
     else:
-        await u.message.reply_text("❌ Errore reset", reply_markup=KEYBOARD)
+        ud["portfolio"] = {}
+        save_user(uid, ud)
+        await u.message.reply_text("✅ Portfolio resettato!\nUsa /add per aggiungere le tue coin", reply_markup=KEYBOARD)
 
 async def cmd_addcoin(u, c):
     if len(c.args) < 3:
@@ -538,8 +544,10 @@ async def cmd_addcoin(u, c):
     try:
         qty = float(c.args[1])
         buy = float(c.args[2].replace(",", ""))
-        DATA["portfolio"][s] = {"qty": qty, "buy": buy}
-        save_data(DATA)
+        uid = get_uid(u)
+        ud = load_user(uid)
+        ud["portfolio"][s] = {"qty": qty, "buy": buy}
+        save_user(uid, ud)
         await u.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.4f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
         await u.message.reply_text("❌ Valori non validi", reply_markup=KEYBOARD)
@@ -549,9 +557,11 @@ async def cmd_removecoin(u, c):
         await u.message.reply_text("Uso: /removecoin BTC", reply_markup=KEYBOARD)
         return
     s = c.args[0].upper()
-    if s in DATA.get("portfolio", {}):
-        del DATA["portfolio"][s]
-        save_data(DATA)
+    uid = get_uid(u)
+    ud = load_user(uid)
+    if s in ud.get("portfolio", {}):
+        del ud["portfolio"][s]
+        save_user(uid, ud)
         await u.message.reply_text(f"✅ {s} rimosso", reply_markup=KEYBOARD)
     else:
         await u.message.reply_text(f"❌ {s} non trovato", reply_markup=KEYBOARD)
@@ -566,20 +576,22 @@ async def cmd_alert(u, c):
         return
     try:
         t = float(c.args[1].replace(",", ""))
-        above = True
-        if len(c.args) >= 3 and c.args[2].lower() == "down":
-            above = False
-        DATA["alerts"].append({"sym": s, "price": t, "above": above})
-        save_data(DATA)
+        above = not (len(c.args) >= 3 and c.args[2].lower() == "down")
+        uid = get_uid(u)
+        ud = load_user(uid)
+        ud["alerts"].append({"sym": s, "price": t, "above": above})
+        save_user(uid, ud)
         d = "sale a" if above else "scende a"
         await u.message.reply_text(f"✅ Alert: *{s}* {d} `${t:,.2f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
         await u.message.reply_text("❌ Errore", reply_markup=KEYBOARD)
 
 async def cmd_alerts(u, c):
-    al = DATA.get("alerts", [])
+    uid = get_uid(u)
+    ud = load_user(uid)
+    al = ud.get("alerts", [])
     if not al:
-        await u.message.reply_text("Nessun alert. Usa /alert XRP 3", reply_markup=KEYBOARD)
+        await u.message.reply_text("Nessun alert. Usa /setup per impostare tutti", reply_markup=KEYBOARD)
         return
     lines = ["🔔 *Alert Attivi*\n"]
     for i, a in enumerate(al, 1):
@@ -594,10 +606,13 @@ async def cmd_delalert(u, c):
         return
     try:
         i = int(c.args[0]) - 1
-        al = DATA.get("alerts", [])
+        uid = get_uid(u)
+        ud = load_user(uid)
+        al = ud.get("alerts", [])
         if 0 <= i < len(al):
             r = al.pop(i)
-            save_data(DATA)
+            ud["alerts"] = al
+            save_user(uid, ud)
             await u.message.reply_text(f"✅ Eliminato: {r['sym']}", reply_markup=KEYBOARD)
         else:
             await u.message.reply_text("❌ Numero non valido", reply_markup=KEYBOARD)
@@ -609,102 +624,51 @@ async def cmd_setup(u, c):
     targets = {
         "XRP": [3, 5, 8, 12], "SOL": [200, 350, 500, 800],
         "ETH": [4000, 6000, 9000, 14000], "BNB": [900, 1200, 1500, 2000],
-        "DOGE": [0.30, 0.60, 1.00], "HBAR": [0.20, 0.40, 0.70],
-        "SEI": [0.80, 1.50, 3.00],
+        "DOGE": [0.30, 0.60, 1.00], "HBAR": [0.20, 0.40, 0.70], "SEI": [0.80, 1.50, 3.00],
     }
     for sym, prices in targets.items():
         for p in prices:
             alerts.append({"sym": sym, "price": p, "above": True})
-    DATA["alerts"] = alerts
-    save_data(DATA)
-    await u.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP: $3→$5→$8→$12\nSOL: $200→$350→$500→$800\nETH: $4k→$6k→$9k→$14k\nBNB: $900→$1.2k→$1.5k→$2k\nDOGE: $0.30→$0.60→$1.00\nHBAR: $0.20→$0.40→$0.70\nSEI: $0.80→$1.50→$3.00", parse_mode="Markdown", reply_markup=KEYBOARD)
-
-async def cmd_timeline(u, c):
-    msg = """📅 *TIMELINE ALTSEASON 2026*
-
-🌱 *GIUGNO-LUGLIO — ACCUMULO*
-BTC Dom: 55-52% — Fear&Greed <40
-→ TIENI tutto, non vendere nulla
-→ ETH e SOL iniziano a salire
-→ Imposta gli alert sui target T1
-
-⚡ *AGOSTO-SETTEMBRE — ROTAZIONE*
-BTC Dom <52% — Altcoin +300%
-→ Vendi 25% di ogni coin al T1
-→ XRP, ADA, BNB esplodono
-→ Target: XRP $3, SOL $200, ETH $4k
-
-🚀 *OTTOBRE-NOVEMBRE — EUFORIA*
-Fear&Greed >80 — XRP pump tardivo
-→ ESCI dal 50-75% di tutto
-→ DOGE e BONK escono PRIMI
-→ Sposta in USDT/USDC
-
-📉 *DICEMBRE 2026 — TOP CICLO*
-BTC Dom risale — Crollo -60/-80%
-→ Chi è uscito accumula BTC
-→ Bear market inizia
-
-🎯 *TARGET FINALI*
-XRP: $3→$5→$8→$12
-SOL: $200→$350→$500→$800
-ETH: $4k→$6k→$9k→$14k
-BNB: $900→$1.2k→$1.5k→$2k
-DOGE: $0.30→$0.60→$1.00
-HBAR: $0.20→$0.40→$0.70
-
-🚨 *SEGNALI DI TOP*
-• XRP pump +15% tardivo → ESCI 50%
-• Fear&Greed >85 × 3 giorni → ESCI
-• Meme mania DOGE/BONK → ESCI meme
-• BTC Dom <48% → ESCI tutto"""
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
+    uid = get_uid(u)
+    ud = load_user(uid)
+    ud["alerts"] = alerts
+    save_user(uid, ud)
+    await u.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP: $3→$5→$8→$12\nSOL: $200→$350→$500→$800\nETH: $4k→$6k→$9k→$14k\nBNB: $900→$1.2k→$1.5k→$2k", parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_exit_plan(u, c):
-    msg = (
-        "📤 *PIANO DI USCITA GRADUALE*\n\n"
-        "━━━━━━━━━\n"
-        "🟡 *BLOCCO 1 - Inizio Euforia*\n"
-        "━━━━━━━━━\n"
-        "Trigger: Fear&Greed >75 per 2 giorni\n"
-        "Azione: Vendi 10-15% di tutto\n"
-        "Timing: 3-7 giorni graduali\n"
-        "Priority: Meme coin prima (DOGE, BONK)\n\n"
-        "━━━━━━━━━\n"
-        "🟠 *BLOCCO 2 - Mercato Accelerato*\n"
-        "━━━━━━━━━\n"
-        "Trigger: BTC Dom <50% + F&G >80\n"
-        "Azione: Vendi 20-30% aggiuntivo\n"
-        "Timing: 5-14 giorni graduali\n"
-        "Priority: AI speculative, meme, small cap\n\n"
-        "━━━━━━━━━\n"
-        "🔴 *BLOCCO 3 - Blow-off Top*\n"
-        "━━━━━━━━━\n"
-        "Trigger: XRP pump + meme isterici + retail impazzito\n"
-        "Azione: Vendi 30-40% aggiuntivo\n"
-        "Timing: 48h-7 giorni VELOCI\n"
-        "Priority: Tutto tranne BTC e ETH\n\n"
-        "━━━━━━━━━\n"
-        "🚨 *STOP LOSS EMERGENZA*\n"
-        "━━━━━━━━━\n"
-        "Trigger: Mercato crolla -30% in 7 giorni\n"
-        "Azione: Esci dal 50% IMMEDIATAMENTE\n\n"
-        "💡 *REGOLE D'ORO*\n"
-        "- MAI vendere tutto in un giorno\n"
-        "- MAI rientrare per FOMO\n"
-        "- Preleva 30% profitti in fiat\n"
-        "- Bear market: accumula BTC gradualmente\n"
-        "- Portfolio futuro: 70% BTC, 20% alt, 10% operativo"
-    )
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    msg = """📤 *PIANO DI USCITA GRADUALE*
 
+🟡 *BLOCCO 1 — Inizio Euforia*
+Trigger: Fear&Greed >75 per 2 giorni
+Azione: Vendi 10-15% di tutto
+Timing: 3-7 giorni graduali
+Priority: Meme coin prima (DOGE, BONK)
+
+🟠 *BLOCCO 2 — Mercato Accelerato*
+Trigger: BTC Dom <50% + F&G >80
+Azione: Vendi 20-30% aggiuntivo
+Timing: 5-14 giorni graduali
+Priority: AI speculative, meme, small cap
+
+🔴 *BLOCCO 3 — Blow-off Top*
+Trigger: XRP pump + meme isterici + retail impazzito
+Azione: Vendi 30-40% aggiuntivo
+Timing: 48h-7 giorni VELOCI
+
+🚨 *STOP LOSS EMERGENZA*
+Trigger: Mercato crolla -30% in 7 giorni
+Azione: Esci dal 50% IMMEDIATAMENTE
+
+💡 *REGOLE D'ORO*
+- MAI vendere tutto in un giorno
+- MAI rientrare per FOMO
+- Preleva 30% profitti in fiat
+- Bear market: accumula BTC gradualmente"""
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_stoploss(u, c):
     try:
-        p = get_prices()
-        g = get_global()
-        fg = get_fg()
+        p = get_prices(); g = get_global(); fg = get_fg()
         warnings = []
         if fg["v"] > 80:
             warnings.append(f"🔴 *BLOCCO 2 ATTIVO*\nFear&Greed `{fg['v']}` — Vendi 20-30% progressivamente")
@@ -714,7 +678,7 @@ async def cmd_stoploss(u, c):
             warnings.append(f"🔴 *BTC DOM CRITICA* `{g['dom']:.1f}%`\nZona storica top ciclo — accelera uscite!")
         memes = [(s, p[s]["ch"]) for s in ["DOGE","BONK","PEPE"] if p.get(s, {}).get("ch", 0) > 15]
         if memes:
-            meme_str = ", ".join([f"{s} +{c:.0f}%" for s,c in memes])
+            meme_str = ", ".join([f"{s} +{ch:.0f}%" for s,ch in memes])
             warnings.append(f"🎰 *MEME MANIA AVANZATA*\n{meme_str}\nSegnale top ciclo — ESCI dai meme!")
         if p.get("XRP", {}).get("ch", 0) > 15 and g["dom"] < 52:
             warnings.append(f"⚠️ *XRP PUMP TARDIVO* +{p['XRP']['ch']:.1f}%\nStoricamente indica TOP CICLO — Esci dal 50%!")
@@ -724,240 +688,7 @@ async def cmd_stoploss(u, c):
             msg = f"✅ *Nessun segnale di uscita urgente*\n\nFear&Greed: `{fg['v']}` sotto soglia\nBTC Dom: `{g['dom']:.1f}%` nella norma\nNessuna meme mania in corso"
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
-        await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
-
-
-
-async def cmd_myplan(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    plan = ud.get("plan", "free")
-    used = ud.get("ai_msgs", 0)
-    limit = AI_LIMITS.get(plan, 5)
-    remaining = max(0, limit - used)
-    
-    plan_emoji = {"free": "🆓", "basic": "💙", "pro": "👑"}.get(plan, "🆓")
-    plan_name = {"free": "Free", "basic": "Basic", "pro": "Pro"}.get(plan, "Free")
-    
-    msg = (
-        f"👤 *IL TUO PIANO*\n\n"
-        f"{plan_emoji} Piano: *{plan_name}*\n"
-        f"🤖 Messaggi AI usati: `{used}/{limit}`\n"
-        f"✅ Messaggi rimasti: `{remaining}`\n\n"
-    )
-    
-    if plan == "free":
-        msg += (
-            "⬆️ *Vuoi più messaggi AI?*\n\n"
-            "💙 *Basic* €9.99/mese → 50 msg/giorno\n"
-            "👑 *Pro* €19.99/mese → Illimitati\n\n"
-            "Scrivi /upgrade per info"
-        )
-    elif plan == "basic":
-        msg += "👑 Upgrada a *Pro* per messaggi illimitati!\n/upgrade"
-    else:
-        msg += "🎉 Sei al piano massimo!"
-    
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
-
-async def cmd_resetai(u, c):
-    """Admin command: reset AI counter for a user"""
-    uid = get_uid(u)
-    if uid != "670903243":
-        await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
-        return
-    if not c.args:
-        await u.message.reply_text("Uso: /resetai CHAT_ID", reply_markup=KEYBOARD)
-        return
-    target = c.args[0]
-    ud = load_user(target)
-    ud["ai_msgs"] = 0
-    save_user(target, ud)
-    await u.message.reply_text(f"✅ Counter AI resettato per {target}", reply_markup=KEYBOARD)
-
-
-async def cmd_setplan(u, c):
-    """Admin command: set plan for a user"""
-    uid = get_uid(u)
-    if uid != "670903243":
-        await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
-        return
-    if len(c.args) < 2:
-        await u.message.reply_text("Uso: /setplan CHAT_ID free|basic|pro", reply_markup=KEYBOARD)
-        return
-    target = c.args[0]
-    plan = c.args[1].lower()
-    if plan not in ["free", "basic", "pro"]:
-        await u.message.reply_text("❌ Piano non valido", reply_markup=KEYBOARD)
-        return
-    ud = load_user(target)
-    ud["plan"] = plan
-    ud["ai_msgs"] = 0
-    save_user(target, ud)
-    await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
-
-
-async def cmd_users(u, c):
-    """Admin command: list all users"""
-    uid = get_uid(u)
-    if uid != "670903243":
-        await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
-        return
-    try:
-        files = list_users()
-        lines = [f"👥 *UTENTI TOTALI: {len(files)}*\n"]
-        for f in files[:20]:
-            chat_id = f.replace("user_", "").replace(".json", "")
-            ud = load_user(chat_id)
-            plan = ud.get("plan", "free")
-            used = ud.get("ai_msgs", 0)
-            emoji = {"free": "🆓", "basic": "💙", "pro": "👑"}.get(plan, "🆓")
-            lines.append(f"{emoji} `{chat_id}` — {plan} ({used} msg)")
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
-    except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
-
-
-
-# Wizard stati
-WIZARD_COIN, WIZARD_QTY, WIZARD_PRICE = range(3)
-
-# Coin popolari per selezione rapida
-POPULAR_COINS = [
-    ["BTC", "ETH", "XRP", "SOL"],
-    ["BNB", "ADA", "DOGE", "HBAR"],
-    ["BONK", "SEI", "FET", "LUNA"],
-    ["GRT", "ALGO", "XLM", "POL"],
-]
-
-def make_coin_keyboard():
-    buttons = []
-    for row in POPULAR_COINS:
-        buttons.append([InlineKeyboardButton(c, callback_data=f"coin_{c}") for c in row])
-    buttons.append([InlineKeyboardButton("✍️ Scrivi manualmente", callback_data="coin_MANUAL")])
-    return InlineKeyboardMarkup(buttons)
-
-async def cmd_addwizard(u, c):
-    await u.message.reply_text(
-        "💼 *AGGIUNGI AL PORTFOLIO*\n\nSeleziona la coin o scrivila:",
-        parse_mode="Markdown",
-        reply_markup=make_coin_keyboard()
-    )
-    return WIZARD_COIN
-
-async def wizard_coin_button(update, context):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.replace("coin_", "")
-    
-    if data == "MANUAL":
-        await query.edit_message_text("✍️ Scrivi il simbolo della coin (es. BTC, ETH, XRP):")
-        return WIZARD_COIN
-    
-    context.user_data["wizard_coin"] = data
-    await query.edit_message_text(
-        f"✅ Coin selezionata: *{data}*\n\nQuante ne hai?",
-        parse_mode="Markdown"
-    )
-    return WIZARD_QTY
-
-async def wizard_coin_text(update, context):
-    coin = update.message.text.upper().strip()
-    if coin not in ASSETS:
-        await update.message.reply_text(
-            f"❌ *{coin}* non trovata.\nCoin disponibili: {', '.join(list(ASSETS.keys())[:10])}...",
-            parse_mode="Markdown"
-        )
-        return WIZARD_COIN
-    context.user_data["wizard_coin"] = coin
-    await update.message.reply_text(f"✅ *{coin}* selezionata!\n\nQuante ne hai?", parse_mode="Markdown")
-    return WIZARD_QTY
-
-async def wizard_qty(update, context):
-    try:
-        qty = float(update.message.text.replace(",", "."))
-        context.user_data["wizard_qty"] = qty
-        coin = context.user_data["wizard_coin"]
-        
-        # Mostra prezzo attuale come riferimento
-        try:
-            prices = get_prices()
-            current = prices.get(coin, {}).get("price", 0)
-            price_hint = f"\n\n💡 Prezzo attuale: `${current:,.4f}`" if current else ""
-        except:
-            price_hint = ""
-        
-        await update.message.reply_text(
-            f"✅ Quantità: *{qty}*{price_hint}\n\nA quanto hai comprato in media ($)?\n(Scrivi 0 per usare il prezzo attuale)",
-            parse_mode="Markdown"
-        )
-        return WIZARD_PRICE
-    except:
-        await update.message.reply_text("❌ Scrivi un numero valido (es. 1000 o 0.5)")
-        return WIZARD_QTY
-
-async def wizard_price(update, context):
-    try:
-        price_input = float(update.message.text.replace(",", ".").replace("$", ""))
-        coin = context.user_data["wizard_coin"]
-        qty = context.user_data["wizard_qty"]
-        
-        if price_input == 0:
-            prices = get_prices()
-            buy_price = prices.get(coin, {}).get("price", 0)
-        else:
-            buy_price = price_input
-        
-        if buy_price == 0:
-            await update.message.reply_text("❌ Prezzo non valido", reply_markup=KEYBOARD)
-            return ConversationHandler.END
-        
-        uid = get_uid(update)
-        ud = load_user(uid)
-        ud["portfolio"][coin] = {"qty": qty, "buy": buy_price}
-        save_user(uid, ud)
-        
-        invested = qty * buy_price
-        await update.message.reply_text(
-            f"✅ *{coin} aggiunto al portfolio!*\n\n"
-            f"• Quantità: `{qty}`\n"
-            f"• Prezzo acquisto: `${buy_price:,.4f}`\n"
-            f"• Valore investito: `${invested:,.2f}`\n\n"
-            f"Premi /portfolio per vedere il tuo P&L",
-            parse_mode="Markdown",
-            reply_markup=KEYBOARD
-        )
-        return ConversationHandler.END
-    except:
-        await update.message.reply_text("❌ Scrivi un numero valido (es. 1.36)")
-        return WIZARD_PRICE
-
-async def wizard_cancel(update, context):
-    await update.message.reply_text("❌ Operazione annullata", reply_markup=KEYBOARD)
-    return ConversationHandler.END
-
-
-
-
-async def cmd_share(u, c):
-    uid = get_uid(u)
-    ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
-    msg = (
-        "📢 *CONDIVIDI IL BOT*\n\n"
-        "Copia e manda questo messaggio:\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "🤖 *Altseason Oracle Bot 2026*\n\n"
-        "Il bot AI per la bull run crypto!\n\n"
-        "✅ Prezzi in tempo reale\n"
-        "✅ AI consulente personale\n"
-        "✅ Alert automatici\n"
-        "✅ Forex & Indici\n\n"
-        f"👉 {ref_link}\n"
-        "━━━━━━━━━━━━━━━"
-    )
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
 
 async def cmd_ai(u, c):
     uid = get_uid(u)
@@ -974,10 +705,48 @@ async def cmd_ai(u, c):
         "• 📊 Analisi delle tue coin\n"
         "• 🎯 Quando comprare e vendere\n"
         "• 💱 Forex e indici\n"
-        "• 📅 Strategia altseason 2026\n"
-        "• 🚨 Segnali di uscita\n\n"
+        "• 📅 Strategia altseason 2026\n\n"
         "💬 *Scrivi la tua domanda qui sotto!*"
     )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
+async def cmd_myplan(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    plan = ud.get("plan", "free")
+    used = ud.get("ai_msgs", 0)
+    limit = AI_LIMITS.get(plan, 5)
+    remaining = max(0, limit - used)
+    plan_emoji = {"free": "🆓", "basic": "💙", "pro": "👑"}.get(plan, "🆓")
+    plan_name = {"free": "Free", "basic": "Basic", "pro": "Pro"}.get(plan, "Free")
+    msg = (f"👤 *IL TUO PIANO*\n\n{plan_emoji} Piano: *{plan_name}*\n"
+           f"🤖 Messaggi AI usati: `{used}/{limit}`\n"
+           f"✅ Messaggi rimasti: `{remaining}`\n\n")
+    if plan == "free":
+        msg += "⬆️ *Vuoi più messaggi AI?*\n\n💙 *Basic* €12.99/mese → 50 msg/giorno\n👑 *Pro* €25.99/mese → Illimitati\n\nScrivi /upgrade per info"
+    elif plan == "basic":
+        msg += "👑 Upgrada a *Pro* per messaggi illimitati!\n/upgrade"
+    else:
+        msg += "🎉 Sei al piano massimo!"
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
+async def cmd_upgrade(u, c):
+    msg = ("💎 *PIANI DISPONIBILI*\n\n"
+           "🆓 *Free* — Gratis\n• 5 messaggi AI al giorno\n\n"
+           "💙 *Basic* — €12.99/mese\n• 50 messaggi AI al giorno\n• Portfolio completo\n\n"
+           "👑 *Pro* — €25.99/mese\n• Messaggi AI illimitati\n• Alert illimitati\n• Tutto incluso\n\n"
+           "Scrivi /pay per abbonartit")
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
+async def cmd_pay(u, c):
+    msg = ("💳 *ABBONATI AL BOT*\n\n"
+           "💙 *Basic* — €12.99/mese\n• 50 messaggi AI al giorno\n\n"
+           "👑 *Pro* — €25.99/mese\n• Messaggi AI illimitati\n• Tutto incluso\n\n"
+           "━━━━━━━━━━━━━━━\n💰 *Come pagare:*\n\n"
+           "💎 *USDT/USDC (TRC20 - Tron):*\n`TLAftNsWfrCHboFF3wHf8MbuDRsbSh516D`\n\n"
+           "💎 *USDT/USDC/ETH (ERC20 - Ethereum):*\n`0x3EfB8Fdb87107555Bf46A46f7FB1e6eD0F51A2C4`\n\n"
+           "━━━━━━━━━━━━━━━\n"
+           "📩 Dopo il pagamento riceverai una notifica di attivazione automatica")
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_referral(u, c):
@@ -985,337 +754,392 @@ async def cmd_referral(u, c):
     ud = load_user(uid)
     ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
     ref_count = ud.get("referrals", 0)
-    msg = (
-        "\U0001f517 *IL TUO LINK REFERRAL*\n\n"
-        f"`{ref_link}`\n\n"
-        f"\U0001f465 Utenti invitati: `{ref_count}`\n\n"
-        "\U0001f4b0 *Come funziona:*\n"
-        "• Condividi il tuo link\n"
-        "• Per ogni amico che si iscrive al piano Basic o Pro\n"
-        "• Guadagni 1 mese gratis sul tuo piano!\n\n"
-        "\U0001f4e4 Condividi su Telegram, WhatsApp, X!"
-    )
+    earnings = ud.get("ref_earnings", 0.0)
+    msg = (f"🔗 *IL TUO LINK REFERRAL*\n\n`{ref_link}`\n\n"
+           f"👥 Utenti invitati: `{ref_count}`\n"
+           f"💰 Commissioni accumulate: `€{earnings:.2f}`\n\n"
+           "💰 *Come funziona:*\n"
+           "• Per ogni abbonato Basic: guadagni **€2.60/mese** (20%)\n"
+           "• Per ogni abbonato Pro: guadagni **€5.20/mese** (20%)\n"
+           "• Commissioni a vita!\n\n"
+           "📤 Condividi su Telegram, WhatsApp, X!")
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
-async def cmd_pay(u, c):
-    msg = (
-        "💳 *ABBONATI AL BOT*\n\n"
-        "Scegli il tuo piano:\n\n"
-        "💙 *Basic* — €9.99/mese\n"
-        "• 50 messaggi AI al giorno\n"
-        "• Portfolio completo\n"
-        "• 20 alert prezzi\n\n"
-        "👑 *Pro* — €19.99/mese\n"
-        "• Messaggi AI illimitati\n"
-        "• Alert illimitati\n"
-        "• Tutte le funzioni\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "💰 *Come pagare:*\n\n"
-        "Invia il pagamento a uno di questi wallet:\n\n"
-        "💎 *USDT/USDC (TRC20 - Tron):*\n`TLAftNsWfrCHboFF3wHf8MbuDRsbSh516D`\n\n"
-        "💎 *USDT/USDC/ETH (ERC20 - Ethereum):*\n`0x3EfB8Fdb87107555Bf46A46f7FB1e6eD0F51A2C4`\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "📩 Dopo il pagamento invia lo screenshot a @enricoluciano\n"
-        "Il tuo piano verrà attivato entro 24h!"
-    )
+async def cmd_share(u, c):
+    uid = get_uid(u)
+    ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
+    msg = (f"📢 *CONDIVIDI IL BOT*\n\n"
+           "Copia e manda questo messaggio:\n\n"
+           "━━━━━━━━━━━━━━━\n"
+           "🤖 *Altseason Oracle Bot 2026*\n\n"
+           "Il bot AI per la bull run crypto!\n\n"
+           "✅ Prezzi in tempo reale\n"
+           "✅ AI consulente personale\n"
+           "✅ Alert automatici\n"
+           "✅ Forex & Indici\n\n"
+           f"👉 {ref_link}\n"
+           "━━━━━━━━━━━━━━━")
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
+async def cmd_quiet(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    ud["quiet_mode"] = not ud.get("quiet_mode", False)
+    save_user(uid, ud)
+    msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if ud["quiet_mode"] else "☀️ No Disturb DISATTIVO"
+    await u.message.reply_text(msg, reply_markup=KEYBOARD)
+
+async def cmd_price(u, c):
+    if not c.args:
+        await u.message.reply_text("Uso: /price BTC", reply_markup=KEYBOARD)
+        return
+    s = c.args[0].upper()
+    if s not in ASSETS:
+        await u.message.reply_text("❌ Asset non disponibile", reply_markup=KEYBOARD)
+        return
+    try:
+        p = get_prices()[s]
+        a = "🟢" if p["ch"] >= 0 else "🔴"
+        msg = f"{a} *{s}*\n\n💵 `${p['price']:,.4f}`\n📈 24h: `{p['ch']:+.2f}%`\n💎 MCap: `${p['mcap']/1e9:.1f}B`"
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
+# ============================================================
+# ADMIN COMANDI
+# ============================================================
+async def cmd_admin(u, c):
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        return
+    try:
+        users = list_users()
+        total = len(users)
+        free = basic = pro = 0
+        for cid in users:
+            plan = load_user(cid).get("plan", "free")
+            if plan == "free": free += 1
+            elif plan == "basic": basic += 1
+            else: pro += 1
+        ricavi = basic * 12.99 + pro * 25.99
+        msg = (f"👑 *PANNELLO ADMIN*\n\n"
+               f"👥 Utenti: `{total}` (Free: {free} | Basic: {basic} | Pro: {pro})\n"
+               f"💰 Ricavi: `€{ricavi:.2f}/mese`\n\n"
+               f"Comandi:\n`/setplan CHATID pro` — upgrade\n`/resetai CHATID` — reset AI\n`/users` — lista utenti")
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=ADMIN_KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
+async def cmd_users(u, c):
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        return
+    try:
+        users = list_users()
+        lines = [f"👥 *UTENTI TOTALI: {len(users)}*\n"]
+        free = basic = pro = 0
+        for cid in users[:30]:
+            ud = load_user(cid)
+            plan = ud.get("plan", "free")
+            used = ud.get("ai_msgs", 0)
+            pf = len(ud.get("portfolio", {}))
+            emoji = {"free": "🆓", "basic": "💙", "pro": "👑"}.get(plan, "🆓")
+            lines.append(f"{emoji} `{cid}` — {plan} | AI: {used} | Coins: {pf}")
+            if plan == "free": free += 1
+            elif plan == "basic": basic += 1
+            else: pro += 1
+        ricavi = basic * 12.99 + pro * 25.99
+        lines.append(f"\n📊 Free: {free} | Basic: {basic} | Pro: {pro}")
+        lines.append(f"💰 Ricavi: €{ricavi:.2f}/mese")
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=ADMIN_KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
+async def cmd_setplan(u, c):
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        return
+    if len(c.args) < 2:
+        await u.message.reply_text("Uso: /setplan CHATID free|basic|pro", reply_markup=KEYBOARD)
+        return
+    target, plan = c.args[0], c.args[1].lower()
+    if plan not in ["free", "basic", "pro"]:
+        await u.message.reply_text("❌ Piano non valido", reply_markup=KEYBOARD)
+        return
+    ud = load_user(target)
+    ud["plan"] = plan
+    ud["ai_msgs"] = 0
+    save_user(target, ud)
+    await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
+    plan_name = {"free": "Free", "basic": "Basic €12.99/mese", "pro": "Pro €25.99/mese"}.get(plan, plan)
+    try:
+        await c.bot.send_message(chat_id=int(target), text=f"🎉 *Piano attivato!*\n\nIl tuo piano *{plan_name}* è ora attivo!\n\nGrazie per esserti abbonato! 🚀", parse_mode="Markdown")
+    except: pass
+
+async def cmd_resetai(u, c):
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        return
+    if not c.args:
+        await u.message.reply_text("Uso: /resetai CHAT_ID", reply_markup=KEYBOARD)
+        return
+    target = c.args[0]
+    ud = load_user(target)
+    ud["ai_msgs"] = 0
+    save_user(target, ud)
+    await u.message.reply_text(f"✅ Counter AI resettato per {target}", reply_markup=KEYBOARD)
 
 async def cmd_initadmin(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
-        await u.message.reply_text("Accesso negato", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
         return
+    ud = load_user(uid)
+    ud["portfolio"] = ADMIN_PORTFOLIO.copy()
+    ud["plan"] = "pro"
+    ud["ai_msgs"] = 0
+    save_user(uid, ud)
+    await u.message.reply_text(f"✅ *Portfolio Admin inizializzato!*\n{len(ADMIN_PORTFOLIO)} coin caricate\nPiano: Pro", parse_mode="Markdown", reply_markup=KEYBOARD)
+
+# ============================================================
+# WIZARD AGGIUNGI COIN
+# ============================================================
+WIZARD_COIN, WIZARD_QTY, WIZARD_PRICE = range(3)
+POPULAR_COINS = [
+    ["BTC", "ETH", "XRP", "SOL"],
+    ["BNB", "ADA", "DOGE", "HBAR"],
+    ["BONK", "SEI", "FET", "LUNA"],
+    ["GRT", "ALGO", "XLM", "POL"],
+]
+
+def make_coin_keyboard():
+    buttons = []
+    for row in POPULAR_COINS:
+        buttons.append([InlineKeyboardButton(c, callback_data=f"coin_{c}") for c in row])
+    buttons.append([InlineKeyboardButton("✍️ Scrivi manualmente", callback_data="coin_MANUAL")])
+    return InlineKeyboardMarkup(buttons)
+
+async def cmd_addwizard(u, c):
+    await u.message.reply_text("💼 *AGGIUNGI AL PORTFOLIO*\n\nSeleziona la coin:", parse_mode="Markdown", reply_markup=make_coin_keyboard())
+    return WIZARD_COIN
+
+async def wizard_coin_button(update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.replace("coin_", "")
+    if data == "MANUAL":
+        await query.edit_message_text("✍️ Scrivi il simbolo della coin (es. BTC, ETH, XRP):")
+        return WIZARD_COIN
+    context.user_data["wizard_coin"] = data
+    await query.edit_message_text(f"✅ Coin: *{data}*\n\nQuante ne hai?", parse_mode="Markdown")
+    return WIZARD_QTY
+
+async def wizard_coin_text(update, context):
+    coin = update.message.text.upper().strip()
+    if coin not in ASSETS:
+        await update.message.reply_text(f"❌ *{coin}* non trovata.\nCoin disponibili: {', '.join(list(ASSETS.keys())[:10])}...", parse_mode="Markdown")
+        return WIZARD_COIN
+    context.user_data["wizard_coin"] = coin
+    await update.message.reply_text(f"✅ *{coin}* selezionata!\n\nQuante ne hai?", parse_mode="Markdown")
+    return WIZARD_QTY
+
+async def wizard_qty(update, context):
     try:
-        portfolio = {
-            "XRP": {"qty": 25142, "buy": 1.36},
-            "SOL": {"qty": 201, "buy": 85.9},
-            "ETH": {"qty": 10.52, "buy": 2117},
-            "DOGE": {"qty": 31128, "buy": 0.10},
-            "BNB": {"qty": 5.05, "buy": 590},
-            "HBAR": {"qty": 14686, "buy": 0.07},
-            "BONK": {"qty": 150804881, "buy": 0.000006},
-            "SEI": {"qty": 13723, "buy": 0.40},
-            "FET": {"qty": 3223, "buy": 0.21},
-            "LUNA": {"qty": 9057, "buy": 0.50},
-            "GRT": {"qty": 43036, "buy": 0.12},
-        }
+        qty = float(update.message.text.replace(",", "."))
+        context.user_data["wizard_qty"] = qty
+        coin = context.user_data["wizard_coin"]
+        try:
+            prices = get_prices()
+            current = prices.get(coin, {}).get("price", 0)
+            price_hint = f"\n\n💡 Prezzo attuale: `${current:,.4f}`" if current else ""
+        except:
+            price_hint = ""
+        await update.message.reply_text(f"✅ Quantità: *{qty}*{price_hint}\n\nA quanto hai comprato in media ($)?\n(Scrivi 0 per usare il prezzo attuale)", parse_mode="Markdown")
+        return WIZARD_PRICE
+    except:
+        await update.message.reply_text("❌ Scrivi un numero valido")
+        return WIZARD_QTY
+
+async def wizard_price(update, context):
+    try:
+        price_input = float(update.message.text.replace(",", ".").replace("$", ""))
+        coin = context.user_data["wizard_coin"]
+        qty = context.user_data["wizard_qty"]
+        if price_input == 0:
+            prices = get_prices()
+            buy_price = prices.get(coin, {}).get("price", 0)
+        else:
+            buy_price = price_input
+        if buy_price == 0:
+            await update.message.reply_text("❌ Prezzo non valido", reply_markup=KEYBOARD)
+            return ConversationHandler.END
+        uid = str(update.message.chat_id)
         ud = load_user(uid)
-        ud["portfolio"] = portfolio
-        ud["plan"] = "pro"
-        ud["ai_msgs"] = 0
+        ud["portfolio"][coin] = {"qty": qty, "buy": buy_price}
         save_user(uid, ud)
-        await u.message.reply_text(
-            f"\u2705 *Portfolio Admin inizializzato!*\n{len(portfolio)} coin caricate\nPiano: Pro\n\nScrivi /portfolio per vedere il P&L",
-            parse_mode="Markdown",
-            reply_markup=KEYBOARD
+        invested = qty * buy_price
+        await update.message.reply_text(
+            f"✅ *{coin} aggiunto!*\n\n• Quantità: `{qty}`\n• Prezzo: `${buy_price:,.4f}`\n• Investito: `${invested:,.2f}`\n\nScrivi /portfolio per vedere il P&L",
+            parse_mode="Markdown", reply_markup=KEYBOARD
         )
-    except Exception as e:
-        await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
+        return ConversationHandler.END
+    except:
+        await update.message.reply_text("❌ Scrivi un numero valido")
+        return WIZARD_PRICE
 
-async def cmd_admin(u, c):
-    uid = get_uid(u)
-    if uid != ADMIN_ID:
-        await u.message.reply_text("Accesso negato", reply_markup=KEYBOARD)
-        return
-    try:
-        files = list_users()
-        total = len(files)
-        free = basic = pro = 0
-        for f in files:
-            cid = f.replace("user_","").replace(".json","")
-            plan = load_user(cid).get("plan","free")
-            if plan == "free": free += 1
-            elif plan == "basic": basic += 1
-            else: pro += 1
-        ricavi = basic * 9.99 + pro * 19.99
-        msg = (
-            f"\U0001f451 *PANNELLO ADMIN*\n\n"
-            f"\U0001f465 Utenti: `{total}` (Free: {free} | Basic: {basic} | Pro: {pro})\n"
-            f"\U0001f4b0 Ricavi: `\u20ac{ricavi:.2f}/mese`\n\n"
-            f"Comandi:\n"
-            f"`/setplan CHATID pro` \u2014 upgrade\n"
-            f"`/resetai CHATID` \u2014 reset AI\n"
-            f"`/users` \u2014 lista utenti"
-        )
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=ADMIN_KEYBOARD)
-    except Exception as e:
-        await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
+async def wizard_cancel(update, context):
+    await update.message.reply_text("❌ Operazione annullata", reply_markup=KEYBOARD)
+    return ConversationHandler.END
 
-
-async def cmd_upgrade(u, c):
-    msg = (
-        "💎 *PIANI DISPONIBILI*\n\n"
-        "🆓 *Free* — Gratis\n"
-        "• 5 messaggi AI al giorno\n"
-        "• Status, fase, prezzi\n\n"
-        "💙 *Basic* — €9.99/mese\n"
-        "• 50 messaggi AI al giorno\n"
-        "• Portfolio completo\n"
-        "• 20 alert prezzi\n\n"
-        "👑 *Pro* — €19.99/mese\n"
-        "• Messaggi AI illimitati\n"
-        "• Alert illimitati\n"
-        "• Tutto incluso\n\n"
-        "📩 Per upgradare scrivi a @admin"
-    )
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
-
-
-async def cmd_forex(u, c):
-    await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=KEYBOARD)
-    try:
-        data = get_forex()
-        if not data:
-            await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=KEYBOARD)
-            return
-        
-        lines = ["💱 *FOREX & INDICI*\n"]
-        
-        lines.append("🌍 *Valute principali*")
-        for sym in ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD"]:
-            if sym in data:
-                d = data[sym]
-                a = "🟢" if d["ch"] >= 0 else "🔴"
-                lines.append(f"{a} *{sym}*: `{d['price']:.4f}` ({d['ch']:+.2f}%)")
-        
-        lines.append("\n📈 *Indici & Commodities*")
-        for sym in ["S&P500", "NASDAQ", "XAU/USD", "XAG/USD", "DXY"]:
-            if sym in data:
-                d = data[sym]
-                a = "🟢" if d["ch"] >= 0 else "🔴"
-                price_fmt = f"{d['price']:,.2f}" if d['price'] > 100 else f"{d['price']:.4f}"
-                lines.append(f"{a} *{sym}*: `{price_fmt}` ({d['ch']:+.2f}%)")
-        
-        lines.append("\n_Vuoi analisi AI su una coppia? Scrivimi tipo: Analizza EUR/USD_")
-        
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
-    except Exception as e:
-        await u.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
-
-
-async def cmd_news(u, c):
-    await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
-    try:
-        r = requests.get(
-            "https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies=BTC,ETH,XRP,SOL&kind=news&public=true",
-            timeout=10
-        )
-        data = r.json()
-        results = data.get("results", [])[:6]
-        if not results:
-            await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
-            return
-        lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
-        for news in results:
-            title = news.get("title", "")[:80]
-            url = news.get("url", "")
-            currencies = [c["code"] for c in news.get("currencies", [])]
-            coins = " ".join([f"`{c}`" for c in currencies[:3]]) if currencies else ""
-            lines.append(f"• {coins} [{title}]({url})")
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
-    except Exception as e:
-        await u.message.reply_text(f"❌ Errore news: {e}", reply_markup=KEYBOARD)
-
-async def cmd_quiet(u, c):
-    DATA["quiet_mode"] = not DATA.get("quiet_mode", False)
-    save_data(DATA)
-    msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if DATA["quiet_mode"] else "☀️ No Disturb DISATTIVO"
-    await u.message.reply_text(msg, reply_markup=KEYBOARD)
-
+# ============================================================
+# HANDLER MESSAGGI LIBERI (AI)
+# ============================================================
 async def handle_text(u, c):
     t = u.message.text
-    if t == "📊 Status": await cmd_status(u, c)
-    elif t == "🎯 Fase": await cmd_phase(u, c)
-    elif t == "📈 Macro": await cmd_macro(u, c)
-    elif t == "🏆 Top Performer": await cmd_top(u, c)
-    elif t == "😱 Fear & Greed": await cmd_feargreed(u, c)
-    elif t == "📉 RSI & MACD": await cmd_rsimacd(u, c)
-    elif t == "💼 Portfolio": await cmd_portfolio(u, c)
-    elif t == "🔔 I miei Alert": await cmd_alerts(u, c)
-    elif t == "📅 Timeline": await cmd_timeline(u, c)
-    elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
-    elif t == "💱 Forex & Indici": await cmd_forex(u, c)
-    elif t == "🌙 No Disturb": await cmd_quiet(u, c)
-    elif t == "💳 Abbonati": await cmd_pay(u, c)
-    elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
-    elif t == "👥 I miei Utenti": await cmd_users(u, c)
-    elif t == "📊 Stats Admin": await cmd_admin(u, c)
-    elif t == "💰 Ricavi": await cmd_stats(u, c) if hasattr(cmd_stats, "__call__") else await cmd_admin(u, c)
-    elif t == "🔙 Torna al Bot": await u.message.reply_text("✅ Benvenuto nel bot!", reply_markup=KEYBOARD)
-    elif t == "📊 Il mio piano": await cmd_myplan(u, c)
-    elif t == "📤 Piano Uscita": await cmd_exit_plan(u, c)
-    elif t == "🚨 Check Uscita": await cmd_stoploss(u, c)
-    elif t == "💰 Prezzo BTC": c.args = ["BTC"]; await cmd_price(u, c)
-    elif t == "💰 Prezzo ETH": c.args = ["ETH"]; await cmd_price(u, c)
-    elif t == "💰 Prezzo XRP": c.args = ["XRP"]; await cmd_price(u, c)
-    elif t == "💰 Prezzo SOL": c.args = ["SOL"]; await cmd_price(u, c)
-    elif t == "❓ Aiuto": await cmd_help(u, c)
-    elif t == "📢 Condividi": await cmd_share(u, c)
-    elif t == "🔗 Referral": await cmd_referral(u, c)
-    elif t == "⚙️ Setup Alert": await cmd_setup(u, c)
-    elif t == "🏆 Top Performer": await cmd_top(u, c)
-    elif t == "😱 Fear &amp; Greed": await cmd_feargreed(u, c)
-    elif t == "📉 RSI &amp; MACD": await cmd_rsimacd(u, c)
-    elif t == "📰 News": await cmd_news(u, c)
-    elif t == "🤖 Chiedi AI": await cmd_ai(u, c)
-    elif t == "👥 Utenti": await cmd_users(u, c)
-    else:
-        try:
-            uid = get_uid(u)
-            ud = load_user(uid)
-            limit = AI_LIMITS.get(ud.get("plan", "free"), 5)
-            used = ud.get("ai_msgs", 0)
-            if used >= limit:
-                await u.message.reply_text(
-                    f"⚠️ Hai usato tutti i {limit} messaggi AI del piano Free.\n\nUpgrada a Basic (50 msg) o Pro (illimitati)!\n\n/upgrade per info",
-                    reply_markup=KEYBOARD
-                )
-                return
-            ud["ai_msgs"] = used + 1
-            save_user(uid, ud)
-            await u.message.reply_text(f"🤖 Sto analizzando... ({used+1}/{limit})", reply_markup=KEYBOARD)
-            g = get_global()
-            p = get_prices()
-            fg = get_fg()
-            ph, desc, level = phase(g["dom"])
-            ctx = (
-                f"Fase: {ph} ({level})\n"
-                f"BTC Dom: {g['dom']:.2f}pct\n"
-                f"Fear&Greed: {fg['v']} {fg['lbl']}\n"
-                f"BTC: ${p['BTC']['price']:,.0f} ({p['BTC']['ch']:+.1f}pct)\n"
-                f"ETH: ${p['ETH']['price']:,.0f} ({p['ETH']['ch']:+.1f}pct)\n"
-                f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}pct)\n"
-                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"
-            )
-            response = get_claude_response(t, ctx, uid)
-            await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
-        except Exception as e:
-            await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
+    handlers = {
+        "📊 Status": cmd_status, "🎯 Fase": cmd_phase,
+        "😱 Fear & Greed": cmd_feargreed, "📉 RSI & MACD": cmd_rsimacd,
+        "🏆 Top Performer": cmd_top, "💱 Forex & Indici": cmd_forex,
+        "📰 News": cmd_news, "📅 Timeline": cmd_timeline,
+        "💼 Portfolio": cmd_portfolio, "💹 Aggiungi Coin": cmd_addwizard,
+        "🔔 I miei Alert": cmd_alerts, "⚙️ Setup Alert": cmd_setup,
+        "📤 Piano Uscita": cmd_exit_plan, "🚨 Check Uscita": cmd_stoploss,
+        "🤖 Chiedi AI": cmd_ai, "📊 Il mio piano": cmd_myplan,
+        "💳 Abbonati": cmd_pay, "🔗 Referral": cmd_referral,
+        "📢 Condividi": cmd_share, "❓ Aiuto": cmd_help,
+        "👥 Utenti": cmd_users, "👥 I miei Utenti": cmd_users,
+        "📊 Stats Admin": cmd_admin, "💰 Ricavi": cmd_admin,
+        "🔙 Torna al Bot": None,
+    }
+    if t in handlers:
+        fn = handlers[t]
+        if fn is None:
+            await u.message.reply_text("✅ Benvenuto!", reply_markup=KEYBOARD)
+        else:
+            await fn(u, c)
+        return
+    # AI risponde a messaggi liberi
+    try:
+        uid = get_uid(u)
+        ud = load_user(uid)
+        limit = AI_LIMITS.get(ud.get("plan", "free"), 5)
+        used = ud.get("ai_msgs", 0)
+        if used >= limit:
+            await u.message.reply_text(f"⚠️ Hai usato tutti i {limit} messaggi AI del piano Free.\n\nUpgrada a Basic (50 msg) o Pro (illimitati)!\n\n/upgrade per info", reply_markup=KEYBOARD)
+            return
+        ud["ai_msgs"] = used + 1
+        save_user(uid, ud)
+        await u.message.reply_text(f"🤖 Sto analizzando... ({used+1}/{limit})", reply_markup=KEYBOARD)
+        g = get_global(); p = get_prices(); fg = get_fg()
+        ph, desc, level = phase(g["dom"])
+        ctx = (f"Fase: {ph} ({level})\nBTC Dom: {g['dom']:.2f}%\n"
+               f"Fear&Greed: {fg['v']} {fg['lbl']}\n"
+               f"BTC: ${p['BTC']['price']:,.0f} ({p['BTC']['ch']:+.1f}%)\n"
+               f"ETH: ${p['ETH']['price']:,.0f} ({p['ETH']['ch']:+.1f}%)\n"
+               f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}%)\n"
+               f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}%)\n"
+               f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}%)\n"
+               f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}%)\n"
+               f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
+        response = get_claude_response(t, ctx, uid)
+        await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
+# ============================================================
+# MONITOR AUTOMATICO
+# ============================================================
 async def auto_monitor(app):
     await asyncio.sleep(10)
     last_phase = None
-    loop = 0
+    last_reset_day = -1
     while True:
         try:
-            if is_quiet():
-                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-                continue
-            g = get_global()
-            p = get_prices()
-            fg = get_fg()
+            today = datetime.now().day
+            if today != last_reset_day:
+                users = list_users()
+                for cid in users:
+                    ud = load_user(cid)
+                    if ud.get("ai_msgs", 0) > 0:
+                        ud["ai_msgs"] = 0
+                        save_user(cid, ud)
+                log.info(f"Reset giornaliero AI: {len(users)} utenti")
+                last_reset_day = today
+            g = get_global(); p = get_prices(); fg = get_fg()
             ph, desc, level = phase(g["dom"])
-            triggered = check_alerts(p)
-            for msg in triggered:
-                await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            # Check alerts per ogni utente
+            users = list_users()
+            for cid in users:
+                triggered = check_alerts_user(cid, p)
+                for msg in triggered:
+                    try:
+                        await app.bot.send_message(chat_id=int(cid), text=msg, parse_mode="Markdown")
+                    except: pass
+            # Notifica cambio fase
             if level != last_phase:
-                eth_btc = p["ETH"]["price"] / p["BTC"]["price"] if p["BTC"]["price"] else 0
-                msg = f"🚨 *CAMBIO FASE!*\n\n{ph} (`{level}`)\n_{desc}_\n\nBTC Dom: `{g['dom']:.2f}%` | ETH/BTC: `{eth_btc:.5f}`\nFear&Greed: {fg['em']} `{fg['v']}`"
-                await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                msg = f"🚨 *CAMBIO FASE!*\n\n{ph} (`{level}`)\n_{desc}_\n\nBTC Dom: `{g['dom']:.2f}%`\nFear&Greed: {fg['em']} `{fg['v']}`"
+                try:
+                    await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                except: pass
                 last_phase = level
-            memes = [s for s in ["DOGE", "BONK", "PEPE", "SHIB"] if p.get(s, {}).get("ch", 0) > 8]
+            # Meme mania alert
+            memes = [s for s in ["DOGE","BONK","PEPE","SHIB"] if p.get(s, {}).get("ch", 0) > 8]
             if len(memes) >= 2:
-                await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti su >8%\n⚠️ Segnale di euforia — considera uscita!", parse_mode="Markdown")
-            loop += 1
+                try:
+                    await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti >8%\n⚠️ Segnale euforia!", parse_mode="Markdown")
+                except: pass
         except Exception as e:
             log.error(f"Monitor error: {e}")
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+        await asyncio.sleep(CHECK_INTERVAL)
 
+# ============================================================
+# WEB SERVER
+# ============================================================
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
-        try:
-            wp = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp.html')
-            if os.path.exists(wp):
-                with open(wp, 'r') as f:
-                    self.wfile.write(f.read().encode())
-                    return
-        except: pass
-        self.wfile.write(b"<h1>Altseason Bot 2026</h1>")
+        self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
     def log_message(self, *a): pass
 
 def start_web():
     port = int(os.environ.get('PORT', 8080))
     HTTPServer(('', port), WebHandler).serve_forever()
 
+# ============================================================
+# MAIN
+# ============================================================
 async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     cmds = [
         ("start", cmd_start), ("help", cmd_help), ("status", cmd_status),
-        ("phase", cmd_phase), ("macro", cmd_macro), ("feargreed", cmd_feargreed),
-        ("rsimacd", cmd_rsimacd), ("top", cmd_top), ("price", cmd_price),
-        ("portfolio", cmd_portfolio), ("reset", cmd_reset), ("addcoin", cmd_addcoin),
-        ("removecoin", cmd_removecoin), ("alert", cmd_alert), ("alerts", cmd_alerts),
-        ("delalert", cmd_delalert), ("setup", cmd_setup), ("timeline", cmd_timeline),
-        ("quiet", cmd_quiet),
-        ("forex", cmd_forex),
-        ("upgrade", cmd_upgrade),
-        ("admin", cmd_admin),
-        ("initadmin", cmd_initadmin),
-        ("pay", cmd_pay),
-        ("referral", cmd_referral),
+        ("phase", cmd_phase), ("feargreed", cmd_feargreed), ("rsimacd", cmd_rsimacd),
+        ("top", cmd_top), ("forex", cmd_forex), ("news", cmd_news),
+        ("timeline", cmd_timeline), ("price", cmd_price),
+        ("portfolio", cmd_portfolio), ("reset", cmd_reset),
+        ("addcoin", cmd_addcoin), ("removecoin", cmd_removecoin),
+        ("alert", cmd_alert), ("alerts", cmd_alerts),
+        ("delalert", cmd_delalert), ("setup", cmd_setup),
+        ("exitplan", cmd_exit_plan), ("stoploss", cmd_stoploss),
+        ("ai", cmd_ai), ("myplan", cmd_myplan),
+        ("upgrade", cmd_upgrade), ("pay", cmd_pay),
+        ("referral", cmd_referral), ("share", cmd_share),
+        ("quiet", cmd_quiet), ("admin", cmd_admin),
+        ("users", cmd_users), ("setplan", cmd_setplan),
+        ("resetai", cmd_resetai), ("initadmin", cmd_initadmin),
         ("add", cmd_addwizard),
-        ("myplan", cmd_myplan),
-        ("resetai", cmd_resetai),
-        ("setplan", cmd_setplan),
-        ("users", cmd_users),
-        ("exitplan", cmd_exit_plan),
-        ("stoploss", cmd_stoploss),
     ]
     for cmd, fn in cmds:
         app.add_handler(CommandHandler(cmd, fn))
-    # Wizard aggiungi coin
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("add", cmd_addwizard)],
         states={
-            WIZARD_COIN: [
-                CallbackQueryHandler(wizard_coin_button, pattern="^coin_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_coin_text),
-            ],
+            WIZARD_COIN: [CallbackQueryHandler(wizard_coin_button, pattern="^coin_"), MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_coin_text)],
             WIZARD_QTY: [MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_qty)],
             WIZARD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_price)],
         },
@@ -1324,24 +1148,22 @@ async def main():
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(wizard_coin_button, pattern="^coin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
     threading.Thread(target=start_web, daemon=True).start()
-
-    if not DATA.get("portfolio"):
-        init_portfolio()
-
-    log.info("🚀 Altseason Bot COMPLETO online!")
+    log.info("🚀 Altseason Bot V2 online!")
     try:
-        await app.bot.send_message(
-            chat_id=CHAT_ID,
-            text="✅ *Altseason Bot COMPLETO Online!* 🚀\n\n📅 /timeline — Roadmap\n💼 /portfolio — P&L\n⚙️ /setup — 28 alert\n📉 /rsimacd — Indicatori\n❓ /help — Guida completa",
-            parse_mode="Markdown"
-        )
+        await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
     except: pass
-
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    PORT = int(os.environ.get("PORT", 8080))
     async with app:
         await app.start()
-        await app.updater.start_polling()
+        if WEBHOOK_URL:
+            await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+            await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
+            log.info(f"Webhook: {WEBHOOK_URL}/webhook")
+        else:
+            await app.updater.start_polling()
+            log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
         while True:
             await asyncio.sleep(3600)
