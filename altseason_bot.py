@@ -57,7 +57,6 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
     [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
     [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
-    [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
@@ -1147,7 +1146,6 @@ async def handle_text(u, c):
     elif t == "💼 Portfolio": await cmd_portfolio(u, c)
     elif t == "🔔 I miei Alert": await cmd_alerts(u, c)
     elif t == "📅 Timeline": await cmd_timeline(u, c)
-    elif t == "🤖 Chiedi AI": await cmd_ai(u, c)
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
