@@ -59,8 +59,9 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
+    [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
+    [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
+    [KeyboardButton("📢 Condividi"), KeyboardButton("👥 Utenti")],
     [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
@@ -127,7 +128,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
     [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
-    [KeyboardButton("👥 Utenti"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -1147,6 +1148,28 @@ async def cmd_share(u, c):
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
+
+async def cmd_ai(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    plan = ud.get("plan", "free")
+    used = ud.get("ai_msgs", 0)
+    limit = AI_LIMITS.get(plan, 5)
+    remaining = max(0, limit - used)
+    msg = (
+        "🤖 *IL TUO CONSULENTE CRYPTO PERSONALE*\n\n"
+        f"Messaggi rimasti oggi: `{remaining}/{limit}`\n\n"
+        "Chiedimi qualsiasi cosa su:\n"
+        "• 💼 Il tuo portfolio e P&L\n"
+        "• 📊 Analisi delle tue coin\n"
+        "• 🎯 Quando comprare e vendere\n"
+        "• 💱 Forex e indici\n"
+        "• 📅 Strategia altseason 2026\n"
+        "• 🚨 Segnali di uscita\n\n"
+        "💬 *Scrivi la tua domanda qui sotto!*"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_quiet(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
@@ -1170,6 +1193,7 @@ async def handle_text(u, c):
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
     elif t == "💳 Abbonati": await cmd_pay(u, c)
+    elif t == "🤖 Chiedi AI": await cmd_ai(u, c)
     elif t == "🔗 Referral": await cmd_referral(u, c)
     elif t == "📢 Condividi": await cmd_share(u, c)
     elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
@@ -1288,6 +1312,7 @@ async def main():
         ("pay", cmd_pay),
         ("referral", cmd_referral),
         ("share", cmd_share),
+        ("ai", cmd_ai),
         ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
