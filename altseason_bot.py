@@ -958,6 +958,28 @@ async def cmd_share(u, c):
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
+
+async def cmd_ai(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    plan = ud.get("plan", "free")
+    used = ud.get("ai_msgs", 0)
+    limit = AI_LIMITS.get(plan, 5)
+    remaining = max(0, limit - used)
+    msg = (
+        "🤖 *IL TUO CONSULENTE CRYPTO PERSONALE*\n\n"
+        f"Messaggi rimasti oggi: `{remaining}/{limit}`\n\n"
+        "Chiedimi qualsiasi cosa su:\n"
+        "• 💼 Il tuo portfolio e P&L\n"
+        "• 📊 Analisi delle tue coin\n"
+        "• 🎯 Quando comprare e vendere\n"
+        "• 💱 Forex e indici\n"
+        "• 📅 Strategia altseason 2026\n"
+        "• 🚨 Segnali di uscita\n\n"
+        "💬 *Scrivi la tua domanda qui sotto!*"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_referral(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
