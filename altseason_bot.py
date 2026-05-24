@@ -201,7 +201,7 @@ def get_claude_response(user_msg, market_context):
             return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(DATA.get('portfolio', {}))
-        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
+        system = ('Sei un esperto trader crypto. Oggi e MAGGIO 2026 (24/05/2026). Siamo gia in pieno 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO: ' + pf_str + '\n'
             'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
@@ -665,7 +665,10 @@ async def handle_text(u, c):
                 f"BTC: ${p['BTC']['price']:,.0f} ({p['BTC']['ch']:+.1f}pct)\n"
                 f"ETH: ${p['ETH']['price']:,.0f} ({p['ETH']['ch']:+.1f}pct)\n"
                 f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}pct)\n"
-                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"\n"
+                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"\n"\n"
+                f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}pct)\n"
+                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}pct)\n"
+                f"Data oggi: 24/05/2026 MAGGIO 2026. Usa questi dati reali."
                 f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}pct)\n"
                 f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}pct)\n"
                 f"Data oggi: 24/05/2026 MAGGIO 2026. Usa questi dati reali."
