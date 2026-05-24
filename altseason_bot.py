@@ -121,7 +121,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
     [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
     [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
-    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📅 Timeline")],
+    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
