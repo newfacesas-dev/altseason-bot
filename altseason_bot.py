@@ -52,8 +52,15 @@ AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
 ADMIN_ID = "670903243"
 
 ADMIN_KEYBOARD = ReplyKeyboardMarkup([
-    [KeyboardButton("👥 I miei Utenti"), KeyboardButton("📊 Stats Admin")],
-    [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
+    [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
+    [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
+    [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
+    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📅 Timeline")],
+    [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
+    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
+    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
+    [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def get_redis():
@@ -77,7 +84,7 @@ def load_user(chat_id):
                 with open(f) as fp:
                     return json.load(fp)
     except: pass
-    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0, "registered": False}
+    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0}
 
 def save_user(chat_id, data):
     try:
@@ -111,16 +118,14 @@ CACHE_TTL = 180
 
 KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
-    [KeyboardButton("📈 Macro"), KeyboardButton("🏆 Top Performer")],
-    [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
+    [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
+    [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
+    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📅 Timeline")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
-    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("📊 Il mio piano")],
-    [KeyboardButton("💰 Prezzo BTC"), KeyboardButton("💰 Prezzo ETH")],
-    [KeyboardButton("💰 Prezzo XRP"), KeyboardButton("💰 Prezzo SOL")],
-    [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
+    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("📊 Il mio piano"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -493,9 +498,7 @@ async def cmd_price(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_portfolio(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    pf = ud.get("portfolio", {})
+    pf = DATA.get("portfolio", {})
     if not pf:
         await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
@@ -528,14 +531,10 @@ async def cmd_portfolio(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_reset(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    if uid == ADMIN_ID:
-        await cmd_initadmin(u, None)
+    if init_portfolio():
+        await u.message.reply_text(f"✅ Portfolio resettato con prezzi attuali!\n{len(DATA['portfolio'])} asset. P&L parte da 0%.", reply_markup=KEYBOARD)
     else:
-        ud["portfolio"] = {}
-        save_user(uid, ud)
-        await u.message.reply_text("✅ Portfolio resettato! Usa /add per aggiungere le tue coin.", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Errore reset", reply_markup=KEYBOARD)
 
 async def cmd_addcoin(u, c):
     if len(c.args) < 3:
@@ -948,6 +947,24 @@ async def wizard_cancel(update, context):
     return ConversationHandler.END
 
 
+
+async def cmd_referral(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
+    ref_count = ud.get("referrals", 0)
+    msg = (
+        "\U0001f517 *IL TUO LINK REFERRAL*\n\n"
+        f"`{ref_link}`\n\n"
+        f"\U0001f465 Utenti invitati: `{ref_count}`\n\n"
+        "\U0001f4b0 *Come funziona:*\n"
+        "• Condividi il tuo link\n"
+        "• Per ogni amico che si iscrive al piano Basic o Pro\n"
+        "• Guadagni 1 mese gratis sul tuo piano!\n\n"
+        "\U0001f4e4 Condividi su Telegram, WhatsApp, X!"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_pay(u, c):
     msg = (
         "💳 *ABBONATI AL BOT*\n\n"
@@ -963,9 +980,8 @@ async def cmd_pay(u, c):
         "━━━━━━━━━━━━━━━\n"
         "💰 *Come pagare:*\n\n"
         "Invia il pagamento a uno di questi wallet:\n\n"
-        "🔷 *USDT (TRC20):*\n`[IN ARRIVO]`\n\n"
-        "🔶 *BTC:*\n`[IN ARRIVO]`\n\n"
-        "🟣 *ETH/USDC:*\n`[IN ARRIVO]`\n\n"
+        "💎 *USDT/USDC (TRC20 - Tron):*\n`TLAftNsWfrCHboFF3wHf8MbuDRsbSh516D`\n\n"
+        "💎 *USDT/USDC/ETH (ERC20 - Ethereum):*\n`0x3EfB8Fdb87107555Bf46A46f7FB1e6eD0F51A2C4`\n\n"
         "━━━━━━━━━━━━━━━\n"
         "📩 Dopo il pagamento invia lo screenshot a @enricoluciano\n"
         "Il tuo piano verrà attivato entro 24h!"
@@ -1216,6 +1232,7 @@ async def main():
         ("admin", cmd_admin),
         ("initadmin", cmd_initadmin),
         ("pay", cmd_pay),
+        ("referral", cmd_referral),
         ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
@@ -1245,7 +1262,8 @@ async def main():
 
     threading.Thread(target=start_web, daemon=True).start()
 
-    pass  # Portfolio vuoto per default
+    if not DATA.get("portfolio"):
+        init_portfolio()
 
     log.info("🚀 Altseason Bot COMPLETO online!")
     try:
