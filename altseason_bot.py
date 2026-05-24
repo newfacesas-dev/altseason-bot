@@ -593,7 +593,9 @@ async def cmd_alert(u, c):
         await u.message.reply_text("❌ Errore", reply_markup=KEYBOARD)
 
 async def cmd_alerts(u, c):
-    al = DATA.get("alerts", [])
+    uid = get_uid(u)
+    ud = load_user(uid)
+    al = ud.get("alerts", [])
     if not al:
         await u.message.reply_text("Nessun alert. Usa /alert XRP 3", reply_markup=KEYBOARD)
         return
@@ -610,10 +612,13 @@ async def cmd_delalert(u, c):
         return
     try:
         i = int(c.args[0]) - 1
-        al = DATA.get("alerts", [])
+        uid = get_uid(u)
+        ud = load_user(uid)
+        al = ud.get("alerts", [])
         if 0 <= i < len(al):
             r = al.pop(i)
-            save_data(DATA)
+            ud["alerts"] = al
+            save_user(uid, ud)
             await u.message.reply_text(f"✅ Eliminato: {r['sym']}", reply_markup=KEYBOARD)
         else:
             await u.message.reply_text("❌ Numero non valido", reply_markup=KEYBOARD)
