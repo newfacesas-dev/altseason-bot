@@ -341,10 +341,11 @@ def is_quiet():
         return h >= QUIET_START or h < QUIET_END
     return QUIET_START <= h < QUIET_END
 
-def check_alerts(prices):
+def check_alerts_user(chat_id, prices):
+    ud = load_user(chat_id)
     triggered = []
     remaining = []
-    for a in DATA.get("alerts", []):
+    for a in ud.get("alerts", []):
         sym = a["sym"]
         target = a["price"]
         above = a["above"]
@@ -359,8 +360,8 @@ def check_alerts(prices):
         else:
             remaining.append(a)
     if triggered:
-        DATA["alerts"] = remaining
-        save_data(DATA)
+        ud["alerts"] = remaining
+        save_user(chat_id, ud)
     return triggered
 
 async def cmd_help(u, c):
@@ -1191,7 +1192,12 @@ async def auto_monitor(app):
             p = get_prices()
             fg = get_fg()
             ph, desc, level = phase(g["dom"])
-            triggered = check_alerts(p)
+            users = list_users()
+            for cid in users:
+                triggered = check_alerts_user(cid, p)
+                for msg in triggered:
+                    await app.bot.send_message(chat_id=cid, text=msg, parse_mode="Markdown")
+            triggered = []
             for msg in triggered:
                 await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
             if level != last_phase:
