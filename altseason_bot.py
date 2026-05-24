@@ -465,7 +465,9 @@ async def cmd_price(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_portfolio(u, c):
-    pf = DATA.get("portfolio", {})
+    uid = get_uid(u)
+    ud = load_user(uid)
+    pf = ud.get("portfolio", {})
     if not pf:
         await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
@@ -514,8 +516,10 @@ async def cmd_addcoin(u, c):
     try:
         qty = float(c.args[1])
         buy = float(c.args[2].replace(",", ""))
-        DATA["portfolio"][s] = {"qty": qty, "buy": buy}
-        save_data(DATA)
+        uid = get_uid(u)
+        ud = load_user(uid)
+        ud["portfolio"][s] = {"qty": qty, "buy": buy}
+        save_user(uid, ud)
         await u.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.4f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
         await u.message.reply_text("❌ Valori non validi", reply_markup=KEYBOARD)
@@ -525,9 +529,11 @@ async def cmd_removecoin(u, c):
         await u.message.reply_text("Uso: /removecoin BTC", reply_markup=KEYBOARD)
         return
     s = c.args[0].upper()
-    if s in DATA.get("portfolio", {}):
-        del DATA["portfolio"][s]
-        save_data(DATA)
+    uid = get_uid(u)
+    ud = load_user(uid)
+    if s in ud.get("portfolio", {}):
+        del ud["portfolio"][s]
+        save_user(uid, ud)
         await u.message.reply_text(f"✅ {s} rimosso", reply_markup=KEYBOARD)
     else:
         await u.message.reply_text(f"❌ {s} non trovato", reply_markup=KEYBOARD)
