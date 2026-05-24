@@ -82,7 +82,8 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("💰 Prezzo XRP"), KeyboardButton("💰 Prezzo SOL")],
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("🌙 No Disturb"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("🌙 No Disturb")],
+    [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -240,6 +241,48 @@ def get_claude_response(user_msg, market_context):
         return msg.content[0].text
     except Exception as e:
         return f'Errore AI: {e}'
+
+
+def get_forex():
+    """Fetch forex and indices prices from Yahoo Finance API"""
+    if 'forex' in _cache and time.time() - _cache['forex']['t'] < 300:
+        return _cache['forex']['d']
+    try:
+        symbols = {
+            "EUR/USD": "EURUSD=X",
+            "GBP/USD": "GBPUSD=X", 
+            "USD/JPY": "JPY=X",
+            "USD/CHF": "CHF=X",
+            "AUD/USD": "AUDUSD=X",
+            "XAU/USD": "GC=F",
+            "XAG/USD": "SI=F",
+            "S&P500": "^GSPC",
+            "NASDAQ": "^IXIC",
+            "DXY": "DX-Y.NYB",
+        }
+        result = {}
+        for name, sym in symbols.items():
+            try:
+                r = requests.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=5
+                )
+                data = r.json()["chart"]["result"][0]
+                closes = data["indicators"]["quote"][0]["close"]
+                closes = [c for c in closes if c is not None]
+                if len(closes) >= 2:
+                    price = closes[-1]
+                    prev = closes[-2]
+                    ch = ((price - prev) / prev) * 100
+                    result[name] = {"price": price, "ch": ch}
+            except:
+                pass
+        _cache['forex'] = {'d': result, 't': time.time()}
+        return result
+    except Exception as e:
+        log.error(f"Forex error: {e}")
+        return {}
 
 def phase(dom):
     if dom < BTC_DOM_WARNING:
@@ -670,6 +713,38 @@ async def cmd_upgrade(u, c):
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
 
+
+async def cmd_forex(u, c):
+    await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=KEYBOARD)
+    try:
+        data = get_forex()
+        if not data:
+            await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=KEYBOARD)
+            return
+        
+        lines = ["💱 *FOREX & INDICI*\n"]
+        
+        lines.append("🌍 *Valute principali*")
+        for sym in ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD"]:
+            if sym in data:
+                d = data[sym]
+                a = "🟢" if d["ch"] >= 0 else "🔴"
+                lines.append(f"{a} *{sym}*: `{d['price']:.4f}` ({d['ch']:+.2f}%)")
+        
+        lines.append("\n📈 *Indici & Commodities*")
+        for sym in ["S&P500", "NASDAQ", "XAU/USD", "XAG/USD", "DXY"]:
+            if sym in data:
+                d = data[sym]
+                a = "🟢" if d["ch"] >= 0 else "🔴"
+                price_fmt = f"{d['price']:,.2f}" if d['price'] > 100 else f"{d['price']:.4f}"
+                lines.append(f"{a} *{sym}*: `{price_fmt}` ({d['ch']:+.2f}%)")
+        
+        lines.append("\n_Vuoi analisi AI su una coppia? Scrivimi tipo: Analizza EUR/USD_")
+        
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
+
 async def cmd_quiet(u, c):
     DATA["quiet_mode"] = not DATA.get("quiet_mode", False)
     save_data(DATA)
@@ -688,6 +763,7 @@ async def handle_text(u, c):
     elif t == "🔔 I miei Alert": await cmd_alerts(u, c)
     elif t == "📅 Timeline": await cmd_timeline(u, c)
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
+    elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
     elif t == "📤 Piano Uscita": await cmd_exit_plan(u, c)
     elif t == "🚨 Check Uscita": await cmd_stoploss(u, c)
@@ -787,6 +863,7 @@ async def main():
         ("removecoin", cmd_removecoin), ("alert", cmd_alert), ("alerts", cmd_alerts),
         ("delalert", cmd_delalert), ("setup", cmd_setup), ("timeline", cmd_timeline),
         ("quiet", cmd_quiet),
+        ("forex", cmd_forex),
         ("upgrade", cmd_upgrade),
         ("exitplan", cmd_exit_plan),
         ("stoploss", cmd_stoploss),
