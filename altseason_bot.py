@@ -83,7 +83,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("💱 Forex & Indici"), KeyboardButton("🌙 No Disturb")],
-    [KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("📊 Il mio piano"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -694,6 +694,97 @@ async def cmd_stoploss(u, c):
         await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
 
 
+
+async def cmd_myplan(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    plan = ud.get("plan", "free")
+    used = ud.get("ai_msgs", 0)
+    limit = AI_LIMITS.get(plan, 5)
+    remaining = max(0, limit - used)
+    
+    plan_emoji = {"free": "🆓", "basic": "💙", "pro": "👑"}.get(plan, "🆓")
+    plan_name = {"free": "Free", "basic": "Basic", "pro": "Pro"}.get(plan, "Free")
+    
+    msg = (
+        f"👤 *IL TUO PIANO*\n\n"
+        f"{plan_emoji} Piano: *{plan_name}*\n"
+        f"🤖 Messaggi AI usati: `{used}/{limit}`\n"
+        f"✅ Messaggi rimasti: `{remaining}`\n\n"
+    )
+    
+    if plan == "free":
+        msg += (
+            "⬆️ *Vuoi più messaggi AI?*\n\n"
+            "💙 *Basic* €9.99/mese → 50 msg/giorno\n"
+            "👑 *Pro* €19.99/mese → Illimitati\n\n"
+            "Scrivi /upgrade per info"
+        )
+    elif plan == "basic":
+        msg += "👑 Upgrada a *Pro* per messaggi illimitati!\n/upgrade"
+    else:
+        msg += "🎉 Sei al piano massimo!"
+    
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
+
+async def cmd_resetai(u, c):
+    """Admin command: reset AI counter for a user"""
+    uid = get_uid(u)
+    if uid != "670903243":
+        await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
+        return
+    if not c.args:
+        await u.message.reply_text("Uso: /resetai CHAT_ID", reply_markup=KEYBOARD)
+        return
+    target = c.args[0]
+    ud = load_user(target)
+    ud["ai_msgs"] = 0
+    save_user(target, ud)
+    await u.message.reply_text(f"✅ Counter AI resettato per {target}", reply_markup=KEYBOARD)
+
+
+async def cmd_setplan(u, c):
+    """Admin command: set plan for a user"""
+    uid = get_uid(u)
+    if uid != "670903243":
+        await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
+        return
+    if len(c.args) < 2:
+        await u.message.reply_text("Uso: /setplan CHAT_ID free|basic|pro", reply_markup=KEYBOARD)
+        return
+    target = c.args[0]
+    plan = c.args[1].lower()
+    if plan not in ["free", "basic", "pro"]:
+        await u.message.reply_text("❌ Piano non valido", reply_markup=KEYBOARD)
+        return
+    ud = load_user(target)
+    ud["plan"] = plan
+    ud["ai_msgs"] = 0
+    save_user(target, ud)
+    await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
+
+
+async def cmd_users(u, c):
+    """Admin command: list all users"""
+    uid = get_uid(u)
+    if uid != "670903243":
+        await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
+        return
+    try:
+        files = [f for f in os.listdir(DATA_DIR) if f.startswith("user_")]
+        lines = [f"👥 *UTENTI TOTALI: {len(files)}*\n"]
+        for f in files[:20]:
+            chat_id = f.replace("user_", "").replace(".json", "")
+            ud = load_user(chat_id)
+            plan = ud.get("plan", "free")
+            used = ud.get("ai_msgs", 0)
+            emoji = {"free": "🆓", "basic": "💙", "pro": "👑"}.get(plan, "🆓")
+            lines.append(f"{emoji} `{chat_id}` — {plan} ({used} msg)")
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
 async def cmd_upgrade(u, c):
     msg = (
         "💎 *PIANI DISPONIBILI*\n\n"
@@ -765,6 +856,7 @@ async def handle_text(u, c):
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
+    elif t == "📊 Il mio piano": await cmd_myplan(u, c)
     elif t == "📤 Piano Uscita": await cmd_exit_plan(u, c)
     elif t == "🚨 Check Uscita": await cmd_stoploss(u, c)
     elif t == "💰 Prezzo BTC": c.args = ["BTC"]; await cmd_price(u, c)
@@ -865,6 +957,10 @@ async def main():
         ("quiet", cmd_quiet),
         ("forex", cmd_forex),
         ("upgrade", cmd_upgrade),
+        ("myplan", cmd_myplan),
+        ("resetai", cmd_resetai),
+        ("setplan", cmd_setplan),
+        ("users", cmd_users),
         ("exitplan", cmd_exit_plan),
         ("stoploss", cmd_stoploss),
     ]
