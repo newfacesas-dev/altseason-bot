@@ -438,20 +438,31 @@ async def cmd_forex(u, c):
 async def cmd_news(u, c):
     await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
     try:
-        r = requests.get(
-            "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH,XRP,SOL&sortOrder=latest",
-            timeout=10
-        )
-        data = r.json()
-        results = data.get("Data", [])[:6] if isinstance(data.get("Data"), list) else []
-        if not results:
-            await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
-            return
+        import xml.etree.ElementTree as ET
+        feeds = [
+            ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+            ("Decrypt", "https://decrypt.co/feed"),
+        ]
         lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
-        for news in results:
-            title = news.get("title", "")[:80]
-            url = news.get("url", "")
-            lines.append(f"• [{title}]({url})")
+        count = 0
+        for source, url in feeds:
+            try:
+                r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+                root = ET.fromstring(r.content)
+                items = root.findall(".//item")[:3]
+                for item in items:
+                    title = item.findtext("title", "")[:80]
+                    link = item.findtext("link", "")
+                    lines.append(f"• [{title}]({link})")
+                    count += 1
+                    if count >= 6:
+                        break
+            except: pass
+            if count >= 6:
+                break
+        if count == 0:
+            await u.message.reply_text("❌ Nessuna notizia disponibile al momento", reply_markup=KEYBOARD)
+            return
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
