@@ -1262,8 +1262,7 @@ async def main():
 
     threading.Thread(target=start_web, daemon=True).start()
 
-    if not DATA.get("portfolio"):
-        init_portfolio()
+    # Portfolio caricato per utente da Redis
 
     log.info("🚀 Altseason Bot COMPLETO online!")
     try:
