@@ -438,8 +438,12 @@ async def cmd_forex(u, c):
 async def cmd_news(u, c):
     await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
     try:
-        r = requests.get("https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies=BTC,ETH,XRP,SOL&kind=news&public=true", timeout=10)
-        results = r.json().get("results", [])[:6]
+        r = requests.get(
+            "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=BTC,ETH,XRP,SOL&sortOrder=latest",
+            timeout=10
+        )
+        data = r.json()
+        results = data.get("Data", [])[:6]
         if not results:
             await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
             return
@@ -447,9 +451,7 @@ async def cmd_news(u, c):
         for news in results:
             title = news.get("title", "")[:80]
             url = news.get("url", "")
-            currencies = [c["code"] for c in news.get("currencies", [])]
-            coins = " ".join([f"`{c}`" for c in currencies[:3]]) if currencies else ""
-            lines.append(f"• {coins} [{title}]({url})")
+            lines.append(f"• [{title}]({url})")
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
