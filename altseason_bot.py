@@ -57,6 +57,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("🌙 No Disturb"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("⚙️ Setup Alert"), KeyboardButton("📋 Piano Uscita")],
 ], resize_keyboard=True)
 
 def load_data():
