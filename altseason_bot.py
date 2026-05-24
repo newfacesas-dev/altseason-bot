@@ -47,6 +47,14 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users")
 os.makedirs(DATA_DIR, exist_ok=True)
 AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
 
+
+ADMIN_ID = "670903243"
+
+ADMIN_KEYBOARD = ReplyKeyboardMarkup([
+    [KeyboardButton("👥 Utenti"), KeyboardButton("📊 Stats")],
+    [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
+], resize_keyboard=True)
+
 def get_user_file(chat_id):
     return os.path.join(DATA_DIR, f"user_{chat_id}.json")
 
@@ -228,7 +236,7 @@ def get_claude_response(user_msg, market_context):
             return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(DATA.get('portfolio', {}))
-        system = ('Sei un esperto trader crypto E forex. Oggi siamo a MAGGIO 2026. Sei esperto di: crypto (BTC, ETH, XRP, SOL, altcoin), forex (EUR/USD, GBP/USD, USD/JPY, XAU/USD oro), indici (S&P500, NASDAQ). Rispondi sempre in italiano con analisi pratiche.\n'
+        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO: ' + pf_str + '\n'
             'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
@@ -785,6 +793,37 @@ async def cmd_users(u, c):
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
+
+async def cmd_admin(u, c):
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("Accesso negato", reply_markup=KEYBOARD)
+        return
+    try:
+        files = [f for f in os.listdir(DATA_DIR) if f.startswith("user_")]
+        total = len(files)
+        free = basic = pro = 0
+        for f in files:
+            cid = f.replace("user_","").replace(".json","")
+            plan = load_user(cid).get("plan","free")
+            if plan == "free": free += 1
+            elif plan == "basic": basic += 1
+            else: pro += 1
+        ricavi = basic * 9.99 + pro * 19.99
+        msg = (
+            f"\U0001f451 *PANNELLO ADMIN*\n\n"
+            f"\U0001f465 Utenti: `{total}` (Free: {free} | Basic: {basic} | Pro: {pro})\n"
+            f"\U0001f4b0 Ricavi: `\u20ac{ricavi:.2f}/mese`\n\n"
+            f"Comandi:\n"
+            f"`/setplan CHATID pro` \u2014 upgrade\n"
+            f"`/resetai CHATID` \u2014 reset AI\n"
+            f"`/users` \u2014 lista utenti"
+        )
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=ADMIN_KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
+
+
 async def cmd_upgrade(u, c):
     msg = (
         "💎 *PIANI DISPONIBILI*\n\n"
@@ -856,6 +895,10 @@ async def handle_text(u, c):
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
+    elif t == "👥 Utenti": await cmd_users(u, c)
+    elif t == "📊 Stats": await cmd_admin(u, c)
+    elif t == "💰 Ricavi": await cmd_admin(u, c)
+    elif t == "🔙 Torna al Bot": await u.message.reply_text("Benvenuto!", reply_markup=KEYBOARD)
     elif t == "📊 Il mio piano": await cmd_myplan(u, c)
     elif t == "📤 Piano Uscita": await cmd_exit_plan(u, c)
     elif t == "🚨 Check Uscita": await cmd_stoploss(u, c)
@@ -901,22 +944,7 @@ async def auto_monitor(app):
     await asyncio.sleep(10)
     last_phase = None
     loop = 0
-    last_reset_day = -1
     while True:
-        today = datetime.now().day
-        if today != last_reset_day:
-            try:
-                files = [f for f in os.listdir(DATA_DIR) if f.startswith("user_")]
-                for fname in files:
-                    cid = fname.replace("user_","").replace(".json","")
-                    ud = load_user(cid)
-                    if ud.get("ai_msgs",0) > 0:
-                        ud["ai_msgs"] = 0
-                        save_user(cid, ud)
-                log.info("Reset giornaliero AI completato")
-                last_reset_day = today
-            except Exception as e:
-                log.error(f"Reset error: {e}")
         try:
             if is_quiet():
                 await asyncio.sleep(CHECK_INTERVAL_SECONDS)
@@ -972,6 +1000,7 @@ async def main():
         ("quiet", cmd_quiet),
         ("forex", cmd_forex),
         ("upgrade", cmd_upgrade),
+        ("admin", cmd_admin),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
         ("setplan", cmd_setplan),
