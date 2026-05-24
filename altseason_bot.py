@@ -77,7 +77,7 @@ def load_user(chat_id):
                 with open(f) as fp:
                     return json.load(fp)
     except: pass
-    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0}
+    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0, "registered": False}
 
 def save_user(chat_id, data):
     try:
@@ -526,10 +526,14 @@ async def cmd_portfolio(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_reset(u, c):
-    if init_portfolio():
-        await u.message.reply_text(f"✅ Portfolio resettato con prezzi attuali!\n{len(DATA['portfolio'])} asset. P&L parte da 0%.", reply_markup=KEYBOARD)
+    uid = get_uid(u)
+    ud = load_user(uid)
+    if uid == ADMIN_ID:
+        await cmd_initadmin(u, None)
     else:
-        await u.message.reply_text("❌ Errore reset", reply_markup=KEYBOARD)
+        ud["portfolio"] = {}
+        save_user(uid, ud)
+        await u.message.reply_text("✅ Portfolio resettato! Usa /add per aggiungere le tue coin.", reply_markup=KEYBOARD)
 
 async def cmd_addcoin(u, c):
     if len(c.args) < 3:
@@ -1239,8 +1243,7 @@ async def main():
 
     threading.Thread(target=start_web, daemon=True).start()
 
-    if not DATA.get("portfolio"):
-        init_portfolio()
+    pass  # Portfolio vuoto per default
 
     log.info("🚀 Altseason Bot COMPLETO online!")
     try:
