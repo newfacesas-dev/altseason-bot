@@ -206,7 +206,7 @@ def get_claude_response(user_msg, market_context):
             'PORTFOLIO: ' + pf_str + '\n'
             'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
         msg = client.messages.create(
-            model='claude-sonnet-4-20250514',
+            model='claude-sonnet-4claude-sonnet-4-520250514',
             max_tokens=1000,
             system=system,
             messages=[{'role': 'user', 'content': user_msg}]
