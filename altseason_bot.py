@@ -1151,6 +1151,15 @@ async def handle_text(u, c):
     elif t == "💰 Prezzo XRP": c.args = ["XRP"]; await cmd_price(u, c)
     elif t == "💰 Prezzo SOL": c.args = ["SOL"]; await cmd_price(u, c)
     elif t == "❓ Aiuto": await cmd_help(u, c)
+    elif t == "📢 Condividi": await cmd_share(u, c)
+    elif t == "🔗 Referral": await cmd_referral(u, c)
+    elif t == "⚙️ Setup Alert": await cmd_setup(u, c)
+    elif t == "🏆 Top Performer": await cmd_top(u, c)
+    elif t == "😱 Fear &amp; Greed": await cmd_feargreed(u, c)
+    elif t == "📉 RSI &amp; MACD": await cmd_rsimacd(u, c)
+    elif t == "📰 News": await cmd_news(u, c)
+    elif t == "🤖 Chiedi AI": await cmd_ai(u, c)
+    elif t == "👥 Utenti": await cmd_users(u, c)
     else:
         try:
             uid = get_uid(u)
