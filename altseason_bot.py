@@ -1153,17 +1153,10 @@ async def main():
     try:
         await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
     except: pass
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    PORT = int(os.environ.get("PORT", 8080))
     async with app:
         await app.start()
-        if WEBHOOK_URL:
-            await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-            await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
-            log.info(f"Webhook: {WEBHOOK_URL}/webhook")
-        else:
-            await app.updater.start_polling()
-            log.info("Polling attivo")
+        await app.updater.start_polling()
+        log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
         while True:
             await asyncio.sleep(3600)
