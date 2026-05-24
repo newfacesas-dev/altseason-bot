@@ -51,7 +51,7 @@ AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
 ADMIN_ID = "670903243"
 
 ADMIN_KEYBOARD = ReplyKeyboardMarkup([
-    [KeyboardButton("👥 Utenti"), KeyboardButton("📊 Stats")],
+    [KeyboardButton("👥 I miei Utenti"), KeyboardButton("📊 Stats Admin")],
     [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
 ], resize_keyboard=True)
 
@@ -91,8 +91,8 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("💰 Prezzo XRP"), KeyboardButton("💰 Prezzo SOL")],
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("🌙 No Disturb")],
-    [KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("💳 Abbonati")],
+    [KeyboardButton("📊 Il mio piano"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -913,6 +913,31 @@ async def wizard_cancel(update, context):
     await update.message.reply_text("❌ Operazione annullata", reply_markup=KEYBOARD)
     return ConversationHandler.END
 
+
+async def cmd_pay(u, c):
+    msg = (
+        "💳 *ABBONATI AL BOT*\n\n"
+        "Scegli il tuo piano:\n\n"
+        "💙 *Basic* — €9.99/mese\n"
+        "• 50 messaggi AI al giorno\n"
+        "• Portfolio completo\n"
+        "• 20 alert prezzi\n\n"
+        "👑 *Pro* — €19.99/mese\n"
+        "• Messaggi AI illimitati\n"
+        "• Alert illimitati\n"
+        "• Tutte le funzioni\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        "💰 *Come pagare:*\n\n"
+        "Invia il pagamento a uno di questi wallet:\n\n"
+        "🔷 *USDT (TRC20):*\n`[IN ARRIVO]`\n\n"
+        "🔶 *BTC:*\n`[IN ARRIVO]`\n\n"
+        "🟣 *ETH/USDC:*\n`[IN ARRIVO]`\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        "📩 Dopo il pagamento invia lo screenshot a @enricoluciano\n"
+        "Il tuo piano verrà attivato entro 24h!"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_admin(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
@@ -1014,11 +1039,12 @@ async def handle_text(u, c):
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
+    elif t == "💳 Abbonati": await cmd_pay(u, c)
     elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
-    elif t == "👥 Utenti": await cmd_users(u, c)
-    elif t == "📊 Stats": await cmd_admin(u, c)
-    elif t == "💰 Ricavi": await cmd_admin(u, c)
-    elif t == "🔙 Torna al Bot": await u.message.reply_text("Benvenuto!", reply_markup=KEYBOARD)
+    elif t == "👥 I miei Utenti": await cmd_users(u, c)
+    elif t == "📊 Stats Admin": await cmd_admin(u, c)
+    elif t == "💰 Ricavi": await cmd_stats(u, c) if hasattr(cmd_stats, "__call__") else await cmd_admin(u, c)
+    elif t == "🔙 Torna al Bot": await u.message.reply_text("✅ Benvenuto nel bot!", reply_markup=KEYBOARD)
     elif t == "📊 Il mio piano": await cmd_myplan(u, c)
     elif t == "📤 Piano Uscita": await cmd_exit_plan(u, c)
     elif t == "🚨 Check Uscita": await cmd_stoploss(u, c)
@@ -1121,6 +1147,7 @@ async def main():
         ("forex", cmd_forex),
         ("upgrade", cmd_upgrade),
         ("admin", cmd_admin),
+        ("pay", cmd_pay),
         ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
