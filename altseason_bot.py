@@ -9,8 +9,8 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
 TELEGRAM_TOKEN = "8940955681:AAGbto8_W43gSe21rA3LlN776tMQfD2auIo"
 CHAT_ID = "670903243"
@@ -85,13 +85,14 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
     [KeyboardButton("📈 Macro"), KeyboardButton("🏆 Top Performer")],
     [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
-    [KeyboardButton("💼 Portfolio"), KeyboardButton("🔔 I miei Alert")],
+    [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
+    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("📊 Il mio piano")],
     [KeyboardButton("💰 Prezzo BTC"), KeyboardButton("💰 Prezzo ETH")],
     [KeyboardButton("💰 Prezzo XRP"), KeyboardButton("💰 Prezzo SOL")],
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("💱 Forex & Indici"), KeyboardButton("🌙 No Disturb")],
-    [KeyboardButton("📊 Il mio piano"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -794,6 +795,124 @@ async def cmd_users(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 
+
+# Wizard stati
+WIZARD_COIN, WIZARD_QTY, WIZARD_PRICE = range(3)
+
+# Coin popolari per selezione rapida
+POPULAR_COINS = [
+    ["BTC", "ETH", "XRP", "SOL"],
+    ["BNB", "ADA", "DOGE", "HBAR"],
+    ["BONK", "SEI", "FET", "LUNA"],
+    ["GRT", "ALGO", "XLM", "POL"],
+]
+
+def make_coin_keyboard():
+    buttons = []
+    for row in POPULAR_COINS:
+        buttons.append([InlineKeyboardButton(c, callback_data=f"coin_{c}") for c in row])
+    buttons.append([InlineKeyboardButton("✍️ Scrivi manualmente", callback_data="coin_MANUAL")])
+    return InlineKeyboardMarkup(buttons)
+
+async def cmd_addwizard(u, c):
+    await u.message.reply_text(
+        "💼 *AGGIUNGI AL PORTFOLIO*\n\nSeleziona la coin o scrivila:",
+        parse_mode="Markdown",
+        reply_markup=make_coin_keyboard()
+    )
+    return WIZARD_COIN
+
+async def wizard_coin_button(update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.replace("coin_", "")
+    
+    if data == "MANUAL":
+        await query.edit_message_text("✍️ Scrivi il simbolo della coin (es. BTC, ETH, XRP):")
+        return WIZARD_COIN
+    
+    context.user_data["wizard_coin"] = data
+    await query.edit_message_text(
+        f"✅ Coin selezionata: *{data}*\n\nQuante ne hai?",
+        parse_mode="Markdown"
+    )
+    return WIZARD_QTY
+
+async def wizard_coin_text(update, context):
+    coin = update.message.text.upper().strip()
+    if coin not in ASSETS:
+        await update.message.reply_text(
+            f"❌ *{coin}* non trovata.\nCoin disponibili: {', '.join(list(ASSETS.keys())[:10])}...",
+            parse_mode="Markdown"
+        )
+        return WIZARD_COIN
+    context.user_data["wizard_coin"] = coin
+    await update.message.reply_text(f"✅ *{coin}* selezionata!\n\nQuante ne hai?", parse_mode="Markdown")
+    return WIZARD_QTY
+
+async def wizard_qty(update, context):
+    try:
+        qty = float(update.message.text.replace(",", "."))
+        context.user_data["wizard_qty"] = qty
+        coin = context.user_data["wizard_coin"]
+        
+        # Mostra prezzo attuale come riferimento
+        try:
+            prices = get_prices()
+            current = prices.get(coin, {}).get("price", 0)
+            price_hint = f"\n\n💡 Prezzo attuale: `${current:,.4f}`" if current else ""
+        except:
+            price_hint = ""
+        
+        await update.message.reply_text(
+            f"✅ Quantità: *{qty}*{price_hint}\n\nA quanto hai comprato in media ($)?\n(Scrivi 0 per usare il prezzo attuale)",
+            parse_mode="Markdown"
+        )
+        return WIZARD_PRICE
+    except:
+        await update.message.reply_text("❌ Scrivi un numero valido (es. 1000 o 0.5)")
+        return WIZARD_QTY
+
+async def wizard_price(update, context):
+    try:
+        price_input = float(update.message.text.replace(",", ".").replace("$", ""))
+        coin = context.user_data["wizard_coin"]
+        qty = context.user_data["wizard_qty"]
+        
+        if price_input == 0:
+            prices = get_prices()
+            buy_price = prices.get(coin, {}).get("price", 0)
+        else:
+            buy_price = price_input
+        
+        if buy_price == 0:
+            await update.message.reply_text("❌ Prezzo non valido", reply_markup=KEYBOARD)
+            return ConversationHandler.END
+        
+        uid = get_uid(update)
+        ud = load_user(uid)
+        ud["portfolio"][coin] = {"qty": qty, "buy": buy_price}
+        save_user(uid, ud)
+        
+        invested = qty * buy_price
+        await update.message.reply_text(
+            f"✅ *{coin} aggiunto al portfolio!*\n\n"
+            f"• Quantità: `{qty}`\n"
+            f"• Prezzo acquisto: `${buy_price:,.4f}`\n"
+            f"• Valore investito: `${invested:,.2f}`\n\n"
+            f"Premi /portfolio per vedere il tuo P&L",
+            parse_mode="Markdown",
+            reply_markup=KEYBOARD
+        )
+        return ConversationHandler.END
+    except:
+        await update.message.reply_text("❌ Scrivi un numero valido (es. 1.36)")
+        return WIZARD_PRICE
+
+async def wizard_cancel(update, context):
+    await update.message.reply_text("❌ Operazione annullata", reply_markup=KEYBOARD)
+    return ConversationHandler.END
+
 async def cmd_admin(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
@@ -895,6 +1014,7 @@ async def handle_text(u, c):
     elif t == "🔄 Reset Portfolio": await cmd_reset(u, c)
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
+    elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
     elif t == "👥 Utenti": await cmd_users(u, c)
     elif t == "📊 Stats": await cmd_admin(u, c)
     elif t == "💰 Ricavi": await cmd_admin(u, c)
@@ -1001,6 +1121,7 @@ async def main():
         ("forex", cmd_forex),
         ("upgrade", cmd_upgrade),
         ("admin", cmd_admin),
+        ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
         ("setplan", cmd_setplan),
@@ -1010,6 +1131,21 @@ async def main():
     ]
     for cmd, fn in cmds:
         app.add_handler(CommandHandler(cmd, fn))
+    # Wizard aggiungi coin
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("add", cmd_addwizard)],
+        states={
+            WIZARD_COIN: [
+                CallbackQueryHandler(wizard_coin_button, pattern="^coin_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_coin_text),
+            ],
+            WIZARD_QTY: [MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_qty)],
+            WIZARD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, wizard_price)],
+        },
+        fallbacks=[CommandHandler("cancel", wizard_cancel)],
+    )
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(wizard_coin_button, pattern="^coin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     threading.Thread(target=start_web, daemon=True).start()
