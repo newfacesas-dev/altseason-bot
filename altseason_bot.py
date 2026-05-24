@@ -767,8 +767,8 @@ async def cmd_myplan(u, c):
     if plan == "free":
         msg += (
             "⬆️ *Vuoi più messaggi AI?*\n\n"
-            "💙 *Basic* €9.99/mese → 50 msg/giorno\n"
-            "👑 *Pro* €19.99/mese → Illimitati\n\n"
+            "💙 *Basic* €12.99/mese → 50 msg/giorno\n"
+            "👑 *Pro* €25.99/mese → Illimitati\n\n"
             "Scrivi /upgrade per info"
         )
     elif plan == "basic":
@@ -962,14 +962,17 @@ async def cmd_referral(u, c):
     ud = load_user(uid)
     ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
     ref_count = ud.get("referrals", 0)
+    earnings = ud.get("ref_earnings", 0.0)
     msg = (
         "\U0001f517 *IL TUO LINK REFERRAL*\n\n"
         f"`{ref_link}`\n\n"
-        f"\U0001f465 Utenti invitati: `{ref_count}`\n\n"
+        f"\U0001f465 Utenti invitati: `{ref_count}`\n"
+        f"\U0001f4b0 Commissioni accumulate: `\u20ac{earnings:.2f}`\n\n"
         "\U0001f4b0 *Come funziona:*\n"
         "• Condividi il tuo link\n"
-        "• Per ogni amico che si iscrive al piano Basic o Pro\n"
-        "• Guadagni 1 mese gratis sul tuo piano!\n\n"
+        "• Per ogni abbonato Basic: guadagni **€2.60/mese** (20%)\n"
+        "• Per ogni abbonato Pro: guadagni **€5.20/mese** (20%)\n"
+        "• Commissioni a vita finché l'utente è abbonato!\n\n"
         "\U0001f4e4 Condividi su Telegram, WhatsApp, X!"
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -978,11 +981,11 @@ async def cmd_pay(u, c):
     msg = (
         "💳 *ABBONATI AL BOT*\n\n"
         "Scegli il tuo piano:\n\n"
-        "💙 *Basic* — €9.99/mese\n"
+        "💙 *Basic* — €12.99/mese\n"
         "• 50 messaggi AI al giorno\n"
         "• Portfolio completo\n"
         "• 20 alert prezzi\n\n"
-        "👑 *Pro* — €19.99/mese\n"
+        "👑 *Pro* — €25.99/mese\n"
         "• Messaggi AI illimitati\n"
         "• Alert illimitati\n"
         "• Tutte le funzioni\n\n"
@@ -1045,7 +1048,7 @@ async def cmd_admin(u, c):
             if plan == "free": free += 1
             elif plan == "basic": basic += 1
             else: pro += 1
-        ricavi = basic * 9.99 + pro * 19.99
+        ricavi = basic * 12.99 + pro * 25.99
         msg = (
             f"\U0001f451 *PANNELLO ADMIN*\n\n"
             f"\U0001f465 Utenti: `{total}` (Free: {free} | Basic: {basic} | Pro: {pro})\n"
@@ -1066,11 +1069,11 @@ async def cmd_upgrade(u, c):
         "🆓 *Free* — Gratis\n"
         "• 5 messaggi AI al giorno\n"
         "• Status, fase, prezzi\n\n"
-        "💙 *Basic* — €9.99/mese\n"
+        "💙 *Basic* — €12.99/mese\n"
         "• 50 messaggi AI al giorno\n"
         "• Portfolio completo\n"
         "• 20 alert prezzi\n\n"
-        "👑 *Pro* — €19.99/mese\n"
+        "👑 *Pro* — €25.99/mese\n"
         "• Messaggi AI illimitati\n"
         "• Alert illimitati\n"
         "• Tutto incluso\n\n"
