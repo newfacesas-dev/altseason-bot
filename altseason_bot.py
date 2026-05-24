@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import requests
+import anthropic
 import pandas as pd
 import time
 import json
@@ -191,6 +192,28 @@ def get_indicators():
                 vol_spike = round(vols[-1] / avg, 1)
         result[sym] = {"rsi": rsi, "macd": macd, "signal": signal, "hist": hist, "vol_spike": vol_spike}
     return result
+
+
+def get_claude_response(user_msg, market_context):
+    try:
+        api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            return 'API key non configurata.'
+        client = anthropic.Anthropic(api_key=api_key)
+        pf_str = str(DATA.get('portfolio', {}))
+        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
+            'DATI MERCATO:\n' + market_context + '\n'
+            'PORTFOLIO: ' + pf_str + '\n'
+            'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
+        msg = client.messages.create(
+            model='claude-sonnet-4-20250514',
+            max_tokens=1000,
+            system=system,
+            messages=[{'role': 'user', 'content': user_msg}]
+        )
+        return msg.content[0].text
+    except Exception as e:
+        return f'Errore AI: {e}'
 
 def phase(dom):
     if dom < BTC_DOM_WARNING:
@@ -628,6 +651,26 @@ async def handle_text(u, c):
     elif t == "💰 Prezzo XRP": c.args = ["XRP"]; await cmd_price(u, c)
     elif t == "💰 Prezzo SOL": c.args = ["SOL"]; await cmd_price(u, c)
     elif t == "❓ Aiuto": await cmd_help(u, c)
+    else:
+        try:
+            await u.message.reply_text("🤖 Sto analizzando...", reply_markup=KEYBOARD)
+            g = get_global()
+            p = get_prices()
+            fg = get_fg()
+            ph, desc, level = phase(g["dom"])
+            ctx = (
+                f"Fase: {ph} ({level})\n"
+                f"BTC Dom: {g['dom']:.2f}pct\n"
+                f"Fear&Greed: {fg['v']} {fg['lbl']}\n"
+                f"BTC: ${p['BTC']['price']:,.0f} ({p['BTC']['ch']:+.1f}pct)\n"
+                f"ETH: ${p['ETH']['price']:,.0f} ({p['ETH']['ch']:+.1f}pct)\n"
+                f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}pct)\n"
+                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"
+            )
+            response = get_claude_response(t, ctx)
+            await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
+        except Exception as e:
+            await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
 
 async def auto_monitor(app):
     await asyncio.sleep(10)
