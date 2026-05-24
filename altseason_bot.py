@@ -453,7 +453,7 @@ async def cmd_rsimacd(u, c):
             rsi = ind.get("rsi", "N/A")
             hist = ind.get("hist", 0)
             trend = "↗️ Rialzista" if hist and hist > 0 else "↘️ Ribassista"
-            rsi_s = "🟢 Oversold — COMPRA" if rsi != "N/A" and rsi < RSI_OVERSOLD else ("🔴 Overbought — ATTENZIONE" if rsi != "N/A" and rsi > RSI_OVERBOUGHT else "⚪ Neutro")
+            rsi_s = "🟢 Oversold — COMPRA" if rsi is not None and rsi != "N/A" and float(rsi) < RSI_OVERSOLD else ("🔴 Overbought — ATTENZIONE" if rsi is not None and rsi != "N/A" and float(rsi) > RSI_OVERBOUGHT else "⚪ Neutro")
             spike = ind.get("vol_spike")
             lines += [f"*{sym}*", f"• RSI: `{rsi}` {rsi_s}", f"• MACD: {trend}", f"• Volume: {'🔊 SPIKE ' + str(spike) + 'x!' if spike else '✅ Normale'}", ""]
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
