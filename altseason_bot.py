@@ -2,6 +2,7 @@ import asyncio
 import logging
 import requests
 import anthropic
+import redis as redis_lib
 import pandas as pd
 import time
 import json
@@ -55,24 +56,51 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
 ], resize_keyboard=True)
 
-def get_user_file(chat_id):
-    return os.path.join(DATA_DIR, f"user_{chat_id}.json")
+def get_redis():
+    try:
+        url = os.environ.get("REDIS_URL", "")
+        if url:
+            return redis_lib.from_url(url, decode_responses=True)
+    except: pass
+    return None
 
 def load_user(chat_id):
     try:
-        f = get_user_file(str(chat_id))
-        if os.path.exists(f):
-            with open(f, "r") as fp:
-                return json.load(fp)
+        r = get_redis()
+        if r:
+            data = r.get(f"user:{chat_id}")
+            if data:
+                return json.loads(data)
+        else:
+            f = os.path.join(DATA_DIR, f"user_{chat_id}.json")
+            if os.path.exists(f):
+                with open(f) as fp:
+                    return json.load(fp)
     except: pass
     return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0}
 
 def save_user(chat_id, data):
     try:
-        with open(get_user_file(str(chat_id)), "w") as fp:
-            json.dump(data, fp, indent=2)
+        r = get_redis()
+        if r:
+            r.set(f"user:{chat_id}", json.dumps(data))
+        else:
+            f = os.path.join(DATA_DIR, f"user_{chat_id}.json")
+            with open(f, "w") as fp:
+                json.dump(data, fp, indent=2)
     except Exception as e:
         log.error(f"Save error: {e}")
+
+def list_users():
+    try:
+        r = get_redis()
+        if r:
+            keys = r.keys("user:*")
+            return [k.replace("user:", "") for k in keys]
+        else:
+            files = list_users()
+            return [f.replace("user_","").replace(".json","") for f in files]
+    except: return []
 
 def get_uid(update):
     return str(update.message.chat_id)
@@ -465,9 +493,7 @@ async def cmd_price(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_portfolio(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    pf = ud.get("portfolio", {})
+    pf = DATA.get("portfolio", {})
     if not pf:
         await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
@@ -516,10 +542,8 @@ async def cmd_addcoin(u, c):
     try:
         qty = float(c.args[1])
         buy = float(c.args[2].replace(",", ""))
-        uid = get_uid(u)
-        ud = load_user(uid)
-        ud["portfolio"][s] = {"qty": qty, "buy": buy}
-        save_user(uid, ud)
+        DATA["portfolio"][s] = {"qty": qty, "buy": buy}
+        save_data(DATA)
         await u.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.4f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
         await u.message.reply_text("❌ Valori non validi", reply_markup=KEYBOARD)
@@ -529,11 +553,9 @@ async def cmd_removecoin(u, c):
         await u.message.reply_text("Uso: /removecoin BTC", reply_markup=KEYBOARD)
         return
     s = c.args[0].upper()
-    uid = get_uid(u)
-    ud = load_user(uid)
-    if s in ud.get("portfolio", {}):
-        del ud["portfolio"][s]
-        save_user(uid, ud)
+    if s in DATA.get("portfolio", {}):
+        del DATA["portfolio"][s]
+        save_data(DATA)
         await u.message.reply_text(f"✅ {s} rimosso", reply_markup=KEYBOARD)
     else:
         await u.message.reply_text(f"❌ {s} non trovato", reply_markup=KEYBOARD)
@@ -787,7 +809,7 @@ async def cmd_users(u, c):
         await u.message.reply_text("❌ Comando riservato all'admin", reply_markup=KEYBOARD)
         return
     try:
-        files = [f for f in os.listdir(DATA_DIR) if f.startswith("user_")]
+        files = list_users()
         lines = [f"👥 *UTENTI TOTALI: {len(files)}*\n"]
         for f in files[:20]:
             chat_id = f.replace("user_", "").replace(".json", "")
@@ -950,7 +972,7 @@ async def cmd_admin(u, c):
         await u.message.reply_text("Accesso negato", reply_markup=KEYBOARD)
         return
     try:
-        files = [f for f in os.listdir(DATA_DIR) if f.startswith("user_")]
+        files = list_users()
         total = len(files)
         free = basic = pro = 0
         for f in files:
