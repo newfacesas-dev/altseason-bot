@@ -580,8 +580,10 @@ async def cmd_alert(u, c):
         above = True
         if len(c.args) >= 3 and c.args[2].lower() == "down":
             above = False
-        DATA["alerts"].append({"sym": s, "price": t, "above": above})
-        save_data(DATA)
+        uid = get_uid(u)
+        ud = load_user(uid)
+        ud["alerts"].append({"sym": s, "price": t, "above": above})
+        save_user(uid, ud)
         d = "sale a" if above else "scende a"
         await u.message.reply_text(f"✅ Alert: *{s}* {d} `${t:,.2f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
@@ -626,8 +628,10 @@ async def cmd_setup(u, c):
     for sym, prices in targets.items():
         for p in prices:
             alerts.append({"sym": sym, "price": p, "above": True})
-    DATA["alerts"] = alerts
-    save_data(DATA)
+    uid = get_uid(u)
+    ud = load_user(uid)
+    ud["alerts"] = alerts
+    save_user(uid, ud)
     await u.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP: $3→$5→$8→$12\nSOL: $200→$350→$500→$800\nETH: $4k→$6k→$9k→$14k\nBNB: $900→$1.2k→$1.5k→$2k\nDOGE: $0.30→$0.60→$1.00\nHBAR: $0.20→$0.40→$0.70\nSEI: $0.80→$1.50→$3.00", parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_timeline(u, c):
@@ -1105,9 +1109,11 @@ async def cmd_forex(u, c):
         await u.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
 
 async def cmd_quiet(u, c):
-    DATA["quiet_mode"] = not DATA.get("quiet_mode", False)
-    save_data(DATA)
-    msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if DATA["quiet_mode"] else "☀️ No Disturb DISATTIVO"
+    uid = get_uid(u)
+    ud = load_user(uid)
+    ud["quiet_mode"] = not ud.get("quiet_mode", False)
+    save_user(uid, ud)
+    msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if ud["quiet_mode"] else "☀️ No Disturb DISATTIVO"
     await u.message.reply_text(msg, reply_markup=KEYBOARD)
 
 async def handle_text(u, c):
