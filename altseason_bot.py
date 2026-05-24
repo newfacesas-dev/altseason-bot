@@ -939,6 +939,25 @@ async def wizard_cancel(update, context):
 
 
 
+
+async def cmd_share(u, c):
+    uid = get_uid(u)
+    ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
+    msg = (
+        "📢 *CONDIVIDI IL BOT*\n\n"
+        "Copia e manda questo messaggio:\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        "🤖 *Altseason Oracle Bot 2026*\n\n"
+        "Il bot AI per la bull run crypto!\n\n"
+        "✅ Prezzi in tempo reale\n"
+        "✅ AI consulente personale\n"
+        "✅ Alert automatici\n"
+        "✅ Forex & Indici\n\n"
+        f"👉 {ref_link}\n"
+        "━━━━━━━━━━━━━━━"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_referral(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
