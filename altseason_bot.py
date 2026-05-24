@@ -443,7 +443,7 @@ async def cmd_news(u, c):
             timeout=10
         )
         data = r.json()
-        results = data.get("Data", [])[:6]
+        results = data.get("Data", [])[:6] if isinstance(data.get("Data"), list) else []
         if not results:
             await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
             return
