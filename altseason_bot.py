@@ -123,11 +123,13 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
     [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
     [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
+    [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
+    [KeyboardButton("👥 Utenti"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
