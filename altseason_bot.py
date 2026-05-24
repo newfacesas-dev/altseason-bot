@@ -901,7 +901,22 @@ async def auto_monitor(app):
     await asyncio.sleep(10)
     last_phase = None
     loop = 0
+    last_reset_day = -1
     while True:
+        today = datetime.now().day
+        if today != last_reset_day:
+            try:
+                files = [f for f in os.listdir(DATA_DIR) if f.startswith("user_")]
+                for fname in files:
+                    cid = fname.replace("user_","").replace(".json","")
+                    ud = load_user(cid)
+                    if ud.get("ai_msgs",0) > 0:
+                        ud["ai_msgs"] = 0
+                        save_user(cid, ud)
+                log.info("Reset giornaliero AI completato")
+                last_reset_day = today
+            except Exception as e:
+                log.error(f"Reset error: {e}")
         try:
             if is_quiet():
                 await asyncio.sleep(CHECK_INTERVAL_SECONDS)
