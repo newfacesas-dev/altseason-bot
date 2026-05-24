@@ -42,6 +42,31 @@ PORTFOLIO_QTY = {
 }
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.json")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users")
+os.makedirs(DATA_DIR, exist_ok=True)
+AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
+
+def get_user_file(chat_id):
+    return os.path.join(DATA_DIR, f"user_{chat_id}.json")
+
+def load_user(chat_id):
+    try:
+        f = get_user_file(str(chat_id))
+        if os.path.exists(f):
+            with open(f, "r") as fp:
+                return json.load(fp)
+    except: pass
+    return {"portfolio": {}, "alerts": [], "quiet_mode": False, "plan": "free", "ai_msgs": 0}
+
+def save_user(chat_id, data):
+    try:
+        with open(get_user_file(str(chat_id)), "w") as fp:
+            json.dump(data, fp, indent=2)
+    except Exception as e:
+        log.error(f"Save error: {e}")
+
+def get_uid(update):
+    return str(update.message.chat_id)
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
 _cache = {}
@@ -57,7 +82,6 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📅 Timeline"), KeyboardButton("🔄 Reset Portfolio")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("🌙 No Disturb"), KeyboardButton("❓ Aiuto")],
-    [KeyboardButton("⚙️ Setup Alert"), KeyboardButton("📋 Piano Uscita")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -202,12 +226,12 @@ def get_claude_response(user_msg, market_context):
             return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(DATA.get('portfolio', {}))
-        system = (f'Sei un esperto trader crypto. Oggi e {datetime.now().strftime("%d/%m/%Y")}. Siamo nel MAGGIO 2026.\n'
+        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO: ' + pf_str + '\n'
             'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
         msg = client.messages.create(
-            model='claude-haiku-4-5-20251001',
+            model='claude-sonnet-4-5',
             max_tokens=1000,
             system=system,
             messages=[{'role': 'user', 'content': user_msg}]
@@ -626,6 +650,25 @@ async def cmd_stoploss(u, c):
         await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
 
 
+async def cmd_upgrade(u, c):
+    msg = (
+        "💎 *PIANI DISPONIBILI*\n\n"
+        "🆓 *Free* — Gratis\n"
+        "• 5 messaggi AI al giorno\n"
+        "• Status, fase, prezzi\n\n"
+        "💙 *Basic* — €9.99/mese\n"
+        "• 50 messaggi AI al giorno\n"
+        "• Portfolio completo\n"
+        "• 20 alert prezzi\n\n"
+        "👑 *Pro* — €19.99/mese\n"
+        "• Messaggi AI illimitati\n"
+        "• Alert illimitati\n"
+        "• Tutto incluso\n\n"
+        "📩 Per upgradare scrivi a @admin"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
+
 async def cmd_quiet(u, c):
     DATA["quiet_mode"] = not DATA.get("quiet_mode", False)
     save_data(DATA)
@@ -654,7 +697,19 @@ async def handle_text(u, c):
     elif t == "❓ Aiuto": await cmd_help(u, c)
     else:
         try:
-            await u.message.reply_text("🤖 Sto analizzando...", reply_markup=KEYBOARD)
+            uid = get_uid(u)
+            ud = load_user(uid)
+            limit = AI_LIMITS.get(ud.get("plan", "free"), 5)
+            used = ud.get("ai_msgs", 0)
+            if used >= limit:
+                await u.message.reply_text(
+                    f"⚠️ Hai usato tutti i {limit} messaggi AI del piano Free.\n\nUpgrada a Basic (50 msg) o Pro (illimitati)!\n\n/upgrade per info",
+                    reply_markup=KEYBOARD
+                )
+                return
+            ud["ai_msgs"] = used + 1
+            save_user(uid, ud)
+            await u.message.reply_text(f"🤖 Sto analizzando... ({used+1}/{limit})", reply_markup=KEYBOARD)
             g = get_global()
             p = get_prices()
             fg = get_fg()
@@ -666,10 +721,7 @@ async def handle_text(u, c):
                 f"BTC: ${p['BTC']['price']:,.0f} ({p['BTC']['ch']:+.1f}pct)\n"
                 f"ETH: ${p['ETH']['price']:,.0f} ({p['ETH']['ch']:+.1f}pct)\n"
                 f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}pct)\n"
-                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)\n"
-                f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}pct)\n"
-                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}pct)\n"
-                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026"
+                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"
             )
             response = get_claude_response(t, ctx)
             await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -734,6 +786,7 @@ async def main():
         ("removecoin", cmd_removecoin), ("alert", cmd_alert), ("alerts", cmd_alerts),
         ("delalert", cmd_delalert), ("setup", cmd_setup), ("timeline", cmd_timeline),
         ("quiet", cmd_quiet),
+        ("upgrade", cmd_upgrade),
         ("exitplan", cmd_exit_plan),
         ("stoploss", cmd_stoploss),
     ]
