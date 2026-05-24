@@ -493,9 +493,7 @@ async def cmd_price(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_portfolio(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    pf = ud.get("portfolio", {})
+    pf = DATA.get("portfolio", {})
     if not pf:
         await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
@@ -968,6 +966,39 @@ async def cmd_pay(u, c):
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
+
+async def cmd_initadmin(u, c):
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("Accesso negato", reply_markup=KEYBOARD)
+        return
+    try:
+        portfolio = {
+            "XRP": {"qty": 25142, "buy": 1.36},
+            "SOL": {"qty": 201, "buy": 85.9},
+            "ETH": {"qty": 10.52, "buy": 2117},
+            "DOGE": {"qty": 31128, "buy": 0.10},
+            "BNB": {"qty": 5.05, "buy": 590},
+            "HBAR": {"qty": 14686, "buy": 0.07},
+            "BONK": {"qty": 150804881, "buy": 0.000006},
+            "SEI": {"qty": 13723, "buy": 0.40},
+            "FET": {"qty": 3223, "buy": 0.21},
+            "LUNA": {"qty": 9057, "buy": 0.50},
+            "GRT": {"qty": 43036, "buy": 0.12},
+        }
+        ud = load_user(uid)
+        ud["portfolio"] = portfolio
+        ud["plan"] = "pro"
+        ud["ai_msgs"] = 0
+        save_user(uid, ud)
+        await u.message.reply_text(
+            f"\u2705 *Portfolio Admin inizializzato!*\n{len(portfolio)} coin caricate\nPiano: Pro\n\nScrivi /portfolio per vedere il P&L",
+            parse_mode="Markdown",
+            reply_markup=KEYBOARD
+        )
+    except Exception as e:
+        await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
+
 async def cmd_admin(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
@@ -1177,6 +1208,7 @@ async def main():
         ("forex", cmd_forex),
         ("upgrade", cmd_upgrade),
         ("admin", cmd_admin),
+        ("initadmin", cmd_initadmin),
         ("pay", cmd_pay),
         ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
