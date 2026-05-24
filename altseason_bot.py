@@ -51,19 +51,7 @@ AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
 
 ADMIN_ID = "670903243"
 
-ADMIN_KEYBOARD = ReplyKeyboardMarkup([
-    [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
-    [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
-    [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
-    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
-    [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
-    [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
-    [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
-    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("❓ Aiuto")],
-], resize_keyboard=True)
-
+ADMIN_
 def get_redis():
     try:
         url = os.environ.get("REDIS_URL", "")
@@ -266,17 +254,18 @@ def get_indicators():
     return result
 
 
-def get_claude_response(user_msg, market_context):
+def get_claude_response(user_msg, market_context, chat_id=None):
     try:
         api_key = os.environ.get('ANTHROPIC_API_KEY', '')
         if not api_key:
             return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
-        pf_str = str(DATA.get('portfolio', {}))
-        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
+        pf_str = str(load_user(chat_id).get('portfolio', {})) if chat_id else '{}'
+        today = datetime.now().strftime('%d/%m/%Y')
+        system = (f'Sei un esperto trader crypto E forex. Oggi e {today} - MAGGIO 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
-            'PORTFOLIO: ' + pf_str + '\n'
-            'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
+            'PORTFOLIO UTENTE: ' + pf_str + '\n'
+            'Rispondi in italiano, max 200 parole, usa emoji, sii pratico e diretto.')
         msg = client.messages.create(
             model='claude-sonnet-4-5',
             max_tokens=1000,
@@ -1191,7 +1180,7 @@ async def handle_text(u, c):
                 f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}pct)\n"
                 f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"
             )
-            response = get_claude_response(t, ctx)
+            response = get_claude_response(t, ctx, uid)
             await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
         except Exception as e:
             await u.message.reply_text(f"Errore: {e}", reply_markup=KEYBOARD)
