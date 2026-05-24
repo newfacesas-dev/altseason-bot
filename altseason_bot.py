@@ -665,7 +665,10 @@ async def handle_text(u, c):
                 f"BTC: ${p['BTC']['price']:,.0f} ({p['BTC']['ch']:+.1f}pct)\n"
                 f"ETH: ${p['ETH']['price']:,.0f} ({p['ETH']['ch']:+.1f}pct)\n"
                 f"XRP: ${p['XRP']['price']:,.4f} ({p['XRP']['ch']:+.1f}pct)\n"
-                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"
+                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}pct)"\n"
+                f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}pct)\n"
+                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}pct)\n"
+                f"Data oggi: 24/05/2026 MAGGIO 2026. Usa questi dati reali."
             )
             response = get_claude_response(t, ctx)
             await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
