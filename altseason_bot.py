@@ -498,7 +498,9 @@ async def cmd_price(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_portfolio(u, c):
-    pf = DATA.get("portfolio", {})
+    uid = get_uid(u)
+    ud = load_user(uid)
+    pf = ud.get("portfolio", {})
     if not pf:
         await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
