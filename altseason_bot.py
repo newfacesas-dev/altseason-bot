@@ -57,6 +57,7 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
     [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
     [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
+    [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
