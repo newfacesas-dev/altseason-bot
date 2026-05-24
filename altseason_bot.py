@@ -814,6 +814,14 @@ async def cmd_setplan(u, c):
     ud["ai_msgs"] = 0
     save_user(target, ud)
     await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
+    plan_name = {"free": "Free", "basic": "Basic €12.99/mese", "pro": "Pro €25.99/mese"}.get(plan, plan)
+    try:
+        await c.bot.send_message(
+            chat_id=int(target),
+            text=f"🎉 *Piano attivato!*\n\nIl tuo piano *{plan_name}* è ora attivo!\n\nGrazie per esserti abbonato! 🚀",
+            parse_mode="Markdown"
+        )
+    except: pass
 
 
 async def cmd_users(u, c):
@@ -995,7 +1003,7 @@ async def cmd_pay(u, c):
         "💎 *USDT/USDC (TRC20 - Tron):*\n`TLAftNsWfrCHboFF3wHf8MbuDRsbSh516D`\n\n"
         "💎 *USDT/USDC/ETH (ERC20 - Ethereum):*\n`0x3EfB8Fdb87107555Bf46A46f7FB1e6eD0F51A2C4`\n\n"
         "━━━━━━━━━━━━━━━\n"
-        "📩 Dopo il pagamento invia lo screenshot a @enricoluciano\n"
+        "📩 Dopo il pagamento riceverai una notifica di attivazione automatica\n"
         "Il tuo piano verrà attivato entro 24h!"
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
