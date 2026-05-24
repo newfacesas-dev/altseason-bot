@@ -60,7 +60,7 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("👥 Utenti")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
     [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
@@ -1111,6 +1111,26 @@ async def cmd_forex(u, c):
     except Exception as e:
         await u.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
 
+
+async def cmd_share(u, c):
+    uid = get_uid(u)
+    msg = (
+        "📢 *CONDIVIDI IL BOT*\n\n"
+        "Copia e incolla questo messaggio:\n\n"
+        "━━━━━━━━━━━━━━━\n"
+        "🤖 *Altseason Oracle Bot 2026*\n\n"
+        "Il bot AI per la bull run crypto!\n\n"
+        "✅ Prezzi in tempo reale\n"
+        "✅ AI che analizza il tuo portfolio\n"
+        "✅ Alert automatici sui tuoi target\n"
+        "✅ Strategia altseason personalizzata\n"
+        "✅ Forex & Indici\n\n"
+        f"👉 t.me/BullRunSignal_bot?start=ref_{uid}\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "💡 Premi e tieni premuto sul messaggio per copiarlo!"
+    )
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+
 async def cmd_quiet(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
@@ -1135,6 +1155,7 @@ async def handle_text(u, c):
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
     elif t == "💳 Abbonati": await cmd_pay(u, c)
     elif t == "🔗 Referral": await cmd_referral(u, c)
+    elif t == "📢 Condividi": await cmd_share(u, c)
     elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
     elif t == "👥 I miei Utenti": await cmd_users(u, c)
     elif t == "📊 Stats Admin": await cmd_admin(u, c)
@@ -1250,6 +1271,7 @@ async def main():
         ("initadmin", cmd_initadmin),
         ("pay", cmd_pay),
         ("referral", cmd_referral),
+        ("share", cmd_share),
         ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
