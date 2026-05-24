@@ -51,7 +51,6 @@ AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
 
 ADMIN_ID = "670903243"
 
-ADMIN_
 def get_redis():
     try:
         url = os.environ.get("REDIS_URL", "")
