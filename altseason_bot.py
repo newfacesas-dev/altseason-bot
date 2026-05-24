@@ -1353,9 +1353,23 @@ async def main():
         )
     except: pass
 
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    PORT = int(os.environ.get("PORT", 8080))
+    
     async with app:
         await app.start()
-        await app.updater.start_polling()
+        if WEBHOOK_URL:
+            await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+            await app.updater.start_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                url_path="/webhook",
+                webhook_url=f"{WEBHOOK_URL}/webhook"
+            )
+            log.info(f"Webhook attivo: {WEBHOOK_URL}/webhook")
+        else:
+            await app.updater.start_polling()
+            log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
         while True:
             await asyncio.sleep(3600)
