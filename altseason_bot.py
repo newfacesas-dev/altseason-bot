@@ -273,7 +273,7 @@ def get_claude_response(user_msg, market_context):
             return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(DATA.get('portfolio', {}))
-        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
+        system = (f'Sei un esperto trader crypto per Altseason 2026. Oggi e {datetime.now().strftime("%d/%m/%Y")} - MAGGIO 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO: ' + pf_str + '\n'
             'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
