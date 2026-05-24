@@ -126,8 +126,8 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("👥 Utenti")],
-    [KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
+    [KeyboardButton("👥 Utenti"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
