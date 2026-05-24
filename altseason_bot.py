@@ -55,14 +55,13 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
     [KeyboardButton("📈 Macro"), KeyboardButton("😱 Fear & Greed")],
     [KeyboardButton("📉 RSI & MACD"), KeyboardButton("🏆 Top Performer")],
-    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📅 Timeline")],
+    [KeyboardButton("💱 Forex & Indici"), KeyboardButton("📰 News")],
+    [KeyboardButton("📅 Timeline"), KeyboardButton("🤖 Chiedi AI")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
-    [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
-    [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
-    [KeyboardButton("📢 Condividi"), KeyboardButton("👥 Utenti")],
-    [KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def get_redis():
@@ -127,8 +126,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("📊 Il mio piano"), KeyboardButton("💳 Abbonati")],
-    [KeyboardButton("🔗 Referral"), KeyboardButton("📢 Condividi")],
-    [KeyboardButton("❓ Aiuto")],
+    [KeyboardButton("🔗 Referral"), KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
 def load_data():
@@ -273,7 +271,7 @@ def get_claude_response(user_msg, market_context):
             return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(DATA.get('portfolio', {}))
-        system = (f'Sei un esperto trader crypto per Altseason 2026. Oggi e {datetime.now().strftime("%d/%m/%Y")} - MAGGIO 2026.\n'
+        system = ('Sei un esperto trader crypto per Altseason 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO: ' + pf_str + '\n'
             'Rispondi in italiano, max 200 parole, usa emoji, sii pratico.')
@@ -344,11 +342,10 @@ def is_quiet():
         return h >= QUIET_START or h < QUIET_END
     return QUIET_START <= h < QUIET_END
 
-def check_alerts_user(chat_id, prices):
-    ud = load_user(chat_id)
+def check_alerts(prices):
     triggered = []
     remaining = []
-    for a in ud.get("alerts", []):
+    for a in DATA.get("alerts", []):
         sym = a["sym"]
         target = a["price"]
         above = a["above"]
@@ -363,8 +360,8 @@ def check_alerts_user(chat_id, prices):
         else:
             remaining.append(a)
     if triggered:
-        ud["alerts"] = remaining
-        save_user(chat_id, ud)
+        DATA["alerts"] = remaining
+        save_data(DATA)
     return triggered
 
 async def cmd_help(u, c):
@@ -466,7 +463,7 @@ async def cmd_rsimacd(u, c):
             rsi = ind.get("rsi", "N/A")
             hist = ind.get("hist", 0)
             trend = "↗️ Rialzista" if hist and hist > 0 else "↘️ Ribassista"
-            rsi_s = "🟢 Oversold — COMPRA" if rsi is not None and rsi != "N/A" and rsi < RSI_OVERSOLD else ("🔴 Overbought — ATTENZIONE" if rsi is not None and rsi != "N/A" and rsi > RSI_OVERBOUGHT else "⚪ Neutro")
+            rsi_s = "🟢 Oversold — COMPRA" if rsi != "N/A" and rsi < RSI_OVERSOLD else ("🔴 Overbought — ATTENZIONE" if rsi != "N/A" and rsi > RSI_OVERBOUGHT else "⚪ Neutro")
             spike = ind.get("vol_spike")
             lines += [f"*{sym}*", f"• RSI: `{rsi}` {rsi_s}", f"• MACD: {trend}", f"• Volume: {'🔊 SPIKE ' + str(spike) + 'x!' if spike else '✅ Normale'}", ""]
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -502,9 +499,7 @@ async def cmd_price(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_portfolio(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    pf = ud.get("portfolio", {})
+    pf = DATA.get("portfolio", {})
     if not pf:
         await u.message.reply_text("Portfolio vuoto. Usa /reset", reply_markup=KEYBOARD)
         return
@@ -584,19 +579,15 @@ async def cmd_alert(u, c):
         above = True
         if len(c.args) >= 3 and c.args[2].lower() == "down":
             above = False
-        uid = get_uid(u)
-        ud = load_user(uid)
-        ud["alerts"].append({"sym": s, "price": t, "above": above})
-        save_user(uid, ud)
+        DATA["alerts"].append({"sym": s, "price": t, "above": above})
+        save_data(DATA)
         d = "sale a" if above else "scende a"
         await u.message.reply_text(f"✅ Alert: *{s}* {d} `${t:,.2f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
     except:
         await u.message.reply_text("❌ Errore", reply_markup=KEYBOARD)
 
 async def cmd_alerts(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    al = ud.get("alerts", [])
+    al = DATA.get("alerts", [])
     if not al:
         await u.message.reply_text("Nessun alert. Usa /alert XRP 3", reply_markup=KEYBOARD)
         return
@@ -613,13 +604,10 @@ async def cmd_delalert(u, c):
         return
     try:
         i = int(c.args[0]) - 1
-        uid = get_uid(u)
-        ud = load_user(uid)
-        al = ud.get("alerts", [])
+        al = DATA.get("alerts", [])
         if 0 <= i < len(al):
             r = al.pop(i)
-            ud["alerts"] = al
-            save_user(uid, ud)
+            save_data(DATA)
             await u.message.reply_text(f"✅ Eliminato: {r['sym']}", reply_markup=KEYBOARD)
         else:
             await u.message.reply_text("❌ Numero non valido", reply_markup=KEYBOARD)
@@ -637,10 +625,8 @@ async def cmd_setup(u, c):
     for sym, prices in targets.items():
         for p in prices:
             alerts.append({"sym": sym, "price": p, "above": True})
-    uid = get_uid(u)
-    ud = load_user(uid)
-    ud["alerts"] = alerts
-    save_user(uid, ud)
+    DATA["alerts"] = alerts
+    save_data(DATA)
     await u.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP: $3→$5→$8→$12\nSOL: $200→$350→$500→$800\nETH: $4k→$6k→$9k→$14k\nBNB: $900→$1.2k→$1.5k→$2k\nDOGE: $0.30→$0.60→$1.00\nHBAR: $0.20→$0.40→$0.70\nSEI: $0.80→$1.50→$3.00", parse_mode="Markdown", reply_markup=KEYBOARD)
 
 async def cmd_timeline(u, c):
@@ -773,8 +759,8 @@ async def cmd_myplan(u, c):
     if plan == "free":
         msg += (
             "⬆️ *Vuoi più messaggi AI?*\n\n"
-            "💙 *Basic* €12.99/mese → 50 msg/giorno\n"
-            "👑 *Pro* €25.99/mese → Illimitati\n\n"
+            "💙 *Basic* €9.99/mese → 50 msg/giorno\n"
+            "👑 *Pro* €19.99/mese → Illimitati\n\n"
             "Scrivi /upgrade per info"
         )
     elif plan == "basic":
@@ -820,14 +806,6 @@ async def cmd_setplan(u, c):
     ud["ai_msgs"] = 0
     save_user(target, ud)
     await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
-    plan_name = {"free": "Free", "basic": "Basic €12.99/mese", "pro": "Pro €25.99/mese"}.get(plan, plan)
-    try:
-        await c.bot.send_message(
-            chat_id=int(target),
-            text=f"🎉 *Piano attivato!*\n\nIl tuo piano *{plan_name}* è ora attivo!\n\nGrazie per esserti abbonato! 🚀",
-            parse_mode="Markdown"
-        )
-    except: pass
 
 
 async def cmd_users(u, c):
@@ -976,17 +954,14 @@ async def cmd_referral(u, c):
     ud = load_user(uid)
     ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
     ref_count = ud.get("referrals", 0)
-    earnings = ud.get("ref_earnings", 0.0)
     msg = (
         "\U0001f517 *IL TUO LINK REFERRAL*\n\n"
         f"`{ref_link}`\n\n"
-        f"\U0001f465 Utenti invitati: `{ref_count}`\n"
-        f"\U0001f4b0 Commissioni accumulate: `\u20ac{earnings:.2f}`\n\n"
+        f"\U0001f465 Utenti invitati: `{ref_count}`\n\n"
         "\U0001f4b0 *Come funziona:*\n"
         "• Condividi il tuo link\n"
-        "• Per ogni abbonato Basic: guadagni **€2.60/mese** (20%)\n"
-        "• Per ogni abbonato Pro: guadagni **€5.20/mese** (20%)\n"
-        "• Commissioni a vita finché l'utente è abbonato!\n\n"
+        "• Per ogni amico che si iscrive al piano Basic o Pro\n"
+        "• Guadagni 1 mese gratis sul tuo piano!\n\n"
         "\U0001f4e4 Condividi su Telegram, WhatsApp, X!"
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -995,11 +970,11 @@ async def cmd_pay(u, c):
     msg = (
         "💳 *ABBONATI AL BOT*\n\n"
         "Scegli il tuo piano:\n\n"
-        "💙 *Basic* — €12.99/mese\n"
+        "💙 *Basic* — €9.99/mese\n"
         "• 50 messaggi AI al giorno\n"
         "• Portfolio completo\n"
         "• 20 alert prezzi\n\n"
-        "👑 *Pro* — €25.99/mese\n"
+        "👑 *Pro* — €19.99/mese\n"
         "• Messaggi AI illimitati\n"
         "• Alert illimitati\n"
         "• Tutte le funzioni\n\n"
@@ -1009,7 +984,7 @@ async def cmd_pay(u, c):
         "💎 *USDT/USDC (TRC20 - Tron):*\n`TLAftNsWfrCHboFF3wHf8MbuDRsbSh516D`\n\n"
         "💎 *USDT/USDC/ETH (ERC20 - Ethereum):*\n`0x3EfB8Fdb87107555Bf46A46f7FB1e6eD0F51A2C4`\n\n"
         "━━━━━━━━━━━━━━━\n"
-        "📩 Dopo il pagamento riceverai una notifica di attivazione automatica\n"
+        "📩 Dopo il pagamento invia lo screenshot a @enricoluciano\n"
         "Il tuo piano verrà attivato entro 24h!"
     )
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -1062,7 +1037,7 @@ async def cmd_admin(u, c):
             if plan == "free": free += 1
             elif plan == "basic": basic += 1
             else: pro += 1
-        ricavi = basic * 12.99 + pro * 25.99
+        ricavi = basic * 9.99 + pro * 19.99
         msg = (
             f"\U0001f451 *PANNELLO ADMIN*\n\n"
             f"\U0001f465 Utenti: `{total}` (Free: {free} | Basic: {basic} | Pro: {pro})\n"
@@ -1083,11 +1058,11 @@ async def cmd_upgrade(u, c):
         "🆓 *Free* — Gratis\n"
         "• 5 messaggi AI al giorno\n"
         "• Status, fase, prezzi\n\n"
-        "💙 *Basic* — €12.99/mese\n"
+        "💙 *Basic* — €9.99/mese\n"
         "• 50 messaggi AI al giorno\n"
         "• Portfolio completo\n"
         "• 20 alert prezzi\n\n"
-        "👑 *Pro* — €25.99/mese\n"
+        "👑 *Pro* — €19.99/mese\n"
         "• Messaggi AI illimitati\n"
         "• Alert illimitati\n"
         "• Tutto incluso\n\n"
@@ -1129,53 +1104,33 @@ async def cmd_forex(u, c):
         await u.message.reply_text(f"❌ Errore: {e}", reply_markup=KEYBOARD)
 
 
-async def cmd_share(u, c):
-    uid = get_uid(u)
-    msg = (
-        "📢 *CONDIVIDI IL BOT*\n\n"
-        "Copia e incolla questo messaggio:\n\n"
-        "━━━━━━━━━━━━━━━\n"
-        "🤖 *Altseason Oracle Bot 2026*\n\n"
-        "Il bot AI per la bull run crypto!\n\n"
-        "✅ Prezzi in tempo reale\n"
-        "✅ AI che analizza il tuo portfolio\n"
-        "✅ Alert automatici sui tuoi target\n"
-        "✅ Strategia altseason personalizzata\n"
-        "✅ Forex & Indici\n\n"
-        f"👉 t.me/BullRunSignal_bot?start=ref_{uid}\n"
-        "━━━━━━━━━━━━━━━\n\n"
-        "💡 Premi e tieni premuto sul messaggio per copiarlo!"
-    )
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-
-
-async def cmd_ai(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    plan = ud.get("plan", "free")
-    used = ud.get("ai_msgs", 0)
-    limit = AI_LIMITS.get(plan, 5)
-    remaining = max(0, limit - used)
-    msg = (
-        "🤖 *IL TUO CONSULENTE CRYPTO PERSONALE*\n\n"
-        f"Messaggi rimasti oggi: `{remaining}/{limit}`\n\n"
-        "Chiedimi qualsiasi cosa su:\n"
-        "• 💼 Il tuo portfolio e P&L\n"
-        "• 📊 Analisi delle tue coin\n"
-        "• 🎯 Quando comprare e vendere\n"
-        "• 💱 Forex e indici\n"
-        "• 📅 Strategia altseason 2026\n"
-        "• 🚨 Segnali di uscita\n\n"
-        "💬 *Scrivi la tua domanda qui sotto!*"
-    )
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+async def cmd_news(u, c):
+    await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
+    try:
+        r = requests.get(
+            "https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies=BTC,ETH,XRP,SOL&kind=news&public=true",
+            timeout=10
+        )
+        data = r.json()
+        results = data.get("results", [])[:6]
+        if not results:
+            await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
+            return
+        lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
+        for news in results:
+            title = news.get("title", "")[:80]
+            url = news.get("url", "")
+            currencies = [c["code"] for c in news.get("currencies", [])]
+            coins = " ".join([f"`{c}`" for c in currencies[:3]]) if currencies else ""
+            lines.append(f"• {coins} [{title}]({url})")
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
+    except Exception as e:
+        await u.message.reply_text(f"❌ Errore news: {e}", reply_markup=KEYBOARD)
 
 async def cmd_quiet(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    ud["quiet_mode"] = not ud.get("quiet_mode", False)
-    save_user(uid, ud)
-    msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if ud["quiet_mode"] else "☀️ No Disturb DISATTIVO"
+    DATA["quiet_mode"] = not DATA.get("quiet_mode", False)
+    save_data(DATA)
+    msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if DATA["quiet_mode"] else "☀️ No Disturb DISATTIVO"
     await u.message.reply_text(msg, reply_markup=KEYBOARD)
 
 async def handle_text(u, c):
@@ -1193,9 +1148,6 @@ async def handle_text(u, c):
     elif t == "💱 Forex & Indici": await cmd_forex(u, c)
     elif t == "🌙 No Disturb": await cmd_quiet(u, c)
     elif t == "💳 Abbonati": await cmd_pay(u, c)
-    elif t == "🤖 Chiedi AI": await cmd_ai(u, c)
-    elif t == "🔗 Referral": await cmd_referral(u, c)
-    elif t == "📢 Condividi": await cmd_share(u, c)
     elif t == "💹 Aggiungi Coin": await cmd_addwizard(u, c)
     elif t == "👥 I miei Utenti": await cmd_users(u, c)
     elif t == "📊 Stats Admin": await cmd_admin(u, c)
@@ -1255,12 +1207,7 @@ async def auto_monitor(app):
             p = get_prices()
             fg = get_fg()
             ph, desc, level = phase(g["dom"])
-            users = list_users()
-            for cid in users:
-                triggered = check_alerts_user(cid, p)
-                for msg in triggered:
-                    await app.bot.send_message(chat_id=cid, text=msg, parse_mode="Markdown")
-            triggered = []
+            triggered = check_alerts(p)
             for msg in triggered:
                 await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
             if level != last_phase:
@@ -1311,8 +1258,6 @@ async def main():
         ("initadmin", cmd_initadmin),
         ("pay", cmd_pay),
         ("referral", cmd_referral),
-        ("share", cmd_share),
-        ("ai", cmd_ai),
         ("add", cmd_addwizard),
         ("myplan", cmd_myplan),
         ("resetai", cmd_resetai),
@@ -1342,7 +1287,8 @@ async def main():
 
     threading.Thread(target=start_web, daemon=True).start()
 
-    # Portfolio caricato per utente da Redis
+    if not DATA.get("portfolio"):
+        init_portfolio()
 
     log.info("🚀 Altseason Bot COMPLETO online!")
     try:
@@ -1353,23 +1299,9 @@ async def main():
         )
     except: pass
 
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    PORT = int(os.environ.get("PORT", 8080))
-    
     async with app:
         await app.start()
-        if WEBHOOK_URL:
-            await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-            await app.updater.start_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path="/webhook",
-                webhook_url=f"{WEBHOOK_URL}/webhook"
-            )
-            log.info(f"Webhook attivo: {WEBHOOK_URL}/webhook")
-        else:
-            await app.updater.start_polling()
-            log.info("Polling attivo")
+        await app.updater.start_polling()
         asyncio.create_task(auto_monitor(app))
         while True:
             await asyncio.sleep(3600)
