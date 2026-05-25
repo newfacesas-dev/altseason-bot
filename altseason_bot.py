@@ -708,23 +708,96 @@ async def cmd_forex(u, c):
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 async def cmd_news(u, c):
-    await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
+    uid = get_uid(u)
+    lang = load_user(uid).get("lang", "it")
+    loading = {
+        "it": "⏳ Recupero notizie crypto...",
+        "en": "⏳ Fetching crypto news...",
+        "pt": "⏳ Buscando noticias crypto...",
+    }.get(lang, "⏳ Recupero notizie crypto...")
+    title = {
+        "it": "📰 ULTIME NEWS CRYPTO",
+        "en": "📰 LATEST CRYPTO NEWS",
+        "pt": "📰 ULTIMAS NOTICIAS CRYPTO",
+    }.get(lang, "📰 ULTIME NEWS CRYPTO")
+    empty = {
+        "it": "❌ Notizie non disponibili ora. Riprova tra qualche minuto.",
+        "en": "❌ News unavailable right now. Try again in a few minutes.",
+        "pt": "❌ Noticias indisponiveis agora. Tente novamente em alguns minutos.",
+    }.get(lang, "❌ Notizie non disponibili ora. Riprova tra qualche minuto.")
+
+    await u.message.reply_text(loading, reply_markup=kb(uid))
+
     try:
-        r = requests.get("https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies=BTC,ETH,XRP,SOL&kind=news&public=true", timeout=10)
-        results = r.json().get("results", [])[:6]
-        if not results:
-            await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
+        news_items = []
+
+        # 1) CryptoPanic: usa una API key vera se presente nelle variabili ambiente.
+        cryptopanic_token = os.environ.get("CRYPTOPANIC_TOKEN", "").strip()
+        if cryptopanic_token:
+            try:
+                url = (
+                    "https://cryptopanic.com/api/v1/posts/"
+                    f"?auth_token={cryptopanic_token}"
+                    "&currencies=BTC,ETH,XRP,SOL&kind=news&public=true"
+                )
+                r = requests.get(url, timeout=10, headers={"User-Agent": "AltseasonBot/1.0"})
+                if r.ok:
+                    for item in r.json().get("results", [])[:6]:
+                        item_title = (item.get("title") or "").strip()
+                        item_url = (item.get("url") or "").strip()
+                        if item_title and item_url:
+                            news_items.append((item_title, item_url, "CryptoPanic"))
+            except Exception as e:
+                log.warning(f"CryptoPanic news error: {e}")
+
+        # 2) Fallback RSS senza API key, cosi il bottone News risponde anche senza CryptoPanic.
+        if len(news_items) < 6:
+            import xml.etree.ElementTree as ET
+            rss_sources = [
+                ("Cointelegraph", "https://cointelegraph.com/rss"),
+                ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+                ("Decrypt", "https://decrypt.co/feed"),
+            ]
+            seen_urls = {url for _, url, _ in news_items}
+            for source_name, feed_url in rss_sources:
+                if len(news_items) >= 6:
+                    break
+                try:
+                    r = requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                    if not r.ok:
+                        continue
+                    root = ET.fromstring(r.content)
+                    for item in root.findall(".//item"):
+                        if len(news_items) >= 6:
+                            break
+                        item_title = (item.findtext("title") or "").strip()
+                        item_url = (item.findtext("link") or "").strip()
+                        if item_title and item_url and item_url not in seen_urls:
+                            seen_urls.add(item_url)
+                            news_items.append((item_title, item_url, source_name))
+                except Exception as e:
+                    log.warning(f"RSS news error {source_name}: {e}")
+
+        if not news_items:
+            await u.message.reply_text(empty, reply_markup=kb(uid))
             return
-        lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
-        for news in results:
-            title = news.get("title", "")[:80]
-            url = news.get("url", "")
-            currencies = [c["code"] for c in news.get("currencies", [])]
-            coins = " ".join([f"`{c}`" for c in currencies[:3]]) if currencies else ""
-            lines.append(f"• {coins} [{title}]({url})")
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
+
+        lines = [title, ""]
+        for item_title, item_url, source in news_items[:6]:
+            clean_title = item_title.replace("\n", " ").strip()[:120]
+            lines.append(f"• {clean_title}")
+            lines.append(f"  Fonte: {source}")
+            lines.append(f"  {item_url}")
+            lines.append("")
+
+        await u.message.reply_text(
+            "\n".join(lines).strip(),
+            reply_markup=kb(uid),
+            disable_web_page_preview=True,
+        )
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        log.error(f"News command error: {e}")
+        await u.message.reply_text(empty, reply_markup=kb(uid))
 
 async def cmd_timeline(u, c):
     msg = """📅 *TIMELINE ALTSEASON 2026*
