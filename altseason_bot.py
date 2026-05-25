@@ -519,50 +519,22 @@ def check_alerts_user(chat_id, prices):
 # COMANDI BOT
 # ============================================================
 async def cmd_start(u, c):
-    uid = get_uid(u)
-    ud = load_user(uid)
-    if not ud.get("lang"):
-        # Language selection for new users
-        buttons = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🇮🇹 Italiano", callback_data="lang_it"),
-                InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
-                InlineKeyboardButton("🇧🇷 Português", callback_data="lang_pt"),
-            ]
-        ])
-        await u.message.reply_text(
-            "👋 *Benvenuto / Welcome / Bem-vindo!*\n\nScegli la tua lingua / Choose your language / Escolha seu idioma:",
-            parse_mode="Markdown",
-            reply_markup=buttons
-        )
-        return
-    if not ud.get("welcomed"):
-        ud["welcomed"] = True
-        save_user(uid, ud)
-        name = u.message.from_user.first_name or "amico"
-        msg = (
-            "\U0001f44b *Benvenuto " + name + "!*\n\n"
-            "\U0001f916 Sono il tuo *consulente AI nel mondo crypto*.\n\n"
-            "Ecco cosa posso fare per te:\n\n"
-            "\U0001f4ca *MERCATO* \u2014 Status, Fase, Fear&Greed, RSI\n"
-            "\U0001f4bc *PORTFOLIO* \u2014 P&L in tempo reale\n"
-            "\U0001f514 *ALERT* \u2014 Notifiche automatiche sui tuoi target\n"
-            "\U0001f916 *AI* \u2014 Rispondo a qualsiasi domanda\n"
-            "\U0001f4b1 *FOREX* \u2014 EUR/USD, oro, S&P500\n\n"
-            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            "\U0001f193 *Piano attuale: Free*\n"
-            "\u2022 5 messaggi AI al giorno\n"
-            "\u2022 Tutti i dati di mercato inclusi\n\n"
-            "\U0001f4a1 *Inizia subito:*\n"
-            "1\u20e3 Premi \U0001f4ca *Status* per vedere il mercato\n"
-            "2\u20e3 Premi \u2699\ufe0f *Setup Alert* per i 28 alert strategici\n"
-            "3\u20e3 Scrivi qualsiasi domanda per parlare con l'AI\n\n"
-            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-            "\u26a0\ufe0f _Solo scopo informativo. Non \xe8 consulenza finanziaria._"
-        )
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
-    else:
-        await cmd_help(u, c)
+    # Mostra SEMPRE i 3 pulsanti lingua quando l'utente preme /start.
+    buttons = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🇮🇹 Italiano", callback_data="lang_it"),
+            InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
+            InlineKeyboardButton("🇧🇷 Português", callback_data="lang_pt"),
+        ]
+    ])
+    await u.message.reply_text(
+        "👋 *Benvenuto / Welcome / Bem-vindo!*\n\n"
+        "🌍 Scegli la tua lingua per continuare.\n"
+        "Choose your language to continue.\n"
+        "Escolha seu idioma para continuar.",
+        parse_mode="Markdown",
+        reply_markup=buttons
+    )
 
 
 
