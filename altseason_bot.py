@@ -1681,6 +1681,7 @@ async def main():
     async with app:
         await app.start()
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
     if WEBHOOK_URL:
             await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
             await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
