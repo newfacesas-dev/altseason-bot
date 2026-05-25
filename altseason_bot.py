@@ -307,7 +307,6 @@ ADMIN_KEYBOARD = ReplyKeyboardMarkup([
 # ============================================================
 def get_redis():
     try:
-        pass
         url = os.environ.get("REDIS_URL", "")
         if url:
             return redis_lib.from_url(url, decode_responses=True)
@@ -316,7 +315,6 @@ def get_redis():
 
 def load_user(chat_id):
     try:
-        pass
         r = get_redis()
         if r:
             data = r.get(f"user:{chat_id}")
@@ -327,7 +325,6 @@ def load_user(chat_id):
 
 def save_user(chat_id, data):
     try:
-        pass
         r = get_redis()
         if r:
             r.set(f"user:{chat_id}", json.dumps(data))
@@ -336,7 +333,6 @@ def save_user(chat_id, data):
 
 def list_users():
     try:
-        pass
         r = get_redis()
         if r:
             keys = r.keys("user:*")
@@ -354,7 +350,6 @@ def get_global():
     if 'g' in _cache and time.time() - _cache['g']['t'] < CACHE_TTL:
         return _cache['g']['d']
     try:
-        pass
         time.sleep(1)
         r = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
         r.raise_for_status()
@@ -372,7 +367,6 @@ def get_prices():
     if 'p' in _cache and time.time() - _cache['p']['t'] < CACHE_TTL:
         return _cache['p']['d']
     try:
-        pass
         time.sleep(2)
         ids = ",".join(ASSETS.values())
         r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true", timeout=10)
@@ -391,7 +385,6 @@ def get_fg():
     if 'fg' in _cache and time.time() - _cache['fg']['t'] < CACHE_TTL:
         return _cache['fg']['d']
     try:
-        pass
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
         r.raise_for_status()
         d = r.json()["data"][0]
@@ -405,7 +398,6 @@ def get_fg():
 
 def get_ohlc(symbol="BTCUSDT", limit=30):
     try:
-        pass
         r = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit={limit}", timeout=10)
         data = r.json()
         return [float(x[4]) for x in data], [float(x[5]) for x in data]
@@ -447,7 +439,6 @@ def get_forex():
     if 'forex' in _cache and time.time() - _cache['forex']['t'] < 300:
         return _cache['forex']['d']
     try:
-        pass
         symbols = {
             "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X",
             "USD/JPY": "JPY=X", "USD/CHF": "CHF=X",
@@ -458,7 +449,6 @@ def get_forex():
         result = {}
         for name, sym in symbols.items():
             try:
-        pass
                 r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
                 data = r.json()["chart"]["result"][0]
                 closes = [c for c in data["indicators"]["quote"][0]["close"] if c is not None]
@@ -479,7 +469,6 @@ def phase(dom):
 
 def get_claude_response(user_msg, market_context, chat_id=None):
     try:
-        pass
         api_key = os.environ.get('ANTHROPIC_API_KEY', '')
         if not api_key: return 'API key non configurata.'
         client = anthropic.Anthropic(api_key=api_key)
@@ -622,7 +611,6 @@ async def cmd_help(u, c):
 async def cmd_status(u, c):
     await u.message.reply_text("⏳ Recupero dati...", reply_markup=KEYBOARD)
     try:
-        pass
         g = get_global(); p = get_prices(); fg = get_fg()
         ph, desc, level = phase(g["dom"])
         eth_btc = p["ETH"]["price"] / p["BTC"]["price"] if p["BTC"]["price"] else 0
@@ -640,7 +628,6 @@ async def cmd_status(u, c):
 
 async def cmd_phase(u, c):
     try:
-        pass
         g = get_global(); ph, desc, level = phase(g["dom"])
         actions = {
             "MONITORA": "1️⃣ Tieni tutto\n2️⃣ Aspetta BTC Dom <52%\n3️⃣ Non vendere ancora",
@@ -654,7 +641,6 @@ async def cmd_phase(u, c):
 
 async def cmd_feargreed(u, c):
     try:
-        pass
         fg = get_fg(); v = fg["v"]
         desc = "Paura estrema — COMPRA 🛒" if v <= 25 else "Paura — Accumula" if v <= 45 else "Neutro" if v <= 55 else "Avidità — Attenzione" if v <= 75 else "Avidità estrema — VENDI ⚠️"
         msg = f"😱 *FEAR & GREED*\n\n{fg['em']} `{v}/100 — {fg['lbl']}`\n\n_{desc}_"
@@ -665,7 +651,6 @@ async def cmd_feargreed(u, c):
 async def cmd_rsimacd(u, c):
     await u.message.reply_text("⏳ Calcolo indicatori...", reply_markup=KEYBOARD)
     try:
-        pass
         inds = get_indicators()
         lines = ["📉 *RSI & MACD*\n"]
         for sym in ["BTC", "ETH"]:
@@ -689,7 +674,6 @@ async def cmd_rsimacd(u, c):
 
 async def cmd_top(u, c):
     try:
-        pass
         p = get_prices()
         s = sorted(p.items(), key=lambda x: x[1]["ch"], reverse=True)
         lines = ["🏆 *TOP PERFORMER 24h*\n"]
@@ -703,7 +687,6 @@ async def cmd_top(u, c):
 async def cmd_forex(u, c):
     await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=KEYBOARD)
     try:
-        pass
         data = get_forex()
         if not data:
             await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=KEYBOARD)
@@ -746,14 +729,12 @@ async def cmd_news(u, c):
     await u.message.reply_text(loading, reply_markup=kb(uid))
 
     try:
-        pass
         news_items = []
 
         # 1) CryptoPanic: usa una API key vera se presente nelle variabili ambiente.
         cryptopanic_token = os.environ.get("CRYPTOPANIC_TOKEN", "").strip()
         if cryptopanic_token:
             try:
-        pass
                 url = (
                     "https://cryptopanic.com/api/v1/posts/"
                     f"?auth_token={cryptopanic_token}"
@@ -782,7 +763,6 @@ async def cmd_news(u, c):
                 if len(news_items) >= 6:
                     break
                 try:
-        pass
                     r = requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
                     if not r.ok:
                         continue
@@ -861,7 +841,6 @@ async def cmd_portfolio(u, c):
         await u.message.reply_text("💼 Portfolio vuoto!\n\nUsa /add per aggiungere le tue coin\noppure /reset per caricare il portfolio di default", reply_markup=KEYBOARD)
         return
     try:
-        pass
         prices = get_prices()
         lines = ["💼 *PORTFOLIO*\n"]
         ti = tc = 0
@@ -908,7 +887,6 @@ async def cmd_addcoin(u, c):
         await u.message.reply_text("❌ Asset non valido", reply_markup=KEYBOARD)
         return
     try:
-        pass
         qty = float(c.args[1])
         buy = float(c.args[2].replace(",", ""))
         uid = get_uid(u)
@@ -942,7 +920,6 @@ async def cmd_alert(u, c):
         await u.message.reply_text("❌ Asset non valido", reply_markup=KEYBOARD)
         return
     try:
-        pass
         t = float(c.args[1].replace(",", ""))
         above = not (len(c.args) >= 3 and c.args[2].lower() == "down")
         uid = get_uid(u)
@@ -973,7 +950,6 @@ async def cmd_delalert(u, c):
         await u.message.reply_text("Uso: /delalert 1", reply_markup=KEYBOARD)
         return
     try:
-        pass
         i = int(c.args[0]) - 1
         uid = get_uid(u)
         ud = load_user(uid)
@@ -1037,7 +1013,6 @@ Azione: Esci dal 50% IMMEDIATAMENTE
 
 async def cmd_stoploss(u, c):
     try:
-        pass
         p = get_prices(); g = get_global(); fg = get_fg()
         warnings = []
         if fg["v"] > 80:
@@ -1168,7 +1143,6 @@ async def cmd_price(u, c):
         await u.message.reply_text("❌ Asset non disponibile", reply_markup=KEYBOARD)
         return
     try:
-        pass
         p = get_prices()[s]
         a = "🟢" if p["ch"] >= 0 else "🔴"
         msg = f"{a} *{s}*\n\n💵 `${p['price']:,.4f}`\n📈 24h: `{p['ch']:+.2f}%`\n💎 MCap: `${p['mcap']/1e9:.1f}B`"
@@ -1185,7 +1159,6 @@ async def cmd_admin(u, c):
         await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
         return
     try:
-        pass
         users = list_users()
         total = len(users)
         free = basic = pro = 0
@@ -1209,7 +1182,6 @@ async def cmd_users(u, c):
         await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
         return
     try:
-        pass
         users = list_users()
         lines = [f"👥 *UTENTI TOTALI: {len(users)}*\n"]
         free = basic = pro = 0
@@ -1249,7 +1221,6 @@ async def cmd_setplan(u, c):
     await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
     plan_name = {"free": "Free", "basic": "Basic €12.99/mese", "pro": "Pro €25.99/mese"}.get(plan, plan)
     try:
-        pass
         await c.bot.send_message(chat_id=int(target), text=f"🎉 *Piano attivato!*\n\nIl tuo piano *{plan_name}* è ora attivo!\n\nGrazie per esserti abbonato! 🚀", parse_mode="Markdown")
     except: pass
 
@@ -1323,12 +1294,10 @@ async def wizard_coin_text(update, context):
 
 async def wizard_qty(update, context):
     try:
-        pass
         qty = float(update.message.text.replace(",", "."))
         context.user_data["wizard_qty"] = qty
         coin = context.user_data["wizard_coin"]
         try:
-        pass
             prices = get_prices()
             current = prices.get(coin, {}).get("price", 0)
             price_hint = f"\n\n💡 Prezzo attuale: `${current:,.4f}`" if current else ""
@@ -1342,7 +1311,6 @@ async def wizard_qty(update, context):
 
 async def wizard_price(update, context):
     try:
-        pass
         price_input = float(update.message.text.replace(",", ".").replace("$", ""))
         coin = context.user_data["wizard_coin"]
         qty = context.user_data["wizard_qty"]
@@ -1419,7 +1387,6 @@ async def handle_text(u, c):
         return
     # AI risponde a messaggi liberi
     try:
-        pass
         uid = get_uid(u)
         ud = load_user(uid)
         limit = AI_LIMITS.get(ud.get("plan", "free"), 5)
@@ -1464,7 +1431,6 @@ async def auto_monitor(app):
     last_briefing_day = -1
     while True:
         try:
-        pass
             now = datetime.now()
             today = now.day
             hour = now.hour
@@ -1483,7 +1449,6 @@ async def auto_monitor(app):
             if hour == 8 and today != last_briefing_day:
                 last_briefing_day = today
                 try:
-        pass
                     g = get_global()
                     p = get_prices()
                     fg = get_fg()
@@ -1525,7 +1490,6 @@ async def auto_monitor(app):
                         ud = load_user(cid)
                         if not ud.get("quiet_mode", False):
                             try:
-        pass
                                 await app.bot.send_message(chat_id=int(cid), text=briefing, parse_mode="Markdown")
                             except: pass
                     log.info(f"Morning briefing inviato a {len(users)} utenti")
@@ -1539,14 +1503,12 @@ async def auto_monitor(app):
                 triggered = check_alerts_user(cid, p)
                 for msg in triggered:
                     try:
-        pass
                         await app.bot.send_message(chat_id=int(cid), text=msg, parse_mode="Markdown")
                     except: pass
             # Notifica cambio fase
             if level != last_phase:
                 msg = f"🚨 *CAMBIO FASE!*\n\n{ph} (`{level}`)\n_{desc}_\n\nBTC Dom: `{g['dom']:.2f}%`\nFear&Greed: {fg['em']} `{fg['v']}`"
                 try:
-        pass
                     await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
                 except: pass
                 last_phase = level
@@ -1554,7 +1516,6 @@ async def auto_monitor(app):
             memes = [s for s in ["DOGE","BONK","PEPE","SHIB"] if p.get(s, {}).get("ch", 0) > 8]
             if len(memes) >= 2:
                 try:
-        pass
                     await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti >8%\n⚠️ Segnale euforia!", parse_mode="Markdown")
                 except: pass
         except Exception as e:
@@ -1603,7 +1564,6 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
-        pass
                 users_list = list_users()
                 free = basic = pro = 0
                 users_data = []
@@ -1638,7 +1598,6 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
-        pass
                 if uid:
                     ud = load_user(uid)
                     ud["plan"] = plan
@@ -1655,7 +1614,6 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
-        pass
                 if uid:
                     ud = load_user(uid)
                     ud["ai_msgs"] = 0
@@ -1720,11 +1678,6 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     threading.Thread(target=start_web, daemon=True).start()
     log.info("🚀 Altseason Bot V2 online!")
-    try:
-        pass
-    except: pass
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    PORT = int(os.environ.get("PORT", 8080))
     async with app:
         await app.start()
         if WEBHOOK_URL:
