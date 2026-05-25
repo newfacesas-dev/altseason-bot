@@ -245,6 +245,58 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
+# ============================================================
+# KEYBOARD MULTILINGUA
+# ============================================================
+def get_keyboard(lang="it"):
+    if lang == "en":
+        return ReplyKeyboardMarkup([
+            [KeyboardButton("📊 Status"), KeyboardButton("🎯 Phase")],
+            [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
+            [KeyboardButton("🏆 Top Performers"), KeyboardButton("💱 Forex & Indices")],
+            [KeyboardButton("📰 News"), KeyboardButton("📅 Timeline")],
+            [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Add Coin")],
+            [KeyboardButton("🔔 My Alerts"), KeyboardButton("⚙️ Setup Alerts")],
+            [KeyboardButton("📤 Exit Plan"), KeyboardButton("🚨 Check Exit")],
+            [KeyboardButton("🤖 Ask AI"), KeyboardButton("📊 My Plan")],
+            [KeyboardButton("💳 Subscribe"), KeyboardButton("🔗 Referral")],
+            [KeyboardButton("📢 Share"), KeyboardButton("👥 Users")],
+            [KeyboardButton("❓ Help")],
+        ], resize_keyboard=True)
+    elif lang == "pt":
+        return ReplyKeyboardMarkup([
+            [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
+            [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
+            [KeyboardButton("🏆 Top Performers"), KeyboardButton("💱 Forex & Indices")],
+            [KeyboardButton("📰 Noticias"), KeyboardButton("📅 Timeline")],
+            [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Adicionar Moeda")],
+            [KeyboardButton("🔔 Meus Alertas"), KeyboardButton("⚙️ Config Alertas")],
+            [KeyboardButton("📤 Plano de Saida"), KeyboardButton("🚨 Verificar Saida")],
+            [KeyboardButton("🤖 Perguntar AI"), KeyboardButton("📊 Meu Plano")],
+            [KeyboardButton("💳 Assinar"), KeyboardButton("🔗 Referral")],
+            [KeyboardButton("📢 Compartilhar"), KeyboardButton("👥 Usuarios")],
+            [KeyboardButton("❓ Ajuda")],
+        ], resize_keyboard=True)
+    else:  # it default
+        return ReplyKeyboardMarkup([
+            [KeyboardButton("📊 Status"), KeyboardButton("🎯 Fase")],
+            [KeyboardButton("😱 Fear & Greed"), KeyboardButton("📉 RSI & MACD")],
+            [KeyboardButton("🏆 Top Performer"), KeyboardButton("💱 Forex & Indici")],
+            [KeyboardButton("📰 News"), KeyboardButton("📅 Timeline")],
+            [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
+            [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
+            [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
+            [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
+            [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
+            [KeyboardButton("📢 Condividi"), KeyboardButton("👥 Utenti")],
+            [KeyboardButton("❓ Aiuto")],
+        ], resize_keyboard=True)
+
+def kb(uid):
+    ud = load_user(uid)
+    return get_keyboard(ud.get("lang", "it"))
+
+
 ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("👥 I miei Utenti"), KeyboardButton("📊 Stats Admin")],
     [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
@@ -422,11 +474,18 @@ def get_claude_response(user_msg, market_context, chat_id=None):
         client = anthropic.Anthropic(api_key=api_key)
         pf_str = str(load_user(chat_id).get('portfolio', {})) if chat_id else '{}'
         today = datetime.now().strftime('%d/%m/%Y')
+        lang = load_user(chat_id).get("lang", "it") if chat_id else "it"
+        lang_instructions = {
+            "it": "Rispondi SEMPRE in italiano. Guida l'utente passo passo, fai domande di follow-up se necessario.",
+            "en": "ALWAYS respond in English. Guide the user step by step, ask follow-up questions if needed.",
+            "pt": "Responda SEMPRE em portugues brasileiro. Guie o usuario passo a passo, faca perguntas de acompanhamento se necessario.",
+        }
         system = (
             f'Sei un esperto trader crypto E forex. Oggi e {today} - MAGGIO 2026.\n'
             'DATI MERCATO:\n' + market_context + '\n'
             'PORTFOLIO UTENTE: ' + pf_str + '\n'
-            'Rispondi in italiano, max 200 parole, usa emoji, sii pratico e diretto.'
+            + lang_instructions.get(lang, lang_instructions["it"]) +
+            ' Max 200 parole, usa emoji, sii pratico e diretto. Se l utente non capisce qualcosa, spiegaglielo in modo semplice.'
         )
         msg = client.messages.create(
             model='claude-haiku-4-5-20251001',
@@ -518,7 +577,7 @@ async def lang_callback(update, context):
     name = query.from_user.first_name or "amico"
     msg = t(uid, "welcome", name)
     await query.edit_message_text(msg, parse_mode="Markdown")
-    await context.bot.send_message(chat_id=int(uid), text="...", reply_markup=KEYBOARD)
+    await context.bot.send_message(chat_id=int(uid), text="✅", reply_markup=get_keyboard(lang))
 
 async def cmd_help(u, c):
     msg = """👋 *ALTSEASON BOT 2026*
@@ -1225,7 +1284,9 @@ async def wizard_cancel(update, context):
 # ============================================================
 async def handle_text(u, c):
     t = u.message.text
+    uid = get_uid(u)
     handlers = {
+        # IT
         "📊 Status": cmd_status, "🎯 Fase": cmd_phase,
         "😱 Fear & Greed": cmd_feargreed, "📉 RSI & MACD": cmd_rsimacd,
         "🏆 Top Performer": cmd_top, "💱 Forex & Indici": cmd_forex,
@@ -1236,14 +1297,30 @@ async def handle_text(u, c):
         "🤖 Chiedi AI": cmd_ai, "📊 Il mio piano": cmd_myplan,
         "💳 Abbonati": cmd_pay, "🔗 Referral": cmd_referral,
         "📢 Condividi": cmd_share, "❓ Aiuto": cmd_help,
-        "👥 Utenti": cmd_users, "👥 I miei Utenti": cmd_users,
-        "📊 Stats Admin": cmd_admin, "💰 Ricavi": cmd_admin,
-        "🔙 Torna al Bot": None,
+        "👥 Utenti": cmd_users,
+        # EN
+        "🎯 Phase": cmd_phase, "🏆 Top Performers": cmd_top,
+        "💱 Forex & Indices": cmd_forex, "💹 Add Coin": cmd_addwizard,
+        "🔔 My Alerts": cmd_alerts, "⚙️ Setup Alerts": cmd_setup,
+        "📤 Exit Plan": cmd_exit_plan, "🚨 Check Exit": cmd_stoploss,
+        "🤖 Ask AI": cmd_ai, "📊 My Plan": cmd_myplan,
+        "💳 Subscribe": cmd_pay, "📢 Share": cmd_share,
+        "👥 Users": cmd_users, "❓ Help": cmd_help,
+        # PT
+        "📰 Noticias": cmd_news, "💹 Adicionar Moeda": cmd_addwizard,
+        "🔔 Meus Alertas": cmd_alerts, "⚙️ Config Alertas": cmd_setup,
+        "📤 Plano de Saida": cmd_exit_plan, "🚨 Verificar Saida": cmd_stoploss,
+        "🤖 Perguntar AI": cmd_ai, "📊 Meu Plano": cmd_myplan,
+        "💳 Assinar": cmd_pay, "📢 Compartilhar": cmd_share,
+        "👥 Usuarios": cmd_users, "❓ Ajuda": cmd_help,
+        # Admin
+        "👥 I miei Utenti": cmd_users, "📊 Stats Admin": cmd_admin,
+        "💰 Ricavi": cmd_admin, "🔙 Torna al Bot": None,
     }
     if t in handlers:
         fn = handlers[t]
         if fn is None:
-            await u.message.reply_text("✅ Benvenuto!", reply_markup=KEYBOARD)
+            await u.message.reply_text("✅", reply_markup=kb(uid))
         else:
             await fn(u, c)
         return
@@ -1271,7 +1348,15 @@ async def handle_text(u, c):
                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}%)\n"
                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
         response = get_claude_response(t, ctx, uid)
-        await u.message.reply_text(f"🤖 *AI Analysis*\n\n{response}", parse_mode="Markdown", reply_markup=KEYBOARD)
+        # Add follow-up suggestions based on language
+        lang = load_user(uid).get("lang", "it")
+        followups = {
+            "it": "\n\n\U0001f4ac _Hai altre domande? Scrivimi liberamente!_",
+            "en": "\n\n\U0001f4ac _More questions? Feel free to ask!_",
+            "pt": "\n\n\U0001f4ac _Mais perguntas? Pode me perguntar!_",
+        }
+        followup = followups.get(lang, followups["it"])
+        await u.message.reply_text("\U0001f916 *AI Analysis*\n\n" + response + followup, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
