@@ -1203,8 +1203,20 @@ class WebHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
         
-        if path == "/" or path == "/dashboard":
-            # Serve dashboard HTML
+        if path == "/" or path == "/landing":
+            landing_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "landing.html")
+            if os.path.exists(landing_path):
+                with open(landing_path, "rb") as f:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
+        elif path == "/dashboard":
             dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
             if os.path.exists(dashboard_path):
                 with open(dashboard_path, "rb") as f:
