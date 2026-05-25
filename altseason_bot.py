@@ -781,15 +781,17 @@ async def cmd_referral(u, c):
 async def cmd_share(u, c):
     uid = get_uid(u)
     ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
+    ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
     msg = (f"📢 *CONDIVIDI IL BOT*\n\n"
            "Copia e manda questo messaggio:\n\n"
            "━━━━━━━━━━━━━━━\n"
-           "🤖 *Altseason Oracle Bot 2026*\n\n"
-           "Il bot AI per la bull run crypto!\n\n"
-           "✅ Prezzi in tempo reale\n"
-           "✅ AI consulente personale\n"
-           "✅ Alert automatici\n"
-           "✅ Forex & Indici\n\n"
+           "🤖 *Altseason Oracle Bot*\n\n"
+           "La tua guida intelligente nel mondo crypto!\n\n"
+           "✅ Prezzi e news in tempo reale\n"
+           "✅ AI consulente personale 24/7\n"
+           "✅ Alert automatici sui tuoi target\n"
+           "✅ Forex, indici e strategie\n"
+           "✅ Portfolio con P&L in tempo reale\n\n"
            f"👉 {ref_link}\n"
            "━━━━━━━━━━━━━━━")
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
