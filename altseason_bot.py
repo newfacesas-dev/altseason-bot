@@ -1161,7 +1161,11 @@ class WebHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
         else:
-            dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+            if path == "/dashboard":
+                serve_file = "dashboard.html"
+            else:
+                serve_file = "landing.html"
+            dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), serve_file)
             if os.path.exists(dashboard_path):
                 with open(dashboard_path, "rb") as f:
                     content = f.read()
