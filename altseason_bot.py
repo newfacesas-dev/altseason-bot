@@ -1679,7 +1679,6 @@ async def main():
     threading.Thread(target=start_web, daemon=True).start()
     log.info("🚀 Altseason Bot V2 online!")
     try:
-        await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
     except: pass
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
     PORT = int(os.environ.get("PORT", 8080))
