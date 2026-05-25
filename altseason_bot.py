@@ -1680,7 +1680,8 @@ async def main():
     log.info("🚀 Altseason Bot V2 online!")
     async with app:
         await app.start()
-        if WEBHOOK_URL:
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    if WEBHOOK_URL:
             await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
             await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
             log.info(f"Webhook: {WEBHOOK_URL}/webhook")
