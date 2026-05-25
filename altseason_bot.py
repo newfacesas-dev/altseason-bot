@@ -1534,7 +1534,13 @@ class WebHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
         
-        if path == "/" or path == "/dashboard":
+        if path == "/landing" or path == "/":
+            lpath = __import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "landing.html")
+            if __import__("os").path.exists(lpath):
+                with open(lpath, "rb") as f:
+                    self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(f.read())
+            return
+        if path == "/dashboard":
             # Serve dashboard HTML
             dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
             if os.path.exists(dashboard_path):
