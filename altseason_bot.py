@@ -18,6 +18,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ============================================================
 TELEGRAM_TOKEN = "8940955681:AAGbto8_W43gSe21rA3LlN776tMQfD2auIo"
 ADMIN_ID = "670903243"
+CHANNEL_ID = "-1003997977321"
 CHAT_ID = "670903243"
 CHECK_INTERVAL = 1800
 BTC_DOM_THRESHOLD = 52.0
@@ -1151,6 +1152,9 @@ async def auto_monitor(app):
                                 await app.bot.send_message(chat_id=int(cid), text=briefing, parse_mode="Markdown")
                             except: pass
                     log.info(f"Morning briefing inviato a {len(users)} utenti")
+                    try:
+                        await app.bot.send_message(chat_id=CHANNEL_ID, text=briefing + "\n\n\U0001f916 Analisi completa: t.me/BullRunSignal_bot", parse_mode="Markdown")
+                    except: pass
                 except Exception as e:
                     log.error(f"Briefing error: {e}")
             g = get_global(); p = get_prices(); fg = get_fg()
@@ -1169,12 +1173,19 @@ async def auto_monitor(app):
                 try:
                     await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
                 except: pass
+                try:
+                    await app.bot.send_message(chat_id=CHANNEL_ID, text=msg + "\n\n\U0001f916 Analisi completa: t.me/BullRunSignal_bot", parse_mode="Markdown")
+                except: pass
                 last_phase = level
             # Meme mania alert
             memes = [s for s in ["DOGE","BONK","PEPE","SHIB"] if p.get(s, {}).get("ch", 0) > 8]
             if len(memes) >= 2:
+                meme_msg = "\U0001f3b0 *MEME MANIA!* " + ", ".join(memes) + " tutti >8%\n\u26a0\ufe0f Segnale euforia!\n\nt.me/BullRunSignal_bot"
                 try:
-                    await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti >8%\n⚠️ Segnale euforia!", parse_mode="Markdown")
+                    await app.bot.send_message(chat_id=CHAT_ID, text=meme_msg, parse_mode="Markdown")
+                except: pass
+                try:
+                    await app.bot.send_message(chat_id=CHANNEL_ID, text=meme_msg, parse_mode="Markdown")
                 except: pass
         except Exception as e:
             log.error(f"Monitor error: {e}")
