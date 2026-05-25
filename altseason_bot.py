@@ -18,7 +18,172 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ============================================================
 TELEGRAM_TOKEN = "8940955681:AAGbto8_W43gSe21rA3LlN776tMQfD2auIo"
 ADMIN_ID = "670903243"
-CHANNEL_ID = "-1003997977321"
+
+# ============================================================
+# TRADUZIONI IT / EN / PT-BR
+# ============================================================
+T = {
+    "it": {
+        "welcome": lambda name: (
+            "\U0001f44b *Benvenuto " + name + "!*\n\n"
+            "\U0001f916 Sono il tuo *consulente AI nel mondo crypto*.\n\n"
+            "Ecco cosa posso fare per te:\n\n"
+            "\U0001f4ca *MERCATO* \u2014 Status, Fase, Fear&Greed, RSI\n"
+            "\U0001f4bc *PORTFOLIO* \u2014 P&L in tempo reale\n"
+            "\U0001f514 *ALERT* \u2014 Notifiche automatiche sui tuoi target\n"
+            "\U0001f916 *AI* \u2014 Rispondo a qualsiasi domanda\n"
+            "\U0001f4b1 *FOREX* \u2014 EUR/USD, oro, S&P500\n\n"
+            "\U0001f193 *Piano attuale: Free*\n"
+            "\u2022 5 messaggi AI al giorno\n"
+            "\u2022 Tutti i dati di mercato inclusi\n\n"
+            "\U0001f4a1 *Inizia subito:*\n"
+            "1\u20e3 Premi \U0001f4ca *Status* per vedere il mercato\n"
+            "2\u20e3 Premi \u2699\ufe0f *Setup Alert* per i 28 alert strategici\n"
+            "3\u20e3 Scrivi qualsiasi domanda per parlare con l'AI\n\n"
+            "\u26a0\ufe0f _Solo scopo informativo. Non e consulenza finanziaria._"
+        ),
+        "portfolio_empty": "\U0001f4bc Portfolio vuoto!\n\nUsa /add per aggiungere le tue coin\noppure /reset per caricare il portfolio di default",
+        "status_loading": "\u23f3 Recupero dati...",
+        "news_loading": "\u23f3 Recupero notizie...",
+        "forex_loading": "\u23f3 Recupero dati forex...",
+        "rsi_loading": "\u23f3 Calcolo indicatori...",
+        "no_alerts": "Nessun alert. Usa /setup per impostare tutti",
+        "alert_added": lambda s, t, d: "\u2705 Alert: *" + s + "* " + d + " `$" + "{:,.2f}".format(t) + "`",
+        "alert_deleted": lambda s: "\u2705 Eliminato: " + s,
+        "alert_invalid": "\u274c Numero non valido",
+        "setup_done": lambda n: "\u2705 *" + str(n) + " alert impostati!*\n\nXRP: $3\u2192$5\u2192$8\u2192$12\nSOL: $200\u2192$350\u2192$500\u2192$800\nETH: $4k\u2192$6k\u2192$9k\u2192$14k",
+        "reset_admin": lambda n: "\u2705 Portfolio admin caricato!\n" + str(n) + " coin \u2014 Piano Pro",
+        "reset_user": "\u2705 Portfolio resettato!\nUsa /add per aggiungere le tue coin",
+        "coin_added": lambda s, q, p, i: "\u2705 *" + s + " aggiunto!*\n\n\u2022 Quantita: `" + str(q) + "`\n\u2022 Prezzo: `$" + "{:,.4f}".format(p) + "`\n\u2022 Investito: `$" + "{:,.2f}".format(i) + "`\n\nScrivi /portfolio per vedere il P&L",
+        "coin_removed": lambda s: "\u2705 " + s + " rimosso",
+        "coin_not_found": lambda s: "\u274c " + s + " non trovato",
+        "myplan_free_upgrade": "\u2b06\ufe0f *Vuoi piu messaggi AI?*\n\n\U0001f499 *Basic* \u20ac12.99/mese \u2192 50 msg/giorno\n\U0001f451 *Pro* \u20ac25.99/mese \u2192 Illimitati\n\nScrivi /upgrade per info",
+        "ai_limit": lambda l: "\u26a0\ufe0f Hai usato tutti i " + str(l) + " messaggi AI del piano Free.\n\nUpgrada a Basic (50 msg) o Pro (illimitati)!\n\n/upgrade per info",
+        "ai_thinking": lambda u, l: "\U0001f916 Sto analizzando... (" + str(u) + "/" + str(l) + ")",
+        "above": "sale a", "below": "scende a",
+        "news_empty": "\u274c Nessuna notizia disponibile al momento",
+        "forex_empty": "\u274c Dati forex non disponibili",
+        "plan_activated": lambda p: "\U0001f389 *Piano attivato!*\n\nIl tuo piano *" + p + "* e ora attivo!\n\nGrazie per esserti abbonato! \U0001f680",
+        "quiet_on": "\U0001f319 No Disturb ATTIVO \u2014 nessuna notifica 23:00-08:00",
+        "quiet_off": "\u2600\ufe0f No Disturb DISATTIVO",
+        "wizard_select": "\U0001f4bc *AGGIUNGI AL PORTFOLIO*\n\nSeleziona la coin:",
+        "wizard_qty": lambda c: "\u2705 Coin: *" + c + "*\n\nQuante ne hai?",
+        "wizard_price": lambda q: "\u2705 Quantita: *" + str(q) + "*\n\nA quanto hai comprato in media ($)?\n(Scrivi 0 per usare il prezzo attuale)",
+        "wizard_invalid_coin": lambda c, assets: "\u274c *" + c + "* non trovata.\nCoin disponibili: " + ", ".join(list(assets)[:10]) + "...",
+        "wizard_cancel": "\u274c Operazione annullata",
+        "access_denied": "\u274c Accesso negato",
+    },
+    "en": {
+        "welcome": lambda name: (
+            "\U0001f44b *Welcome " + name + "!*\n\n"
+            "\U0001f916 I am your *personal AI advisor in the crypto world*.\n\n"
+            "Here's what I can do for you:\n\n"
+            "\U0001f4ca *MARKET* \u2014 Status, Phase, Fear&Greed, RSI\n"
+            "\U0001f4bc *PORTFOLIO* \u2014 Real-time P&L\n"
+            "\U0001f514 *ALERTS* \u2014 Automatic price notifications\n"
+            "\U0001f916 *AI* \u2014 I answer any question\n"
+            "\U0001f4b1 *FOREX* \u2014 EUR/USD, gold, S&P500\n\n"
+            "\U0001f193 *Current plan: Free*\n"
+            "\u2022 5 AI messages per day\n"
+            "\u2022 All market data included\n\n"
+            "\U0001f4a1 *Get started:*\n"
+            "1\u20e3 Press \U0001f4ca *Status* to see the market\n"
+            "2\u20e3 Press \u2699\ufe0f *Setup Alerts* for 28 strategic alerts\n"
+            "3\u20e3 Write any question to talk to the AI\n\n"
+            "\u26a0\ufe0f _For informational purposes only. Not financial advice._"
+        ),
+        "portfolio_empty": "\U0001f4bc Portfolio empty!\n\nUse /add to add your coins\nor /reset to load the default portfolio",
+        "status_loading": "\u23f3 Fetching data...",
+        "news_loading": "\u23f3 Fetching news...",
+        "forex_loading": "\u23f3 Fetching forex data...",
+        "rsi_loading": "\u23f3 Calculating indicators...",
+        "no_alerts": "No alerts. Use /setup to set them all",
+        "alert_added": lambda s, t, d: "\u2705 Alert: *" + s + "* " + d + " `$" + "{:,.2f}".format(t) + "`",
+        "alert_deleted": lambda s: "\u2705 Deleted: " + s,
+        "alert_invalid": "\u274c Invalid number",
+        "setup_done": lambda n: "\u2705 *" + str(n) + " alerts set!*\n\nXRP: $3\u2192$5\u2192$8\u2192$12\nSOL: $200\u2192$350\u2192$500\u2192$800\nETH: $4k\u2192$6k\u2192$9k\u2192$14k",
+        "reset_admin": lambda n: "\u2705 Admin portfolio loaded!\n" + str(n) + " coins \u2014 Pro plan",
+        "reset_user": "\u2705 Portfolio reset!\nUse /add to add your coins",
+        "coin_added": lambda s, q, p, i: "\u2705 *" + s + " added!*\n\n\u2022 Quantity: `" + str(q) + "`\n\u2022 Price: `$" + "{:,.4f}".format(p) + "`\n\u2022 Invested: `$" + "{:,.2f}".format(i) + "`\n\nType /portfolio to see your P&L",
+        "coin_removed": lambda s: "\u2705 " + s + " removed",
+        "coin_not_found": lambda s: "\u274c " + s + " not found",
+        "myplan_free_upgrade": "\u2b06\ufe0f *Want more AI messages?*\n\n\U0001f499 *Basic* \u20ac12.99/month \u2192 50 msg/day\n\U0001f451 *Pro* \u20ac25.99/month \u2192 Unlimited\n\nType /upgrade for info",
+        "ai_limit": lambda l: "\u26a0\ufe0f You've used all " + str(l) + " AI messages on the Free plan.\n\nUpgrade to Basic (50 msg) or Pro (unlimited)!\n\n/upgrade for info",
+        "ai_thinking": lambda u, l: "\U0001f916 Analyzing... (" + str(u) + "/" + str(l) + ")",
+        "above": "rises to", "below": "drops to",
+        "news_empty": "\u274c No news available at the moment",
+        "forex_empty": "\u274c Forex data unavailable",
+        "plan_activated": lambda p: "\U0001f389 *Plan activated!*\n\nYour *" + p + "* plan is now active!\n\nThank you for subscribing! \U0001f680",
+        "quiet_on": "\U0001f319 Do Not Disturb ON \u2014 no notifications 23:00-08:00",
+        "quiet_off": "\u2600\ufe0f Do Not Disturb OFF",
+        "wizard_select": "\U0001f4bc *ADD TO PORTFOLIO*\n\nSelect the coin:",
+        "wizard_qty": lambda c: "\u2705 Coin: *" + c + "*\n\nHow many do you have?",
+        "wizard_price": lambda q: "\u2705 Quantity: *" + str(q) + "*\n\nAverage buy price ($)?\n(Type 0 to use current price)",
+        "wizard_invalid_coin": lambda c, assets: "\u274c *" + c + "* not found.\nAvailable: " + ", ".join(list(assets)[:10]) + "...",
+        "wizard_cancel": "\u274c Operation cancelled",
+        "access_denied": "\u274c Access denied",
+    },
+    "pt": {
+        "welcome": lambda name: (
+            "\U0001f44b *Bem-vindo " + name + "!*\n\n"
+            "\U0001f916 Sou seu *consultor AI pessoal no mundo crypto*.\n\n"
+            "Veja o que posso fazer por voce:\n\n"
+            "\U0001f4ca *MERCADO* \u2014 Status, Fase, Fear&Greed, RSI\n"
+            "\U0001f4bc *PORTFOLIO* \u2014 P&L em tempo real\n"
+            "\U0001f514 *ALERTAS* \u2014 Notificacoes automaticas de preco\n"
+            "\U0001f916 *AI* \u2014 Respondo qualquer pergunta\n"
+            "\U0001f4b1 *FOREX* \u2014 EUR/USD, ouro, S&P500\n\n"
+            "\U0001f193 *Plano atual: Gratuito*\n"
+            "\u2022 5 mensagens AI por dia\n"
+            "\u2022 Todos os dados de mercado incluidos\n\n"
+            "\U0001f4a1 *Comece agora:*\n"
+            "1\u20e3 Pressione \U0001f4ca *Status* para ver o mercado\n"
+            "2\u20e3 Pressione \u2699\ufe0f *Setup Alert* para 28 alertas estrategicos\n"
+            "3\u20e3 Escreva qualquer pergunta para falar com o AI\n\n"
+            "\u26a0\ufe0f _Apenas informativo. Nao e aconselhamento financeiro._"
+        ),
+        "portfolio_empty": "\U0001f4bc Portfolio vazio!\n\nUse /add para adicionar suas moedas\nou /reset para carregar o portfolio padrao",
+        "status_loading": "\u23f3 Buscando dados...",
+        "news_loading": "\u23f3 Buscando noticias...",
+        "forex_loading": "\u23f3 Buscando dados forex...",
+        "rsi_loading": "\u23f3 Calculando indicadores...",
+        "no_alerts": "Nenhum alerta. Use /setup para configurar todos",
+        "alert_added": lambda s, t, d: "\u2705 Alerta: *" + s + "* " + d + " `$" + "{:,.2f}".format(t) + "`",
+        "alert_deleted": lambda s: "\u2705 Deletado: " + s,
+        "alert_invalid": "\u274c Numero invalido",
+        "setup_done": lambda n: "\u2705 *" + str(n) + " alertas configurados!*\n\nXRP: $3\u2192$5\u2192$8\u2192$12\nSOL: $200\u2192$350\u2192$500\u2192$800\nETH: $4k\u2192$6k\u2192$9k\u2192$14k",
+        "reset_admin": lambda n: "\u2705 Portfolio admin carregado!\n" + str(n) + " moedas \u2014 Plano Pro",
+        "reset_user": "\u2705 Portfolio resetado!\nUse /add para adicionar suas moedas",
+        "coin_added": lambda s, q, p, i: "\u2705 *" + s + " adicionado!*\n\n\u2022 Quantidade: `" + str(q) + "`\n\u2022 Preco: `$" + "{:,.4f}".format(p) + "`\n\u2022 Investido: `$" + "{:,.2f}".format(i) + "`\n\nDigite /portfolio para ver seu P&L",
+        "coin_removed": lambda s: "\u2705 " + s + " removido",
+        "coin_not_found": lambda s: "\u274c " + s + " nao encontrado",
+        "myplan_free_upgrade": "\u2b06\ufe0f *Quer mais mensagens AI?*\n\n\U0001f499 *Basic* \u20ac12.99/mes \u2192 50 msg/dia\n\U0001f451 *Pro* \u20ac25.99/mes \u2192 Ilimitado\n\nDigite /upgrade para info",
+        "ai_limit": lambda l: "\u26a0\ufe0f Voce usou todas as " + str(l) + " mensagens AI do plano Gratuito.\n\nFaca upgrade para Basic (50 msg) ou Pro (ilimitado)!\n\n/upgrade para info",
+        "ai_thinking": lambda u, l: "\U0001f916 Analisando... (" + str(u) + "/" + str(l) + ")",
+        "above": "sobe para", "below": "cai para",
+        "news_empty": "\u274c Nenhuma noticia disponivel no momento",
+        "forex_empty": "\u274c Dados forex indisponiveis",
+        "plan_activated": lambda p: "\U0001f389 *Plano ativado!*\n\nSeu plano *" + p + "* esta ativo agora!\n\nObrigado por assinar! \U0001f680",
+        "quiet_on": "\U0001f319 Nao Perturbe ATIVO \u2014 sem notificacoes 23:00-08:00",
+        "quiet_off": "\u2600\ufe0f Nao Perturbe DESATIVADO",
+        "wizard_select": "\U0001f4bc *ADICIONAR AO PORTFOLIO*\n\nSelecione a moeda:",
+        "wizard_qty": lambda c: "\u2705 Moeda: *" + c + "*\n\nQuantas voce tem?",
+        "wizard_price": lambda q: "\u2705 Quantidade: *" + str(q) + "*\n\nPreco medio de compra ($)?\n(Digite 0 para usar o preco atual)",
+        "wizard_invalid_coin": lambda c, assets: "\u274c *" + c + "* nao encontrada.\nDisponiveis: " + ", ".join(list(assets)[:10]) + "...",
+        "wizard_cancel": "\u274c Operacao cancelada",
+        "access_denied": "\u274c Acesso negado",
+    }
+}
+
+def t(uid, key, *args):
+    ud = load_user(uid)
+    lang = ud.get("lang", "it")
+    val = T.get(lang, T["it"]).get(key, T["it"].get(key, key))
+    if callable(val):
+        return val(*args)
+    return val
+
+
 CHAT_ID = "670903243"
 CHECK_INTERVAL = 1800
 BTC_DOM_THRESHOLD = 52.0
@@ -297,6 +462,21 @@ def check_alerts_user(chat_id, prices):
 async def cmd_start(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
+    if not ud.get("lang"):
+        # Language selection for new users
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🇮🇹 Italiano", callback_data="lang_it"),
+                InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
+                InlineKeyboardButton("🇧🇷 Português", callback_data="lang_pt"),
+            ]
+        ])
+        await u.message.reply_text(
+            "👋 *Benvenuto / Welcome / Bem-vindo!*\n\nScegli la tua lingua / Choose your language / Escolha seu idioma:",
+            parse_mode="Markdown",
+            reply_markup=buttons
+        )
+        return
     if not ud.get("welcomed"):
         ud["welcomed"] = True
         save_user(uid, ud)
@@ -324,6 +504,21 @@ async def cmd_start(u, c):
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
     else:
         await cmd_help(u, c)
+
+
+async def lang_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    uid = str(query.message.chat_id)
+    lang = query.data.replace("lang_", "")
+    ud = load_user(uid)
+    ud["lang"] = lang
+    ud["welcomed"] = True
+    save_user(uid, ud)
+    name = query.from_user.first_name or "amico"
+    msg = t(uid, "welcome", name)
+    await query.edit_message_text(msg, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=int(uid), text="...", reply_markup=KEYBOARD)
 
 async def cmd_help(u, c):
     msg = """👋 *ALTSEASON BOT 2026*
@@ -621,7 +816,7 @@ async def cmd_alerts(u, c):
     ud = load_user(uid)
     al = ud.get("alerts", [])
     if not al:
-        await u.message.reply_text("Nessun alert. Usa /setup per impostare tutti", reply_markup=KEYBOARD)
+        await u.message.reply_text(t(uid, "no_alerts"), reply_markup=KEYBOARD)
         return
     lines = ["🔔 *Alert Attivi*\n"]
     for i, a in enumerate(al, 1):
@@ -1152,9 +1347,6 @@ async def auto_monitor(app):
                                 await app.bot.send_message(chat_id=int(cid), text=briefing, parse_mode="Markdown")
                             except: pass
                     log.info(f"Morning briefing inviato a {len(users)} utenti")
-                    try:
-                        await app.bot.send_message(chat_id=CHANNEL_ID, text=briefing + "\n\n\U0001f916 Analisi completa: t.me/BullRunSignal_bot", parse_mode="Markdown")
-                    except: pass
                 except Exception as e:
                     log.error(f"Briefing error: {e}")
             g = get_global(); p = get_prices(); fg = get_fg()
@@ -1173,19 +1365,12 @@ async def auto_monitor(app):
                 try:
                     await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
                 except: pass
-                try:
-                    await app.bot.send_message(chat_id=CHANNEL_ID, text=msg + "\n\n\U0001f916 Analisi completa: t.me/BullRunSignal_bot", parse_mode="Markdown")
-                except: pass
                 last_phase = level
             # Meme mania alert
             memes = [s for s in ["DOGE","BONK","PEPE","SHIB"] if p.get(s, {}).get("ch", 0) > 8]
             if len(memes) >= 2:
-                meme_msg = "\U0001f3b0 *MEME MANIA!* " + ", ".join(memes) + " tutti >8%\n\u26a0\ufe0f Segnale euforia!\n\nt.me/BullRunSignal_bot"
                 try:
-                    await app.bot.send_message(chat_id=CHAT_ID, text=meme_msg, parse_mode="Markdown")
-                except: pass
-                try:
-                    await app.bot.send_message(chat_id=CHANNEL_ID, text=meme_msg, parse_mode="Markdown")
+                    await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti >8%\n⚠️ Segnale euforia!", parse_mode="Markdown")
                 except: pass
         except Exception as e:
             log.error(f"Monitor error: {e}")
@@ -1203,20 +1388,8 @@ class WebHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
         
-        if path == "/" or path == "/landing":
-            landing_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "landing.html")
-            if os.path.exists(landing_path):
-                with open(landing_path, "rb") as f:
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.end_headers()
-                    self.wfile.write(f.read())
-            else:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
-        elif path == "/dashboard":
+        if path == "/" or path == "/dashboard":
+            # Serve dashboard HTML
             dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
             if os.path.exists(dashboard_path):
                 with open(dashboard_path, "rb") as f:
@@ -1348,6 +1521,7 @@ async def main():
         fallbacks=[CommandHandler("cancel", wizard_cancel)],
     )
     app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(lang_callback, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(wizard_coin_button, pattern="^coin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     threading.Thread(target=start_web, daemon=True).start()
