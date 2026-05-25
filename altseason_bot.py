@@ -1173,7 +1173,18 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
-                self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
+                fpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "landing.html")
+                if os.path.exists(fpath):
+                    with open(fpath, "rb") as lf:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.end_headers()
+                        self.wfile.write(lf.read())
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
     def log_message(self, *a): pass
 
 def start_web():
