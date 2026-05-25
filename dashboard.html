@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Altseason Bot — Admin Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0f1e; color: #e0e6f0; min-height: 100vh; }
+
+/* LOGIN */
+#login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(135deg, #0a0f1e, #1a2040); }
+.login-box { background: #131929; border: 1px solid #2a3a5c; border-radius: 16px; padding: 40px; width: 380px; text-align: center; }
+.login-box h1 { font-size: 24px; margin-bottom: 8px; background: linear-gradient(90deg, #00d4ff, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.login-box p { color: #8899bb; margin-bottom: 30px; font-size: 14px; }
+.login-box input { width: 100%; padding: 12px 16px; background: #0d1526; border: 1px solid #2a3a5c; border-radius: 8px; color: #e0e6f0; font-size: 16px; margin-bottom: 16px; outline: none; }
+.login-box input:focus { border-color: #00d4ff; }
+.login-box button { width: 100%; padding: 12px; background: linear-gradient(90deg, #00d4ff, #7c3aed); border: none; border-radius: 8px; color: white; font-size: 16px; font-weight: 600; cursor: pointer; }
+.login-box button:hover { opacity: 0.9; }
+.login-error { color: #ff4444; font-size: 13px; margin-top: 8px; display: none; }
+
+/* DASHBOARD */
+#dashboard { display: none; }
+.header { background: #131929; border-bottom: 1px solid #2a3a5c; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 20px; font-weight: 700; background: linear-gradient(90deg, #00d4ff, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.status-dot { width: 8px; height: 8px; background: #00ff88; border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.logout-btn { padding: 6px 14px; background: transparent; border: 1px solid #2a3a5c; border-radius: 6px; color: #8899bb; cursor: pointer; font-size: 13px; }
+.logout-btn:hover { border-color: #ff4444; color: #ff4444; }
+
+.main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+/* KPI CARDS */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.kpi-card { background: #131929; border: 1px solid #2a3a5c; border-radius: 12px; padding: 20px; }
+.kpi-card .label { font-size: 12px; color: #8899bb; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.kpi-card .value { font-size: 32px; font-weight: 700; }
+.kpi-card .sub { font-size: 12px; color: #8899bb; margin-top: 4px; }
+.kpi-card.green .value { color: #00ff88; }
+.kpi-card.blue .value { color: #00d4ff; }
+.kpi-card.purple .value { color: #a78bfa; }
+.kpi-card.gold .value { color: #fbbf24; }
+
+/* CHARTS */
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+.chart-card { background: #131929; border: 1px solid #2a3a5c; border-radius: 12px; padding: 20px; }
+.chart-card h3 { font-size: 14px; color: #8899bb; margin-bottom: 16px; }
+.chart-container { position: relative; height: 200px; }
+
+/* USERS TABLE */
+.users-card { background: #131929; border: 1px solid #2a3a5c; border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+.users-card h3 { font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+.search-input { padding: 8px 12px; background: #0d1526; border: 1px solid #2a3a5c; border-radius: 6px; color: #e0e6f0; font-size: 13px; width: 200px; outline: none; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 10px 12px; font-size: 11px; color: #8899bb; text-transform: uppercase; border-bottom: 1px solid #2a3a5c; }
+td { padding: 12px; font-size: 13px; border-bottom: 1px solid #1a2540; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #1a2540; }
+.badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-free { background: #1a2540; color: #8899bb; }
+.badge-basic { background: #1e3a8a; color: #60a5fa; }
+.badge-pro { background: #4c1d95; color: #a78bfa; }
+.action-btn { padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; border: 1px solid; background: transparent; }
+.btn-upgrade { border-color: #a78bfa; color: #a78bfa; }
+.btn-upgrade:hover { background: #4c1d95; }
+.btn-reset { border-color: #fb923c; color: #fb923c; }
+.btn-reset:hover { background: #7c2d12; }
+
+/* ACTIONS */
+.actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.action-card { background: #131929; border: 1px solid #2a3a5c; border-radius: 12px; padding: 20px; }
+.action-card h3 { font-size: 14px; margin-bottom: 12px; }
+.action-card input, .action-card select { width: 100%; padding: 8px 12px; background: #0d1526; border: 1px solid #2a3a5c; border-radius: 6px; color: #e0e6f0; font-size: 13px; margin-bottom: 8px; outline: none; }
+.action-card .exec-btn { width: 100%; padding: 10px; background: linear-gradient(90deg, #00d4ff22, #7c3aed22); border: 1px solid #7c3aed; border-radius: 6px; color: #a78bfa; cursor: pointer; font-size: 13px; }
+.action-card .exec-btn:hover { background: linear-gradient(90deg, #00d4ff44, #7c3aed44); }
+.result-msg { font-size: 12px; color: #00ff88; margin-top: 8px; display: none; }
+
+/* LOADING */
+.loading { text-align: center; padding: 40px; color: #8899bb; }
+.spinner { width: 32px; height: 32px; border: 3px solid #2a3a5c; border-top-color: #00d4ff; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+    <div class="login-box">
+        <h1>🤖 Altseason Bot</h1>
+        <p>Admin Dashboard — Accesso Riservato</p>
+        <input type="password" id="pwd-input" placeholder="Password..." onkeypress="if(event.key==='Enter')doLogin()">
+        <button onclick="doLogin()">Accedi</button>
+        <div class="login-error" id="login-error">Password errata. Riprova.</div>
+    </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+    <div class="header">
+        <h1>🤖 Altseason Bot — Admin</h1>
+        <div class="header-right">
+            <div class="status-dot"></div>
+            <span style="font-size:13px;color:#8899bb">Bot Online</span>
+            <button class="logout-btn" onclick="doLogout()">Esci</button>
+        </div>
+    </div>
+
+    <div class="main">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Caricamento dati...</p>
+        </div>
+
+        <div id="content" style="display:none">
+            <!-- KPI -->
+            <div class="kpi-grid" id="kpi-grid"></div>
+
+            <!-- CHARTS -->
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>📊 Distribuzione Piani</h3>
+                    <div class="chart-container"><canvas id="plansChart"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <h3>💰 Ricavi Mensili Stimati</h3>
+                    <div class="chart-container"><canvas id="revenueChart"></canvas></div>
+                </div>
+            </div>
+
+            <!-- ACTIONS -->
+            <div class="actions-grid">
+                <div class="action-card">
+                    <h3>⬆️ Cambia Piano Utente</h3>
+                    <input type="text" id="setplan-uid" placeholder="Chat ID utente">
+                    <select id="setplan-plan">
+                        <option value="free">Free</option>
+                        <option value="basic">Basic €12.99/mese</option>
+                        <option value="pro">Pro €25.99/mese</option>
+                    </select>
+                    <button class="exec-btn" onclick="setPlan()">Applica Piano</button>
+                    <div class="result-msg" id="setplan-result">✅ Piano aggiornato!</div>
+                </div>
+                <div class="action-card">
+                    <h3>🔄 Reset Contatore AI</h3>
+                    <input type="text" id="resetai-uid" placeholder="Chat ID utente (vuoto = tutti)">
+                    <button class="exec-btn" onclick="resetAI()">Reset Contatore</button>
+                    <div class="result-msg" id="resetai-result">✅ Contatore resettato!</div>
+                </div>
+            </div>
+
+            <!-- USERS TABLE -->
+            <div class="users-card">
+                <h3>
+                    👥 Lista Utenti
+                    <input type="text" class="search-input" id="search-input" placeholder="Cerca per ID..." oninput="filterUsers()">
+                </h3>
+                <table id="users-table">
+                    <thead>
+                        <tr>
+                            <th>Chat ID</th>
+                            <th>Piano</th>
+                            <th>Msg AI usati</th>
+                            <th>Coins</th>
+                            <th>Alert</th>
+                            <th>Azioni</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const ADMIN_PASSWORD = 'Stratega2026!!';
+const BOT_API = 'https://altseason-bot-production.up.railway.app';
+let allUsers = [];
+let chartsInitialized = false;
+let plansChartInstance = null;
+let revenueChartInstance = null;
+
+function doLogin() {
+    const pwd = document.getElementById('pwd-input').value;
+    if (pwd === ADMIN_PASSWORD) {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('dashboard').style.display = 'block';
+        sessionStorage.setItem('admin_logged', '1');
+        loadData();
+    } else {
+        document.getElementById('login-error').style.display = 'block';
+        document.getElementById('pwd-input').value = '';
+    }
+}
+
+function doLogout() {
+    sessionStorage.removeItem('admin_logged');
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('dashboard').style.display = 'none';
+}
+
+if (sessionStorage.getItem('admin_logged')) {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    loadData();
+}
+
+async function loadData() {
+    try {
+        const res = await fetch(`${BOT_API}/admin/users`);
+        const data = await res.json();
+        allUsers = data.users || [];
+        renderDashboard(data);
+    } catch(e) {
+        // Demo data se API non disponibile
+        const demo = generateDemoData();
+        allUsers = demo.users;
+        renderDashboard(demo);
+    }
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+}
+
+function generateDemoData() {
+    return {
+        total: 2,
+        free: 1, basic: 0, pro: 1,
+        ricavi: 25.99,
+        users: [
+            {id: '670903243', plan: 'pro', ai_msgs: 0, coins: 11, alerts: 28},
+            {id: '5437305646', plan: 'free', ai_msgs: 2, coins: 0, alerts: 0},
+        ]
+    };
+}
+
+function renderDashboard(data) {
+    const free = data.free || 0;
+    const basic = data.basic || 0;
+    const pro = data.pro || 0;
+    const total = data.total || 0;
+    const ricavi = (basic * 12.99 + pro * 25.99).toFixed(2);
+
+    document.getElementById('kpi-grid').innerHTML = `
+        <div class="kpi-card blue">
+            <div class="label">Utenti Totali</div>
+            <div class="value">${total}</div>
+            <div class="sub">Registrati sul bot</div>
+        </div>
+        <div class="kpi-card green">
+            <div class="label">Ricavi Mensili</div>
+            <div class="value">€${ricavi}</div>
+            <div class="sub">Basic: ${basic} | Pro: ${pro}</div>
+        </div>
+        <div class="kpi-card purple">
+            <div class="label">Utenti Pro</div>
+            <div class="value">${pro}</div>
+            <div class="sub">€25.99/mese</div>
+        </div>
+        <div class="kpi-card gold">
+            <div class="label">Conversione</div>
+            <div class="value">${total > 0 ? Math.round((basic+pro)/total*100) : 0}%</div>
+            <div class="sub">Free → Paid</div>
+        </div>
+    `;
+
+    renderCharts(free, basic, pro, ricavi);
+    renderUsers(data.users || []);
+}
+
+function renderCharts(free, basic, pro, ricavi) {
+    if (plansChartInstance) plansChartInstance.destroy();
+    if (revenueChartInstance) revenueChartInstance.destroy();
+
+    const ctx1 = document.getElementById('plansChart').getContext('2d');
+    plansChartInstance = new Chart(ctx1, {
+        type: 'doughnut',
+        data: {
+            labels: ['Free', 'Basic', 'Pro'],
+            datasets: [{
+                data: [free, basic, pro],
+                backgroundColor: ['#1a2540', '#1e3a8a', '#4c1d95'],
+                borderColor: ['#2a3a5c', '#3b82f6', '#7c3aed'],
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#8899bb', font: { size: 12 } } }
+            }
+        }
+    });
+
+    const ctx2 = document.getElementById('revenueChart').getContext('2d');
+    revenueChartInstance = new Chart(ctx2, {
+        type: 'bar',
+        data: {
+            labels: ['Free', 'Basic (€12.99)', 'Pro (€25.99)', 'Totale'],
+            datasets: [{
+                label: '€/mese',
+                data: [0, basic * 12.99, pro * 25.99, parseFloat(ricavi)],
+                backgroundColor: ['#1a2540', '#1e3a8a', '#4c1d95', '#00d4ff22'],
+                borderColor: ['#2a3a5c', '#3b82f6', '#7c3aed', '#00d4ff'],
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#8899bb' }, grid: { color: '#1a2540' } },
+                y: { ticks: { color: '#8899bb', callback: v => '€'+v }, grid: { color: '#1a2540' } }
+            }
+        }
+    });
+}
+
+function renderUsers(users) {
+    const tbody = document.getElementById('users-tbody');
+    tbody.innerHTML = users.map(u => `
+        <tr>
+            <td><code style="color:#00d4ff">${u.id}</code></td>
+            <td><span class="badge badge-${u.plan}">${u.plan.toUpperCase()}</span></td>
+            <td>${u.ai_msgs || 0}</td>
+            <td>${u.coins || 0}</td>
+            <td>${u.alerts || 0}</td>
+            <td style="display:flex;gap:6px">
+                <button class="action-btn btn-upgrade" onclick="quickUpgrade('${u.id}')">↑ Pro</button>
+                <button class="action-btn btn-reset" onclick="quickReset('${u.id}')">Reset AI</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function filterUsers() {
+    const q = document.getElementById('search-input').value.toLowerCase();
+    const filtered = allUsers.filter(u => u.id.toLowerCase().includes(q));
+    renderUsers(filtered);
+}
+
+async function setPlan() {
+    const uid = document.getElementById('setplan-uid').value.trim();
+    const plan = document.getElementById('setplan-plan').value;
+    if (!uid) return;
+    try {
+        await fetch(`${BOT_API}/admin/setplan?uid=${uid}&plan=${plan}&pwd=${ADMIN_PASSWORD}`);
+    } catch(e) {}
+    showResult('setplan-result');
+    loadData();
+}
+
+async function quickUpgrade(uid) {
+    try {
+        await fetch(`${BOT_API}/admin/setplan?uid=${uid}&plan=pro&pwd=${ADMIN_PASSWORD}`);
+    } catch(e) {}
+    loadData();
+}
+
+async function resetAI() {
+    const uid = document.getElementById('resetai-uid').value.trim();
+    try {
+        await fetch(`${BOT_API}/admin/resetai?uid=${uid}&pwd=${ADMIN_PASSWORD}`);
+    } catch(e) {}
+    showResult('resetai-result');
+    loadData();
+}
+
+async function quickReset(uid) {
+    try {
+        await fetch(`${BOT_API}/admin/resetai?uid=${uid}&pwd=${ADMIN_PASSWORD}`);
+    } catch(e) {}
+    loadData();
+}
+
+function showResult(id) {
+    const el = document.getElementById(id);
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 3000);
+}
+
+// Auto-refresh ogni 60 secondi
+setInterval(() => {
+    if (sessionStorage.getItem('admin_logged')) loadData();
+}, 60000);
+</script>
+</body>
+</html>

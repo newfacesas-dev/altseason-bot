@@ -438,31 +438,18 @@ async def cmd_forex(u, c):
 async def cmd_news(u, c):
     await u.message.reply_text("⏳ Recupero notizie...", reply_markup=KEYBOARD)
     try:
-        import xml.etree.ElementTree as ET
-        feeds = [
-            ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
-            ("Decrypt", "https://decrypt.co/feed"),
-        ]
-        lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
-        count = 0
-        for source, url in feeds:
-            try:
-                r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-                root = ET.fromstring(r.content)
-                items = root.findall(".//item")[:3]
-                for item in items:
-                    title = item.findtext("title", "")[:80]
-                    link = item.findtext("link", "")
-                    lines.append(f"• [{title}]({link})")
-                    count += 1
-                    if count >= 6:
-                        break
-            except: pass
-            if count >= 6:
-                break
-        if count == 0:
-            await u.message.reply_text("❌ Nessuna notizia disponibile al momento", reply_markup=KEYBOARD)
+        r = requests.get("https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies=BTC,ETH,XRP,SOL&kind=news&public=true", timeout=10)
+        results = r.json().get("results", [])[:6]
+        if not results:
+            await u.message.reply_text("❌ Nessuna notizia disponibile", reply_markup=KEYBOARD)
             return
+        lines = ["📰 *ULTIME NEWS CRYPTO*\n"]
+        for news in results:
+            title = news.get("title", "")[:80]
+            url = news.get("url", "")
+            currencies = [c["code"] for c in news.get("currencies", [])]
+            coins = " ".join([f"`{c}`" for c in currencies[:3]]) if currencies else ""
+            lines.append(f"• {coins} [{title}]({url})")
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD, disable_web_page_preview=True)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
@@ -781,17 +768,15 @@ async def cmd_referral(u, c):
 async def cmd_share(u, c):
     uid = get_uid(u)
     ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
-    ref_link = f"https://t.me/BullRunSignal_bot?start=ref_{uid}"
     msg = (f"📢 *CONDIVIDI IL BOT*\n\n"
            "Copia e manda questo messaggio:\n\n"
            "━━━━━━━━━━━━━━━\n"
-           "🤖 *Altseason Oracle Bot*\n\n"
-           "La tua guida intelligente nel mondo crypto!\n\n"
-           "✅ Prezzi e news in tempo reale\n"
-           "✅ AI consulente personale 24/7\n"
-           "✅ Alert automatici sui tuoi target\n"
-           "✅ Forex, indici e strategie\n"
-           "✅ Portfolio con P&L in tempo reale\n\n"
+           "🤖 *Altseason Oracle Bot 2026*\n\n"
+           "Il bot AI per la bull run crypto!\n\n"
+           "✅ Prezzi in tempo reale\n"
+           "✅ AI consulente personale\n"
+           "✅ Alert automatici\n"
+           "✅ Forex & Indici\n\n"
            f"👉 {ref_link}\n"
            "━━━━━━━━━━━━━━━")
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -1168,10 +1153,17 @@ async def main():
     try:
         await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
     except: pass
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    PORT = int(os.environ.get("PORT", 8080))
     async with app:
         await app.start()
-        await app.updater.start_polling()
-        log.info("Polling attivo")
+        if WEBHOOK_URL:
+            await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+            await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
+            log.info(f"Webhook: {WEBHOOK_URL}/webhook")
+        else:
+            await app.updater.start_polling()
+            log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
         while True:
             await asyncio.sleep(3600)
