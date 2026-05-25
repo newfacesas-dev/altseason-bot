@@ -293,7 +293,36 @@ def check_alerts_user(chat_id, prices):
 # ============================================================
 # COMANDI BOT
 # ============================================================
-async def cmd_start(u, c): await cmd_help(u, c)
+async def cmd_start(u, c):
+    uid = get_uid(u)
+    ud = load_user(uid)
+    if not ud.get("welcomed"):
+        ud["welcomed"] = True
+        save_user(uid, ud)
+        name = u.message.from_user.first_name or "amico"
+        msg = (
+            "\U0001f44b *Benvenuto " + name + "!*\n\n"
+            "\U0001f916 Sono il tuo *consulente AI nel mondo crypto*.\n\n"
+            "Ecco cosa posso fare per te:\n\n"
+            "\U0001f4ca *MERCATO* \u2014 Status, Fase, Fear&Greed, RSI\n"
+            "\U0001f4bc *PORTFOLIO* \u2014 P&L in tempo reale\n"
+            "\U0001f514 *ALERT* \u2014 Notifiche automatiche sui tuoi target\n"
+            "\U0001f916 *AI* \u2014 Rispondo a qualsiasi domanda\n"
+            "\U0001f4b1 *FOREX* \u2014 EUR/USD, oro, S&P500\n\n"
+            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            "\U0001f193 *Piano attuale: Free*\n"
+            "\u2022 5 messaggi AI al giorno\n"
+            "\u2022 Tutti i dati di mercato inclusi\n\n"
+            "\U0001f4a1 *Inizia subito:*\n"
+            "1\u20e3 Premi \U0001f4ca *Status* per vedere il mercato\n"
+            "2\u20e3 Premi \u2699\ufe0f *Setup Alert* per i 28 alert strategici\n"
+            "3\u20e3 Scrivi qualsiasi domanda per parlare con l'AI\n\n"
+            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            "\u26a0\ufe0f _Solo scopo informativo. Non \xe8 consulenza finanziaria._"
+        )
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    else:
+        await cmd_help(u, c)
 
 async def cmd_help(u, c):
     msg = """👋 *ALTSEASON BOT 2026*
@@ -1057,9 +1086,13 @@ async def auto_monitor(app):
     await asyncio.sleep(10)
     last_phase = None
     last_reset_day = -1
+    last_briefing_day = -1
     while True:
         try:
-            today = datetime.now().day
+            now = datetime.now()
+            today = now.day
+            hour = now.hour
+            
             if today != last_reset_day:
                 users = list_users()
                 for cid in users:
@@ -1069,6 +1102,57 @@ async def auto_monitor(app):
                         save_user(cid, ud)
                 log.info(f"Reset giornaliero AI: {len(users)} utenti")
                 last_reset_day = today
+
+            # Morning briefing alle 8:00
+            if hour == 8 and today != last_briefing_day:
+                last_briefing_day = today
+                try:
+                    g = get_global()
+                    p = get_prices()
+                    fg = get_fg()
+                    ph, desc, level = phase(g["dom"])
+                    date_str = now.strftime("%d/%m/%Y")
+                    dom = g['dom']
+                    btc_p = p['BTC']['price']
+                    btc_c = p['BTC']['ch']
+                    eth_p = p['ETH']['price']
+                    eth_c = p['ETH']['ch']
+                    xrp_p = p['XRP']['price']
+                    xrp_c = p['XRP']['ch']
+                    sol_p = p['SOL']['price']
+                    sol_c = p['SOL']['ch']
+                    fg_v = fg['v']
+                    fg_lbl = fg['lbl']
+                    fg_em = fg['em']
+                    lines = [
+                        "\u2600 *BUONGIORNO - " + date_str + "*",
+                        "",
+                        ph,
+                        "_" + desc + "_",
+                        "",
+                        "\U0001f4ca *MERCATO*",
+                        "\u2022 BTC Dom: `" + "{:.2f}".format(dom) + "%`",
+                        "\u2022 Fear&Greed: " + fg_em + " `" + str(fg_v) + " - " + fg_lbl + "`",
+                        "",
+                        "\U0001f4b0 *PREZZI*",
+                        "\u2022 BTC: `$" + "{:,.0f}".format(btc_p) + "` (" + "{:+.1f}".format(btc_c) + "%)",
+                        "\u2022 ETH: `$" + "{:,.0f}".format(eth_p) + "` (" + "{:+.1f}".format(eth_c) + "%)",
+                        "\u2022 XRP: `$" + "{:,.4f}".format(xrp_p) + "` (" + "{:+.1f}".format(xrp_c) + "%)",
+                        "\u2022 SOL: `$" + "{:,.1f}".format(sol_p) + "` (" + "{:+.1f}".format(sol_c) + "%)",
+                        "",
+                        "\U0001f4a1 Scrivi qualsiasi domanda al tuo AI consulente!",
+                    ]
+                    briefing = "\n".join(lines)
+                    users = list_users()
+                    for cid in users:
+                        ud = load_user(cid)
+                        if not ud.get("quiet_mode", False):
+                            try:
+                                await app.bot.send_message(chat_id=int(cid), text=briefing, parse_mode="Markdown")
+                            except: pass
+                    log.info(f"Morning briefing inviato a {len(users)} utenti")
+                except Exception as e:
+                    log.error(f"Briefing error: {e}")
             g = get_global(); p = get_prices(); fg = get_fg()
             ph, desc, level = phase(g["dom"])
             # Check alerts per ogni utente
@@ -1099,13 +1183,34 @@ async def auto_monitor(app):
 # ============================================================
 # WEB SERVER
 # ============================================================
+DASHBOARD_PWD = os.environ.get("DASHBOARD_PWD", "Stratega2026!!")
+
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
-        if path == "/admin/users":
+        
+        if path == "/" or path == "/dashboard":
+            # Serve dashboard HTML
+            dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+            if os.path.exists(dashboard_path):
+                with open(dashboard_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
+        
+        elif path == "/admin/users":
+            # API per lista utenti
+            pwd = params.get("pwd", [""])[0]
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -1120,11 +1225,23 @@ class WebHandler(BaseHTTPRequestHandler):
                     if plan == "free": free += 1
                     elif plan == "basic": basic += 1
                     else: pro += 1
-                    users_data.append({"id": cid, "plan": plan, "ai_msgs": ud.get("ai_msgs", 0), "coins": len(ud.get("portfolio", {})), "alerts": len(ud.get("alerts", []))})
-                result = json.dumps({"total": len(users_list), "free": free, "basic": basic, "pro": pro, "ricavi": round(basic*12.99+pro*25.99, 2), "users": users_data})
+                    users_data.append({
+                        "id": cid,
+                        "plan": plan,
+                        "ai_msgs": ud.get("ai_msgs", 0),
+                        "coins": len(ud.get("portfolio", {})),
+                        "alerts": len(ud.get("alerts", [])),
+                    })
+                result = json.dumps({
+                    "total": len(users_list),
+                    "free": free, "basic": basic, "pro": pro,
+                    "ricavi": round(basic * 12.99 + pro * 25.99, 2),
+                    "users": users_data
+                })
                 self.wfile.write(result.encode())
             except Exception as e:
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+        
         elif path == "/admin/setplan":
             uid = params.get("uid", [""])[0]
             plan = params.get("plan", ["free"])[0]
@@ -1141,6 +1258,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": True}).encode())
             except Exception as e:
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+        
         elif path == "/admin/resetai":
             uid = params.get("uid", [""])[0]
             self.send_response(200)
@@ -1160,46 +1278,12 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": True}).encode())
             except Exception as e:
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+        
         else:
-            if path == "/dashboard":
-                serve_file = "dashboard.html"
-            else:
-                serve_file = "landing.html"
-            dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), serve_file)
-            if os.path.exists(dashboard_path):
-                with open(dashboard_path, "rb") as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(content)
-            else:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                fpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "landing.html")
-                if os.path.exists(fpath):
-                    with open(fpath, "rb") as lf:
-                        self.send_response(200)
-                        self.send_header("Content-Type", "text/html; charset=utf-8")
-                        self.end_headers()
-                        self.wfile.write(lf.read())
-                else:
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html")
-                    self.end_headers()
-                    fpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "landing.html")
-                if os.path.exists(fpath):
-                    with open(fpath, "rb") as lf:
-                        self.send_response(200)
-                        self.send_header("Content-Type", "text/html; charset=utf-8")
-                        self.end_headers()
-                        self.wfile.write(lf.read())
-                else:
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not found")
+    
     def log_message(self, *a): pass
 
 def start_web():
