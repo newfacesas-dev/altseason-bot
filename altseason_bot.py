@@ -16,7 +16,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ============================================================
 # CONFIGURAZIONE
 # ============================================================
-TELEGRAM_TOKEN = "8940955681:AAGbto8_W43gSe21rA3LlN776tMQfD2auIo"
+TELEGRAM_TOKEN = "8940955681:AAHVYBzn7c07PrxrCXkySLkFxEvOZZle3CQ"
 ADMIN_ID = "670903243"
 
 # ============================================================
