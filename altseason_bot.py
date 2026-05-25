@@ -565,6 +565,21 @@ async def cmd_start(u, c):
         await cmd_help(u, c)
 
 
+
+async def cmd_language(u, c):
+    buttons = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🇮🇹 Italiano", callback_data="lang_it"),
+            InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
+            InlineKeyboardButton("🇧🇷 Português", callback_data="lang_pt"),
+        ]
+    ])
+    await u.message.reply_text(
+        "🌍 *Scegli la lingua / Choose language / Escolha o idioma:*",
+        parse_mode="Markdown",
+        reply_markup=buttons
+    )
+
 async def lang_callback(update, context):
     query = update.callback_query
     await query.answer()
@@ -590,6 +605,7 @@ async def cmd_help(u, c):
 /top — Top performer
 /forex — Forex & Indici
 /news — Ultime notizie
+/language — Cambia lingua
 
 💼 *PORTFOLIO*
 /portfolio — P&L in tempo reale
@@ -1589,7 +1605,7 @@ async def main():
         ("ai", cmd_ai), ("myplan", cmd_myplan),
         ("upgrade", cmd_upgrade), ("pay", cmd_pay),
         ("referral", cmd_referral), ("share", cmd_share),
-        ("quiet", cmd_quiet), ("admin", cmd_admin),
+        ("quiet", cmd_quiet), ("language", cmd_language), ("lingua", cmd_language), ("admin", cmd_admin),
         ("users", cmd_users), ("setplan", cmd_setplan),
         ("resetai", cmd_resetai), ("initadmin", cmd_initadmin),
         ("add", cmd_addwizard),
