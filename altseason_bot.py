@@ -1534,13 +1534,7 @@ class WebHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
         
-        if path == "/landing" or path == "/":
-            lpath = __import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "landing.html")
-            if __import__("os").path.exists(lpath):
-                with open(lpath, "rb") as f:
-                    self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(f.read())
-            return
-        if path == "/dashboard":
+        if path == "/" or path == "/dashboard":
             # Serve dashboard HTML
             dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
             if os.path.exists(dashboard_path):
@@ -1678,11 +1672,14 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     threading.Thread(target=start_web, daemon=True).start()
     log.info("🚀 Altseason Bot V2 online!")
+    try:
+        await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
+    except: pass
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    PORT = int(os.environ.get("PORT", 8080))
     async with app:
         await app.start()
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    if WEBHOOK_URL:
+        if WEBHOOK_URL:
             await app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
             await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
             log.info(f"Webhook: {WEBHOOK_URL}/webhook")
