@@ -1101,10 +1101,79 @@ async def auto_monitor(app):
 # ============================================================
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        path = parsed.path
+        params = parse_qs(parsed.query)
+        if path == "/admin/users":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                users_list = list_users()
+                free = basic = pro = 0
+                users_data = []
+                for cid in users_list:
+                    ud = load_user(cid)
+                    plan = ud.get("plan", "free")
+                    if plan == "free": free += 1
+                    elif plan == "basic": basic += 1
+                    else: pro += 1
+                    users_data.append({"id": cid, "plan": plan, "ai_msgs": ud.get("ai_msgs", 0), "coins": len(ud.get("portfolio", {})), "alerts": len(ud.get("alerts", []))})
+                result = json.dumps({"total": len(users_list), "free": free, "basic": basic, "pro": pro, "ricavi": round(basic*12.99+pro*25.99, 2), "users": users_data})
+                self.wfile.write(result.encode())
+            except Exception as e:
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+        elif path == "/admin/setplan":
+            uid = params.get("uid", [""])[0]
+            plan = params.get("plan", ["free"])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                if uid:
+                    ud = load_user(uid)
+                    ud["plan"] = plan
+                    ud["ai_msgs"] = 0
+                    save_user(uid, ud)
+                self.wfile.write(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+        elif path == "/admin/resetai":
+            uid = params.get("uid", [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                if uid:
+                    ud = load_user(uid)
+                    ud["ai_msgs"] = 0
+                    save_user(uid, ud)
+                else:
+                    for cid in list_users():
+                        ud = load_user(cid)
+                        ud["ai_msgs"] = 0
+                        save_user(cid, ud)
+                self.wfile.write(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+        else:
+            dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+            if os.path.exists(dashboard_path):
+                with open(dashboard_path, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<h1>Altseason Bot 2026 - Online</h1>")
     def log_message(self, *a): pass
 
 def start_web():
@@ -1148,10 +1217,7 @@ async def main():
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(wizard_coin_button, pattern="^coin_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    # Web server solo se NON webhook
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    if not WEBHOOK_URL:
-        threading.Thread(target=start_web, daemon=True).start()
+    threading.Thread(target=start_web, daemon=True).start()
     log.info("🚀 Altseason Bot V2 online!")
     try:
         await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
