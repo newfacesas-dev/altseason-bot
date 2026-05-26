@@ -503,7 +503,7 @@ def get_claude_response(user_msg, market_context, chat_id=None):
             "Nessuna frase generica. Nessuna ripetizione narrativa. Nessuna chiusura da chatbot. "
             "Risposte concise ma ad alta percezione di valore. Focus su psicologia mercato e rotazione capitali.\n"
             "STRUTTURA RISPOSTA: 1.FASE MERCATO 2.FLUSSI DI CAPITALE 3.BTC DOMINANCE 4.STRUTTURA ALTCOIN 5.RISCHIO/OPPORTUNITA 6.CONCLUSIONE OPERATIVA\n"
-            "REGOLE: Max 250 parole. Rispondi sempre in italiano. "
+            "REGOLE: Max 250 parole. Rispondi SEMPRE nella lingua dell utente: " + ("italiano" if lang == "it" else "inglese" if lang == "en" else "portoghese brasiliano") + ". "
             "Vietato usare: Hai altre domande, Dimmi il tuo obiettivo, Posso aiutarti, Fammi sapere, Che strategia preferisci, Vuoi approfondire. "
             "Chiudi sempre con una conclusione operativa secca.\n"
             "LIVELLO UTENTE: " + level_instructions[level] + "\n"
