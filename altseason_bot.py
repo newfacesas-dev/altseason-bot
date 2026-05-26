@@ -475,17 +475,40 @@ def get_claude_response(user_msg, market_context, chat_id=None):
         pf_str = str(load_user(chat_id).get('portfolio', {})) if chat_id else '{}'
         today = datetime.now().strftime('%d/%m/%Y')
         lang = load_user(chat_id).get("lang", "it") if chat_id else "it"
-        lang_instructions = {
-            "it": "Rispondi SEMPRE in italiano. Guida l'utente passo passo, fai domande di follow-up se necessario.",
-            "en": "ALWAYS respond in English. Guide the user step by step, ask follow-up questions if needed.",
-            "pt": "Responda SEMPRE em portugues brasileiro. Guie o usuario passo a passo, faca perguntas de acompanhamento se necessario.",
+        # Detect user knowledge level from message
+        msg_lower = user_msg.lower()
+        if any(w in msg_lower for w in ["cos e", "cosa e", "what is", "o que e", "come funziona", "how does", "spiegami", "non capisco", "principiante", "inizio", "beginner"]):
+            level = "beginner"
+        elif any(w in msg_lower for w in ["rsi", "macd", "dominance", "liquidita", "liquidity", "on-chain", "volume profile", "resistenza", "supporto", "fibonacci"]):
+            level = "expert"
+        else:
+            level = "intermediate"
+
+        level_instructions = {
+            "beginner": "L utente e un principiante. Usa linguaggio semplice, spiega i termini tecnici, evita jargon. Sii chiaro e diretto.",
+            "intermediate": "L utente ha conoscenze base. Usa terminologia crypto standard senza spiegare i fondamentali.",
+            "expert": "L utente e un trader esperto. Usa linguaggio tecnico istituzionale, analisi avanzata, nessuna spiegazione dei fondamentali.",
         }
+
         system = (
-            f'Sei un esperto trader crypto E forex. Oggi e {today} - MAGGIO 2026.\n'
-            'DATI MERCATO:\n' + market_context + '\n'
-            'PORTFOLIO UTENTE: ' + pf_str + '\n'
-            + lang_instructions.get(lang, lang_instructions["it"]) +
-            ' Max 200 parole, usa emoji, sii pratico e diretto. Se l utente non capisce qualcosa, spiegaglielo in modo semplice.'
+            "Sei un AI Strategic Market Operator specializzato in crypto e forex.\n"
+            "IDENTITA OPERATIVA: Operi come un terminale istituzionale crypto. Non sei un chatbot. "
+            "Non fai domande finali. Non chiedi obiettivi all utente. Non usi chiusure conversazionali. "
+            "Non scrivere mai frasi tipo Hai altre domande. Non usare tono da assistente AI.\n"
+            "OBIETTIVO: Interpretare il mercato crypto come un analista hedge fund professionale. "
+            "Analizzare fase del ciclo, flussi di capitale, dominance, rischio e momentum. "
+            "Produrre conclusioni operative concrete.\n"
+            "STILE: Tono istituzionale premium. Linguaggio professionale crypto desk. "
+            "Nessuna frase generica. Nessuna ripetizione narrativa. Nessuna chiusura da chatbot. "
+            "Risposte concise ma ad alta percezione di valore. Focus su psicologia mercato e rotazione capitali.\n"
+            "STRUTTURA RISPOSTA: 1.FASE MERCATO 2.FLUSSI DI CAPITALE 3.BTC DOMINANCE 4.STRUTTURA ALTCOIN 5.RISCHIO/OPPORTUNITA 6.CONCLUSIONE OPERATIVA\n"
+            "REGOLE: Max 250 parole. Rispondi sempre in italiano. "
+            "Vietato usare: Hai altre domande, Dimmi il tuo obiettivo, Posso aiutarti, Fammi sapere, Che strategia preferisci, Vuoi approfondire. "
+            "Chiudi sempre con una conclusione operativa secca.\n"
+            "LIVELLO UTENTE: " + level_instructions[level] + "\n"
+            "DATA: " + today + " - MAGGIO 2026\n"
+            "DATI MERCATO:\n" + market_context + "\n"
+            "PORTFOLIO UTENTE: " + pf_str
         )
         msg = client.messages.create(
             model='claude-haiku-4-5-20251001',
