@@ -185,6 +185,7 @@ def t(uid, key, *args):
 
 
 CHAT_ID = "670903243"
+CHANNEL_ID = "-1003997977321"
 CHECK_INTERVAL = 1800
 BTC_DOM_THRESHOLD = 52.0
 BTC_DOM_WARNING = 48.0
@@ -1510,6 +1511,9 @@ async def auto_monitor(app):
                                 await app.bot.send_message(chat_id=int(cid), text=briefing, parse_mode="Markdown")
                             except: pass
                     log.info(f"Morning briefing inviato a {len(users)} utenti")
+                    try:
+                        await app.bot.send_message(chat_id=CHANNEL_ID, text=briefing, parse_mode="Markdown")
+                    except: pass
                 except Exception as e:
                     log.error(f"Briefing error: {e}")
             g = get_global(); p = get_prices(); fg = get_fg()
