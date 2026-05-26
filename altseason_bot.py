@@ -1434,13 +1434,7 @@ async def handle_text(u, c):
         response = get_claude_response(t, ctx, uid)
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
-        followups = {
-            "it": "\n\n\U0001f4ac _Hai altre domande? Scrivimi liberamente!_",
-            "en": "\n\n\U0001f4ac _More questions? Feel free to ask!_",
-            "pt": "\n\n\U0001f4ac _Mais perguntas? Pode me perguntar!_",
-        }
-        followup = followups.get(lang, followups["it"])
-        await u.message.reply_text("\U0001f916 *AI Analysis*\n\n" + response + followup, parse_mode="Markdown", reply_markup=kb(uid))
+        await u.message.reply_text("\U0001f916 *AI Analysis*\n\n" + response, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
