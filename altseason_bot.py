@@ -591,6 +591,7 @@ async def lang_callback(update, context):
     await context.bot.send_message(chat_id=int(uid), text="✅", reply_markup=get_keyboard(lang))
 
 async def cmd_help(u, c):
+    uid = get_uid(u)
     msg = """👋 *ALTSEASON BOT 2026*
 
 📊 *MERCATO*
@@ -630,10 +631,11 @@ async def cmd_help(u, c):
 /admin — Pannello admin
 
 🤖 Scrivi qualsiasi domanda per parlare con l'AI!"""
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_status(u, c):
-    await u.message.reply_text("⏳ Recupero dati...", reply_markup=KEYBOARD)
+    uid = get_uid(u)
+    await u.message.reply_text("⏳ Recupero dati...", reply_markup=kb(uid))
     try:
         g = get_global(); p = get_prices(); fg = get_fg()
         ph, desc, level = phase(g["dom"])
@@ -646,11 +648,12 @@ async def cmd_status(u, c):
                f"• ETH: `${p['ETH']['price']:,.0f}` ({p['ETH']['ch']:+.1f}%)\n"
                f"• XRP: `${p['XRP']['price']:,.3f}` ({p['XRP']['ch']:+.1f}%)\n"
                f"• SOL: `${p['SOL']['price']:,.1f}` ({p['SOL']['ch']:+.1f}%)")
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_phase(u, c):
+    uid = get_uid(u)
     try:
         g = get_global(); ph, desc, level = phase(g["dom"])
         actions = {
@@ -659,21 +662,23 @@ async def cmd_phase(u, c):
             "USCITA": "1️⃣ ESCI progressivamente\n2️⃣ Sposta in USDT\n3️⃣ DOGE e BONK escono primi",
         }
         msg = f"{ph}\n\n_{desc}_\n\nBTC Dom: `{g['dom']:.2f}%`\n\n📋 *Cosa fare ora:*\n{actions[level]}"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_feargreed(u, c):
+    uid = get_uid(u)
     try:
         fg = get_fg(); v = fg["v"]
         desc = "Paura estrema — COMPRA 🛒" if v <= 25 else "Paura — Accumula" if v <= 45 else "Neutro" if v <= 55 else "Avidità — Attenzione" if v <= 75 else "Avidità estrema — VENDI ⚠️"
         msg = f"😱 *FEAR & GREED*\n\n{fg['em']} `{v}/100 — {fg['lbl']}`\n\n_{desc}_"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_rsimacd(u, c):
-    await u.message.reply_text("⏳ Calcolo indicatori...", reply_markup=KEYBOARD)
+    uid = get_uid(u)
+    await u.message.reply_text("⏳ Calcolo indicatori...", reply_markup=kb(uid))
     try:
         inds = get_indicators()
         lines = ["📉 *RSI & MACD*\n"]
@@ -692,11 +697,12 @@ async def cmd_rsimacd(u, c):
                 rsi_s = "⚪ Neutro"
             spike = ind.get("vol_spike")
             lines += [f"*{sym}*", f"• RSI: `{rsi}` {rsi_s}", f"• MACD: {trend}", f"• Volume: {'🔊 SPIKE ' + str(spike) + 'x!' if spike else '✅ Normale'}", ""]
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_top(u, c):
+    uid = get_uid(u)
     try:
         p = get_prices()
         s = sorted(p.items(), key=lambda x: x[1]["ch"], reverse=True)
@@ -704,16 +710,17 @@ async def cmd_top(u, c):
         for i, (sym, d) in enumerate(s[:5], 1):
             a = "🟢" if d["ch"] >= 0 else "🔴"
             lines.append(f"{i}. {a} *{sym}*: `{d['ch']:+.2f}%` — `${d['price']:,.4f}`")
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_forex(u, c):
-    await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=KEYBOARD)
+    uid = get_uid(u)
+    await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=kb(uid))
     try:
         data = get_forex()
         if not data:
-            await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=KEYBOARD)
+            await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=kb(uid))
             return
         lines = ["💱 *FOREX & INDICI*\n", "🌍 *Valute principali*"]
         for sym in ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD"]:
@@ -727,9 +734,9 @@ async def cmd_forex(u, c):
                 pfmt = f"{d['price']:,.2f}" if d['price'] > 100 else f"{d['price']:.4f}"
                 lines.append(f"{a} *{sym}*: `{pfmt}` ({d['ch']:+.2f}%)")
         lines.append("\n_Scrivi: Analizza EUR/USD per analisi AI_")
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_news(u, c):
     uid = get_uid(u)
@@ -824,6 +831,7 @@ async def cmd_news(u, c):
         await u.message.reply_text(empty, reply_markup=kb(uid))
 
 async def cmd_timeline(u, c):
+    uid = get_uid(u)
     msg = """📅 *TIMELINE ALTSEASON 2026*
 
 🌱 *GIUGNO-LUGLIO — ACCUMULO*
@@ -855,14 +863,14 @@ BNB: $900→$1.2k→$1.5k→$2k
 XRP +15% tardivo → ESCI 50%
 Fear&Greed >85 tre giorni → ESCI
 BTC Dom <48% → ESCI tutto"""
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_portfolio(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
     pf = ud.get("portfolio", {})
     if not pf:
-        await u.message.reply_text("💼 Portfolio vuoto!\n\nUsa /add per aggiungere le tue coin\noppure /reset per caricare il portfolio di default", reply_markup=KEYBOARD)
+        await u.message.reply_text("💼 Portfolio vuoto!\n\nUsa /add per aggiungere le tue coin\noppure /reset per caricare il portfolio di default", reply_markup=kb(uid))
         return
     try:
         prices = get_prices()
@@ -884,9 +892,9 @@ async def cmd_portfolio(u, c):
         lines.append(f"\n💰 Investito: `${ti:,.0f}`")
         lines.append(f"💎 Attuale: `${tc:,.0f}`")
         lines.append(f"{a} *P&L TOT*: `{tpct:+.1f}%` (`${tp:+,.0f}`)")
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_reset(u, c):
     uid = get_uid(u)
@@ -896,19 +904,19 @@ async def cmd_reset(u, c):
         ud["plan"] = "pro"
         ud["ai_msgs"] = 0
         save_user(uid, ud)
-        await u.message.reply_text(f"✅ Portfolio admin caricato!\n{len(ADMIN_PORTFOLIO)} coin — Piano Pro", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"✅ Portfolio admin caricato!\n{len(ADMIN_PORTFOLIO)} coin — Piano Pro", reply_markup=kb(uid))
     else:
         ud["portfolio"] = {}
         save_user(uid, ud)
-        await u.message.reply_text("✅ Portfolio resettato!\nUsa /add per aggiungere le tue coin", reply_markup=KEYBOARD)
+        await u.message.reply_text("✅ Portfolio resettato!\nUsa /add per aggiungere le tue coin", reply_markup=kb(uid))
 
 async def cmd_addcoin(u, c):
     if len(c.args) < 3:
-        await u.message.reply_text("Uso: /addcoin BTC 0.5 95000", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /addcoin BTC 0.5 95000", reply_markup=kb(uid))
         return
     s = c.args[0].upper()
     if s not in ASSETS:
-        await u.message.reply_text("❌ Asset non valido", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Asset non valido", reply_markup=kb(uid))
         return
     try:
         qty = float(c.args[1])
@@ -917,13 +925,13 @@ async def cmd_addcoin(u, c):
         ud = load_user(uid)
         ud["portfolio"][s] = {"qty": qty, "buy": buy}
         save_user(uid, ud)
-        await u.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.4f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"✅ *{s}*: `{qty}` @ `${buy:,.4f}`", parse_mode="Markdown", reply_markup=kb(uid))
     except:
-        await u.message.reply_text("❌ Valori non validi", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Valori non validi", reply_markup=kb(uid))
 
 async def cmd_removecoin(u, c):
     if not c.args:
-        await u.message.reply_text("Uso: /removecoin BTC", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /removecoin BTC", reply_markup=kb(uid))
         return
     s = c.args[0].upper()
     uid = get_uid(u)
@@ -931,17 +939,17 @@ async def cmd_removecoin(u, c):
     if s in ud.get("portfolio", {}):
         del ud["portfolio"][s]
         save_user(uid, ud)
-        await u.message.reply_text(f"✅ {s} rimosso", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"✅ {s} rimosso", reply_markup=kb(uid))
     else:
-        await u.message.reply_text(f"❌ {s} non trovato", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {s} non trovato", reply_markup=kb(uid))
 
 async def cmd_alert(u, c):
     if len(c.args) < 2:
-        await u.message.reply_text("Uso: /alert XRP 3 [down]", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /alert XRP 3 [down]", reply_markup=kb(uid))
         return
     s = c.args[0].upper()
     if s not in ASSETS:
-        await u.message.reply_text("❌ Asset non valido", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Asset non valido", reply_markup=kb(uid))
         return
     try:
         t = float(c.args[1].replace(",", ""))
@@ -951,27 +959,27 @@ async def cmd_alert(u, c):
         ud["alerts"].append({"sym": s, "price": t, "above": above})
         save_user(uid, ud)
         d = "sale a" if above else "scende a"
-        await u.message.reply_text(f"✅ Alert: *{s}* {d} `${t:,.2f}`", parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"✅ Alert: *{s}* {d} `${t:,.2f}`", parse_mode="Markdown", reply_markup=kb(uid))
     except:
-        await u.message.reply_text("❌ Errore", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Errore", reply_markup=kb(uid))
 
 async def cmd_alerts(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
     al = ud.get("alerts", [])
     if not al:
-        await u.message.reply_text(t(uid, "no_alerts"), reply_markup=KEYBOARD)
+        await u.message.reply_text(t(uid, "no_alerts"), reply_markup=kb(uid))
         return
     lines = ["🔔 *Alert Attivi*\n"]
     for i, a in enumerate(al, 1):
         d = "↗️" if a["above"] else "↘️"
         lines.append(f"{i}. *{a['sym']}* {d} `${a['price']:,.4f}`")
     lines.append("\n/delalert 1 per eliminare")
-    await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_delalert(u, c):
     if not c.args:
-        await u.message.reply_text("Uso: /delalert 1", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /delalert 1", reply_markup=kb(uid))
         return
     try:
         i = int(c.args[0]) - 1
@@ -982,11 +990,11 @@ async def cmd_delalert(u, c):
             r = al.pop(i)
             ud["alerts"] = al
             save_user(uid, ud)
-            await u.message.reply_text(f"✅ Eliminato: {r['sym']}", reply_markup=KEYBOARD)
+            await u.message.reply_text(f"✅ Eliminato: {r['sym']}", reply_markup=kb(uid))
         else:
-            await u.message.reply_text("❌ Numero non valido", reply_markup=KEYBOARD)
+            await u.message.reply_text("❌ Numero non valido", reply_markup=kb(uid))
     except:
-        await u.message.reply_text("❌ Errore", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Errore", reply_markup=kb(uid))
 
 async def cmd_setup(u, c):
     alerts = []
@@ -1002,9 +1010,10 @@ async def cmd_setup(u, c):
     ud = load_user(uid)
     ud["alerts"] = alerts
     save_user(uid, ud)
-    await u.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP: $3→$5→$8→$12\nSOL: $200→$350→$500→$800\nETH: $4k→$6k→$9k→$14k\nBNB: $900→$1.2k→$1.5k→$2k", parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(f"✅ *{len(alerts)} alert impostati!*\n\nXRP: $3→$5→$8→$12\nSOL: $200→$350→$500→$800\nETH: $4k→$6k→$9k→$14k\nBNB: $900→$1.2k→$1.5k→$2k", parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_exit_plan(u, c):
+    uid = get_uid(u)
     msg = """📤 *PIANO DI USCITA GRADUALE*
 
 🟡 *BLOCCO 1 — Inizio Euforia*
@@ -1033,9 +1042,10 @@ Azione: Esci dal 50% IMMEDIATAMENTE
 - MAI rientrare per FOMO
 - Preleva 30% profitti in fiat
 - Bear market: accumula BTC gradualmente"""
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_stoploss(u, c):
+    uid = get_uid(u)
     try:
         p = get_prices(); g = get_global(); fg = get_fg()
         warnings = []
@@ -1055,9 +1065,9 @@ async def cmd_stoploss(u, c):
             msg = "🚨 *ALERT PIANO DI USCITA*\n\n" + "\n\n".join(warnings)
         else:
             msg = f"✅ *Nessun segnale di uscita urgente*\n\nFear&Greed: `{fg['v']}` sotto soglia\nBTC Dom: `{g['dom']:.1f}%` nella norma\nNessuna meme mania in corso"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_ai(u, c):
     uid = get_uid(u)
@@ -1077,7 +1087,7 @@ async def cmd_ai(u, c):
         "• 📅 Strategia altseason 2026\n\n"
         "💬 *Scrivi la tua domanda qui sotto!*"
     )
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_myplan(u, c):
     uid = get_uid(u)
@@ -1097,17 +1107,19 @@ async def cmd_myplan(u, c):
         msg += "👑 Upgrada a *Pro* per messaggi illimitati!\n/upgrade"
     else:
         msg += "🎉 Sei al piano massimo!"
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_upgrade(u, c):
+    uid = get_uid(u)
     msg = ("💎 *PIANI DISPONIBILI*\n\n"
            "🆓 *Free* — Gratis\n• 5 messaggi AI al giorno\n\n"
            "💙 *Basic* — €12.99/mese\n• 50 messaggi AI al giorno\n• Portfolio completo\n\n"
            "👑 *Pro* — €25.99/mese\n• Messaggi AI illimitati\n• Alert illimitati\n• Tutto incluso\n\n"
            "Scrivi /pay per abbonartit")
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_pay(u, c):
+    uid = get_uid(u)
     msg = ("💳 *ABBONATI AL BOT*\n\n"
            "💙 *Basic* — €12.99/mese\n• 50 messaggi AI al giorno\n\n"
            "👑 *Pro* — €25.99/mese\n• Messaggi AI illimitati\n• Tutto incluso\n\n"
@@ -1116,7 +1128,7 @@ async def cmd_pay(u, c):
            "💎 *USDT/USDC/ETH (ERC20 - Ethereum):*\n`0x3EfB8Fdb87107555Bf46A46f7FB1e6eD0F51A2C4`\n\n"
            "━━━━━━━━━━━━━━━\n"
            "📩 Dopo il pagamento riceverai una notifica di attivazione automatica")
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_referral(u, c):
     uid = get_uid(u)
@@ -1132,7 +1144,7 @@ async def cmd_referral(u, c):
            "• Per ogni abbonato Pro: guadagni **€5.20/mese** (20%)\n"
            "• Commissioni a vita!\n\n"
            "📤 Condividi su Telegram, WhatsApp, X!")
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_share(u, c):
     uid = get_uid(u)
@@ -1148,7 +1160,7 @@ async def cmd_share(u, c):
            "✅ Forex & Indici\n\n"
            f"👉 {ref_link}\n"
            "━━━━━━━━━━━━━━━")
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
 
 async def cmd_quiet(u, c):
     uid = get_uid(u)
@@ -1156,23 +1168,24 @@ async def cmd_quiet(u, c):
     ud["quiet_mode"] = not ud.get("quiet_mode", False)
     save_user(uid, ud)
     msg = "🌙 No Disturb ATTIVO — nessuna notifica 23:00-08:00" if ud["quiet_mode"] else "☀️ No Disturb DISATTIVO"
-    await u.message.reply_text(msg, reply_markup=KEYBOARD)
+    await u.message.reply_text(msg, reply_markup=kb(uid))
 
 async def cmd_price(u, c):
+    uid = get_uid(u)
     if not c.args:
-        await u.message.reply_text("Uso: /price BTC", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /price BTC", reply_markup=kb(uid))
         return
     s = c.args[0].upper()
     if s not in ASSETS:
-        await u.message.reply_text("❌ Asset non disponibile", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Asset non disponibile", reply_markup=kb(uid))
         return
     try:
         p = get_prices()[s]
         a = "🟢" if p["ch"] >= 0 else "🔴"
         msg = f"{a} *{s}*\n\n💵 `${p['price']:,.4f}`\n📈 24h: `{p['ch']:+.2f}%`\n💎 MCap: `${p['mcap']/1e9:.1f}B`"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 # ============================================================
 # ADMIN COMANDI
@@ -1180,7 +1193,7 @@ async def cmd_price(u, c):
 async def cmd_admin(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
-        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Accesso negato", reply_markup=kb(uid))
         return
     try:
         users = list_users()
@@ -1198,12 +1211,12 @@ async def cmd_admin(u, c):
                f"Comandi:\n`/setplan CHATID pro` — upgrade\n`/resetai CHATID` — reset AI\n`/users` — lista utenti")
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=ADMIN_KEYBOARD)
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_users(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
-        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Accesso negato", reply_markup=kb(uid))
         return
     try:
         users = list_users()
@@ -1224,25 +1237,25 @@ async def cmd_users(u, c):
         lines.append(f"💰 Ricavi: €{ricavi:.2f}/mese")
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=ADMIN_KEYBOARD)
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 async def cmd_setplan(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
-        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Accesso negato", reply_markup=kb(uid))
         return
     if len(c.args) < 2:
-        await u.message.reply_text("Uso: /setplan CHATID free|basic|pro", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /setplan CHATID free|basic|pro", reply_markup=kb(uid))
         return
     target, plan = c.args[0], c.args[1].lower()
     if plan not in ["free", "basic", "pro"]:
-        await u.message.reply_text("❌ Piano non valido", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Piano non valido", reply_markup=kb(uid))
         return
     ud = load_user(target)
     ud["plan"] = plan
     ud["ai_msgs"] = 0
     save_user(target, ud)
-    await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=KEYBOARD)
+    await u.message.reply_text(f"✅ Piano {plan} impostato per {target}", reply_markup=kb(uid))
     plan_name = {"free": "Free", "basic": "Basic €12.99/mese", "pro": "Pro €25.99/mese"}.get(plan, plan)
     try:
         await c.bot.send_message(chat_id=int(target), text=f"🎉 *Piano attivato!*\n\nIl tuo piano *{plan_name}* è ora attivo!\n\nGrazie per esserti abbonato! 🚀", parse_mode="Markdown")
@@ -1251,28 +1264,28 @@ async def cmd_setplan(u, c):
 async def cmd_resetai(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
-        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Accesso negato", reply_markup=kb(uid))
         return
     if not c.args:
-        await u.message.reply_text("Uso: /resetai CHAT_ID", reply_markup=KEYBOARD)
+        await u.message.reply_text("Uso: /resetai CHAT_ID", reply_markup=kb(uid))
         return
     target = c.args[0]
     ud = load_user(target)
     ud["ai_msgs"] = 0
     save_user(target, ud)
-    await u.message.reply_text(f"✅ Counter AI resettato per {target}", reply_markup=KEYBOARD)
+    await u.message.reply_text(f"✅ Counter AI resettato per {target}", reply_markup=kb(uid))
 
 async def cmd_initadmin(u, c):
     uid = get_uid(u)
     if uid != ADMIN_ID:
-        await u.message.reply_text("❌ Accesso negato", reply_markup=KEYBOARD)
+        await u.message.reply_text("❌ Accesso negato", reply_markup=kb(uid))
         return
     ud = load_user(uid)
     ud["portfolio"] = ADMIN_PORTFOLIO.copy()
     ud["plan"] = "pro"
     ud["ai_msgs"] = 0
     save_user(uid, ud)
-    await u.message.reply_text(f"✅ *Portfolio Admin inizializzato!*\n{len(ADMIN_PORTFOLIO)} coin caricate\nPiano: Pro", parse_mode="Markdown", reply_markup=KEYBOARD)
+    await u.message.reply_text(f"✅ *Portfolio Admin inizializzato!*\n{len(ADMIN_PORTFOLIO)} coin caricate\nPiano: Pro", parse_mode="Markdown", reply_markup=kb(uid))
 
 # ============================================================
 # WIZARD AGGIUNGI COIN
@@ -1344,7 +1357,7 @@ async def wizard_price(update, context):
         else:
             buy_price = price_input
         if buy_price == 0:
-            await update.message.reply_text("❌ Prezzo non valido", reply_markup=KEYBOARD)
+            await update.message.reply_text("❌ Prezzo non valido", reply_markup=kb(uid))
             return ConversationHandler.END
         uid = str(update.message.chat_id)
         ud = load_user(uid)
@@ -1361,7 +1374,7 @@ async def wizard_price(update, context):
         return WIZARD_PRICE
 
 async def wizard_cancel(update, context):
-    await update.message.reply_text("❌ Operazione annullata", reply_markup=KEYBOARD)
+    await update.message.reply_text("❌ Operazione annullata", reply_markup=kb(uid))
     return ConversationHandler.END
 
 # ============================================================
@@ -1416,11 +1429,11 @@ async def handle_text(u, c):
         limit = AI_LIMITS.get(ud.get("plan", "free"), 5)
         used = ud.get("ai_msgs", 0)
         if used >= limit:
-            await u.message.reply_text(f"⚠️ Hai usato tutti i {limit} messaggi AI del piano Free.\n\nUpgrada a Basic (50 msg) o Pro (illimitati)!\n\n/upgrade per info", reply_markup=KEYBOARD)
+            await u.message.reply_text(f"⚠️ Hai usato tutti i {limit} messaggi AI del piano Free.\n\nUpgrada a Basic (50 msg) o Pro (illimitati)!\n\n/upgrade per info", reply_markup=kb(uid))
             return
         ud["ai_msgs"] = used + 1
         save_user(uid, ud)
-        await u.message.reply_text(f"🤖 Sto analizzando... ({used+1}/{limit})", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"🤖 Sto analizzando... ({used+1}/{limit})", reply_markup=kb(uid))
         g = get_global(); p = get_prices(); fg = get_fg()
         ph, desc, level = phase(g["dom"])
         ctx = (f"Fase: {ph} ({level})\nBTC Dom: {g['dom']:.2f}%\n"
@@ -1437,7 +1450,7 @@ async def handle_text(u, c):
         lang = load_user(uid).get("lang", "it")
         await u.message.reply_text("\U0001f916 *AI Analysis*\n\n" + response, parse_mode="Markdown", reply_markup=kb(uid))
     except Exception as e:
-        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+        await u.message.reply_text(f"❌ {e}", reply_markup=kb(uid))
 
 # ============================================================
 # MONITOR AUTOMATICO
