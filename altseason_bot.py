@@ -1463,7 +1463,7 @@ async def auto_monitor(app):
                 last_reset_day = today
 
             # Morning briefing alle 8:00
-            if hour == 8 and today != last_briefing_day:
+            if hour == 6 and today != last_briefing_day:
                 last_briefing_day = today
                 try:
                     g = get_global()
