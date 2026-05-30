@@ -1,5 +1,0 @@
-python-telegram-bot[webhooks]==22.5
-requests
-pandas
-anthropic
-redis
