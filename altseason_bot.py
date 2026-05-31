@@ -1763,7 +1763,7 @@ def start_web():
 # ============================================================
 # MAIN
 # ============================================================
-from alerts import start_alert_system
+from alerts import start_alert_system, alert_loop
 
 
 async def main():
@@ -1818,6 +1818,8 @@ async def main():
             await app.updater.start_polling()
             log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
+        asyncio.create_task(alert_loop(app))
+        log.info("Sistema alert avviato (alert_loop in background)")
         while True:
             await asyncio.sleep(3600)
 
