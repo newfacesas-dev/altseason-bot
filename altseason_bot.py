@@ -473,6 +473,20 @@ def phase(dom):
     if dom < BTC_DOM_THRESHOLD: return "⚡ ALTSEASON ATTIVA", "BTC Dom sotto 52% — ruota verso altcoin", "AZIONE"
     return "👀 ACCUMULO", f"BTC Dom {dom:.1f}% — tieni le posizioni", "MONITORA"
 
+def _fmt_vol(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "n/d"
+    if v <= 0:
+        return "n/d"
+    if v >= 1e9:
+        return f"${v/1e9:.1f}B"
+    if v >= 1e6:
+        return f"${v/1e6:.1f}M"
+    return f"${v/1e3:.0f}K"
+
+
 def compute_altseason_score(g, p, fg):
     """ALTSEASON SCORE deterministico dai dati disponibili. Ritorna stringa formattata.
     Pesi: BTC Dom 40, ETH/BTC 15, TOTAL2 15, TOTAL3 10, Sentiment 10, AltStrength 10."""
@@ -1542,6 +1556,8 @@ async def handle_text(u, c):
                f"SOL: ${p['SOL']['price']:,.1f} ({p['SOL']['ch']:+.1f}%)\n"
                f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}%)\n"
                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}%)\n"
+               f"Volumi 24h: BTC {_fmt_vol(p['BTC']['vol'])}, ETH {_fmt_vol(p['ETH']['vol'])}, SOL {_fmt_vol(p['SOL']['vol'])}, XRP {_fmt_vol(p['XRP']['vol'])}, DOGE {_fmt_vol(p['DOGE']['vol'])}, BNB {_fmt_vol(p['BNB']['vol'])}, BONK {_fmt_vol(p['BONK']['vol'])}"
+               + chr(10) +
                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
         ctx = compute_altseason_score(g, p, fg) + chr(10) + chr(10) + ctx
         response = get_claude_response(t, ctx, uid)
