@@ -1686,8 +1686,11 @@ def start_web():
 # ============================================================
 # MAIN
 # ============================================================
+from alerts import start_alert_system
+
+
 async def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(start_alert_system).build()
     cmds = [
         ("start", cmd_start), ("help", cmd_help), ("status", cmd_status),
         ("phase", cmd_phase), ("feargreed", cmd_feargreed), ("rsimacd", cmd_rsimacd),
