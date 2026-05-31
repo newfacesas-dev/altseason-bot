@@ -559,7 +559,7 @@ Massimo 250-350 parole. Sii compatto e operativo. Non inventare dati: se mancano
             model=os.environ.get('OPENAI_MODEL', 'gpt-5.5'),
             instructions=system,
             input=user_msg,
-            max_output_tokens=1000
+            max_output_tokens=2500
         )
         return msg.output_text
     except Exception as e:
