@@ -1,0 +1,5 @@
+python-telegram-bot[webhooks]==22.5
+openai>=1.0.0
+redis
+requests
+pandas
