@@ -213,7 +213,7 @@ ASSETS = {
     "BTC": "bitcoin", "ETH": "ethereum", "XRP": "ripple", "SOL": "solana",
     "ADA": "cardano", "DOGE": "dogecoin", "BNB": "binancecoin",
     "HBAR": "hedera-hashgraph", "BONK": "bonk", "ALGO": "algorand",
-    "XLM": "stellar", "POL": "matic-network", "TRX": "tron",
+    "XLM": "stellar", "POL": "polygon-ecosystem-token", "TRX": "tron",
     "GRT": "the-graph", "NEAR": "near", "FET": "fetch-ai",
     "SEI": "sei-network", "LUNA": "terra-luna-2", "MANA": "decentraland",
     "PEPE": "pepe", "SHIB": "shiba-inu", "AGIX": "singularitynet",
@@ -378,7 +378,10 @@ def get_prices():
             result[sym] = {"price": d.get("usd", 0), "ch": d.get("usd_24h_change", 0), "mcap": d.get("usd_market_cap", 0), "vol": d.get("usd_24h_vol", 0)}
         _cache['p'] = {'d': result, 't': time.time()}
         return result
-    except:
+    except Exception as e:
+        log.warning("get_prices: errore CoinGecko (%s). Uso ultima cache se disponibile.", e)
+        if 'p' in _cache:
+            return _cache['p']['d']
         return {s: {"price": 0, "ch": 0, "mcap": 0, "vol": 0} for s in ASSETS}
 
 def get_fg():
