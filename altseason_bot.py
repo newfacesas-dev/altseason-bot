@@ -511,6 +511,13 @@ Calcola un punteggio sintetico basato solo sui dati disponibili e mostralo come 
 51-70 = rotazione iniziale
 71-85 = altseason attiva
 86-100 = fase euforica, rischio distribuzione
+ALTSEASON SCORE COMPONENTI: mostra sempre il contributo di ogni fattore al punteggio, una voce per riga. Se un fattore non e' nei dati, scrivi DATO NON DISPONIBILE.
+- BTC Dominance: contributo su 40
+- ETH/BTC: contributo su 15
+- TOTAL2: contributo su 15
+- TOTAL3: contributo su 10
+- Sentiment (Fear & Greed): contributo su 10
+- Altcoin Strength: contributo su 10
 
 TRIGGER CHECKLIST (segna ogni voce come attivo, parziale, o mancante/non disponibile):
 - BTC Dominance sotto area critica
@@ -529,6 +536,7 @@ EMERGENTI: SUI, APT, TIA, AR, RNDR, RENDER, FET, HBAR, SEI, GRT, INJ, ALGO, FXS
 MEME / MICROCAP: DOGE, SHIB, PEPE, BONK, FLOKI, WIF, BOME, BUZZ, WEPE
 (Se una coin non rientra, assegnala alla categoria piu vicina per market cap e rischio.)
 Per ogni categoria presente nel portafoglio indica una azione tra: HOLD, ACCUMULA, MONITORA, RIDUCI PARZIALMENTE, ESCI, NESSUNA AZIONE.
+Usa ESCLUSIVAMENTE gli asset realmente presenti nel portafoglio utente indicato sotto. Non elencare coin generiche o di esempio se non sono nel portafoglio. Se una categoria non ha asset nel portafoglio, scrivi: nessun asset in questa categoria.
 
 ALERT LOGIC (classifica sempre il segnale):
 MONITORA = condizione interessante ma non ancora operativa
