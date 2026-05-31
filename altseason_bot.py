@@ -487,55 +487,6 @@ def _fmt_vol(v):
     return f"${v/1e3:.0f}K"
 
 
-def get_derivatives():
-    """Funding rate + open interest da Bybit v5 per BTC/ETH/SOL/XRP.
-    Cache + fallback come le altre funzioni dati. Se Bybit non risponde,
-    ritorna dict vuoto e il ctx mostrera' DATO NON DISPONIBILE."""
-    if 'deriv' in _cache and time.time() - _cache['deriv']['t'] < CACHE_TTL:
-        return _cache['deriv']['d']
-    symbols = {'BTC': 'BTCUSDT', 'ETH': 'ETHUSDT', 'SOL': 'SOLUSDT', 'XRP': 'XRPUSDT'}
-    result = {}
-    try:
-        for sym, pair in symbols.items():
-            url = f'https://api.bybit.com/v5/market/tickers?category=linear&symbol={pair}'
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            lst = r.json().get('result', {}).get('list', [])
-            if lst:
-                d = lst[0]
-                fr = d.get('fundingRate')
-                oi = d.get('openInterest')
-                result[sym] = {
-                    'funding': float(fr) * 100 if fr not in (None, '') else None,
-                    'oi': float(oi) if oi not in (None, '') else None,
-                }
-        if result:
-            _cache['deriv'] = {'d': result, 't': time.time()}
-        return result
-    except Exception as e:
-        log.warning('get_derivatives: errore Bybit (%s). Uso cache se disponibile.', e)
-        if 'deriv' in _cache:
-            return _cache['deriv']['d']
-        return {}
-
-
-def _fmt_deriv(dv):
-    """Costruisce la riga testuale dei derivati per il ctx."""
-    if not dv:
-        return 'Derivati (Funding/OI): DATO NON DISPONIBILE'
-    parti = []
-    for sym in ('BTC', 'ETH', 'SOL', 'XRP'):
-        d = dv.get(sym)
-        if not d:
-            parti.append(f'{sym} n/d')
-            continue
-        fr = d.get('funding'); oi = d.get('oi')
-        fr_t = f'{fr:+.4f}%' if fr is not None else 'n/d'
-        oi_t = f'{oi:,.0f}' if oi is not None else 'n/d'
-        parti.append(f'{sym} funding {fr_t} OI {oi_t}')
-    return 'Derivati (Bybit) - ' + ', '.join(parti)
-
-
 def compute_altseason_score(g, p, fg):
     """ALTSEASON SCORE deterministico dai dati disponibili. Ritorna stringa formattata.
     Pesi: BTC Dom 40, ETH/BTC 15, TOTAL2 15, TOTAL3 10, Sentiment 10, AltStrength 10."""
@@ -1607,7 +1558,6 @@ async def handle_text(u, c):
                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}%)\n"
                f"Volumi 24h: BTC {_fmt_vol(p['BTC']['vol'])}, ETH {_fmt_vol(p['ETH']['vol'])}, SOL {_fmt_vol(p['SOL']['vol'])}, XRP {_fmt_vol(p['XRP']['vol'])}, DOGE {_fmt_vol(p['DOGE']['vol'])}, BNB {_fmt_vol(p['BNB']['vol'])}, BONK {_fmt_vol(p['BONK']['vol'])}"
                + chr(10) +
-               + _fmt_deriv(get_derivatives()) + chr(10) +
                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
         ctx = compute_altseason_score(g, p, fg) + chr(10) + chr(10) + ctx
         response = get_claude_response(t, ctx, uid)
