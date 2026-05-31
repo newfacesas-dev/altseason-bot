@@ -357,11 +357,11 @@ def get_global():
         tot = d["total_market_cap"]["usd"]
         btcm = d["market_cap_percentage"]["btc"] / 100 * tot
         ethm = d["market_cap_percentage"].get("eth", 0) / 100 * tot
-        result = {"dom": d["market_cap_percentage"]["btc"], "mcap": tot/1e12, "total3": (tot-btcm-ethm)/1e9}
+        result = {"dom": d["market_cap_percentage"]["btc"], "dom_eth": d["market_cap_percentage"].get("eth", 0), "mcap": tot/1e12, "total2": (tot-btcm)/1e9, "total3": (tot-btcm-ethm)/1e9}
         _cache['g'] = {'d': result, 't': time.time()}
         return result
     except:
-        return {"dom": 58, "mcap": 2.5, "total3": 850}
+        return {"dom": 58, "dom_eth": 0, "mcap": 2.5, "total2": 0, "total3": 0}
 
 def get_prices():
     if 'p' in _cache and time.time() - _cache['p']['t'] < CACHE_TTL:
@@ -469,6 +469,58 @@ def phase(dom):
     if dom < BTC_DOM_WARNING: return "🚨 USCITA", "TOP CICLO! Prendi profitto subito", "USCITA"
     if dom < BTC_DOM_THRESHOLD: return "⚡ ALTSEASON ATTIVA", "BTC Dom sotto 52% — ruota verso altcoin", "AZIONE"
     return "👀 ACCUMULO", f"BTC Dom {dom:.1f}% — tieni le posizioni", "MONITORA"
+
+def compute_altseason_score(g, p, fg):
+    """ALTSEASON SCORE deterministico dai dati disponibili. Ritorna stringa formattata.
+    Pesi: BTC Dom 40, ETH/BTC 15, TOTAL2 15, TOTAL3 10, Sentiment 10, AltStrength 10."""
+    comp = []; score = 0; disp = 0
+    dom = g.get("dom", 0)
+    if dom:
+        d = round(max(0, min(40, (65 - dom) / (65 - 40) * 40)))
+        score += d; disp += 1
+        comp.append(f"- BTC Dominance: {d}/40 (dominance {dom:.1f}%)")
+    else:
+        comp.append("- BTC Dominance: DATO NON DISPONIBILE")
+    btc = p.get("BTC", {}).get("price", 0); eth = p.get("ETH", {}).get("price", 0)
+    if btc and eth:
+        ethbtc = eth / btc
+        e = round(max(0, min(15, (ethbtc - 0.025) / (0.05 - 0.025) * 15)))
+        score += e; disp += 1
+        comp.append(f"- ETH/BTC: {e}/15 (ratio {ethbtc:.5f})")
+    else:
+        comp.append("- ETH/BTC: DATO NON DISPONIBILE")
+    total2 = g.get("total2", 0)
+    if total2:
+        score += 8; disp += 1
+        comp.append(f"- TOTAL2: 8/15 (${total2:,.0f}B, livello attuale)")
+    else:
+        comp.append("- TOTAL2: DATO NON DISPONIBILE")
+    total3 = g.get("total3", 0)
+    if total3:
+        score += 5; disp += 1
+        comp.append(f"- TOTAL3: 5/10 (${total3:,.0f}B, livello attuale)")
+    else:
+        comp.append("- TOTAL3: DATO NON DISPONIBILE")
+    v = fg.get("v", 0)
+    if v:
+        s = round(v / 100 * 10)
+        score += s; disp += 1
+        comp.append(f"- Sentiment (F&G): {s}/10 (indice {v})")
+    else:
+        comp.append("- Sentiment (F&G): DATO NON DISPONIBILE")
+    alts = [s for s in p if s != "BTC"]
+    valid = [s for s in alts if p[s].get("price", 0) > 0]
+    if valid:
+        pos = sum(1 for s in valid if p[s].get("ch", 0) > 0)
+        pct = pos / len(valid) * 100
+        a = round(pct / 100 * 10)
+        score += a; disp += 1
+        comp.append(f"- Altcoin Strength: {a}/10 ({pct:.0f}% alt positive 24h)")
+    else:
+        comp.append("- Altcoin Strength: DATO NON DISPONIBILE")
+    conf = "ALTA" if disp >= 5 else "MEDIA" if disp >= 3 else "BASSA"
+    return f"ALTSEASON SCORE: {score}/100 (calcolato su {disp}/6 fattori)\nConfidenza Analisi: {conf}\nALTSEASON SCORE COMPONENTI:\n" + "\n".join(comp)
+
 
 def get_claude_response(user_msg, market_context, chat_id=None):
     try:
@@ -1484,6 +1536,7 @@ async def handle_text(u, c):
                f"BONK: ${p['BONK']['price']:.8f} ({p['BONK']['ch']:+.1f}%)\n"
                f"DOGE: ${p['DOGE']['price']:.4f} ({p['DOGE']['ch']:+.1f}%)\n"
                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
+        ctx = compute_altseason_score(g, p, fg) + chr(10) + chr(10) + ctx
         response = get_claude_response(t, ctx, uid)
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
