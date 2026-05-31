@@ -18,3 +18,4 @@ test_stablecoin.py
 .DS_Store
 __pycache__/
 *.pyc
+requirements_openai.txt
