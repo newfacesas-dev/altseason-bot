@@ -535,7 +535,64 @@ def _fmt_deriv(dv):
     return 'Derivati (Bybit) - ' + ', '.join(parti)
 
 
-def compute_altseason_score(g, p, fg):
+def get_stablecoins():
+    """Stablecoin supply totale + segnale inflow/outflow da DefiLlama.
+    Ritorna dict con mcap_b, var24, var7, segnale. Cache + fallback."""
+    if 'stable' in _cache and time.time() - _cache['stable']['t'] < CACHE_TTL:
+        return _cache['stable']['d']
+    try:
+        url = 'https://stablecoins.llama.fi/stablecoincharts/all'
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        chart = r.json()
+        def val(punto):
+            c = punto.get('totalCirculatingUSD', {})
+            return float(c.get('peggedUSD', 0)) if isinstance(c, dict) else (float(c) if c else 0)
+        if not isinstance(chart, list) or len(chart) < 2:
+            raise ValueError('storico insufficiente')
+        oggi = val(chart[-1])
+        if oggi <= 0:
+            raise ValueError('valore nullo')
+        ieri = val(chart[-2]) if len(chart) >= 2 else 0
+        var24 = ((oggi - ieri) / ieri * 100) if ieri > 0 else None
+        sette = val(chart[-8]) if len(chart) >= 8 else 0
+        var7 = ((oggi - sette) / sette * 100) if sette > 0 else None
+        if var24 is not None and var7 is not None:
+            combo = var24 * 0.5 + (var7 / 7) * 0.5
+        elif var24 is not None:
+            combo = var24
+        elif var7 is not None:
+            combo = var7 / 7
+        else:
+            combo = 0
+        if combo > 0.15:
+            seg = 'INFLOW POSITIVO'
+        elif combo < -0.15:
+            seg = 'OUTFLOW'
+        else:
+            seg = 'NEUTRALE'
+        result = {'mcap_b': oggi / 1e9, 'var24': var24, 'var7': var7, 'segnale': seg}
+        _cache['stable'] = {'d': result, 't': time.time()}
+        return result
+    except Exception as e:
+        log.warning('get_stablecoins: errore DefiLlama (%s). Uso cache se disponibile.', e)
+        if 'stable' in _cache:
+            return _cache['stable']['d']
+        return {}
+
+
+def _fmt_stable(s):
+    """Riga testuale stablecoin per il ctx."""
+    if not s or not s.get('segnale'):
+        return 'Stablecoin Supply/Inflow: DATO NON DISPONIBILE'
+    mcap = s.get('mcap_b', 0)
+    v24 = s.get('var24'); v7 = s.get('var7')
+    v24_t = f'{v24:+.2f}%' if v24 is not None else 'n/d'
+    v7_t = f'{v7:+.2f}%' if v7 is not None else 'n/d'
+    return f"Stablecoin Supply: ${mcap:,.0f}B (24h {v24_t}, 7d {v7_t}) - Segnale: {s['segnale']}"
+
+
+def compute_altseason_score(g, p, fg, stable=None):
     """ALTSEASON SCORE deterministico dai dati disponibili. Ritorna stringa formattata.
     Pesi: BTC Dom 40, ETH/BTC 15, TOTAL2 15, TOTAL3 10, Sentiment 10, AltStrength 10."""
     comp = []; score = 0; disp = 0
@@ -583,8 +640,16 @@ def compute_altseason_score(g, p, fg):
         comp.append(f"- Altcoin Strength: {a}/10 ({pct:.0f}% alt positive 24h)")
     else:
         comp.append("- Altcoin Strength: DATO NON DISPONIBILE")
+    # 7 fattore: Stablecoin inflow (max 10 punti). INFLOW=10, NEUTRALE=5, OUTFLOW=0.
+    if stable and stable.get('segnale') and stable.get('segnale') != 'DATO NON DISPONIBILE':
+        seg = stable['segnale']
+        st_pts = 10 if seg == 'INFLOW POSITIVO' else 5 if seg == 'NEUTRALE' else 0
+        score += st_pts; disp += 1
+        comp.append(f"- Stablecoin Inflow: {st_pts}/10 ({seg})")
+    else:
+        comp.append("- Stablecoin Inflow: DATO NON DISPONIBILE")
     conf = "ALTA" if disp >= 5 else "MEDIA" if disp >= 3 else "BASSA"
-    return f"ALTSEASON SCORE: {score}/100 (calcolato su {disp}/6 fattori)\nConfidenza Analisi: {conf}\nALTSEASON SCORE COMPONENTI:\n" + "\n".join(comp)
+    return f"ALTSEASON SCORE: {score}/100 (calcolato su {disp}/7 fattori)\nConfidenza Analisi: {conf}\nALTSEASON SCORE COMPONENTI:\n" + "\n".join(comp)
 
 
 def get_claude_response(user_msg, market_context, chat_id=None):
@@ -1607,7 +1672,9 @@ async def handle_text(u, c):
                f"Volumi 24h: BTC {_fmt_vol(p['BTC']['vol'])}, ETH {_fmt_vol(p['ETH']['vol'])}, SOL {_fmt_vol(p['SOL']['vol'])}, XRP {_fmt_vol(p['XRP']['vol'])}, DOGE {_fmt_vol(p['DOGE']['vol'])}, BNB {_fmt_vol(p['BNB']['vol'])}, BONK {_fmt_vol(p['BONK']['vol'])}"
                + chr(10) +
                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
-        ctx = compute_altseason_score(g, p, fg) + chr(10) + chr(10) + ctx
+        _stable = get_stablecoins()
+        ctx = compute_altseason_score(g, p, fg, _stable) + chr(10) + chr(10) + ctx
+        ctx = ctx + chr(10) + _fmt_stable(_stable)
         ctx = ctx + chr(10) + _fmt_deriv(get_derivatives())
         response = get_claude_response(t, ctx, uid)
         # Add follow-up suggestions based on language
