@@ -226,7 +226,7 @@ ASSETS = {
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
 _cache = {}
-CACHE_TTL = 180
+CACHE_TTL = 600
 
 # ============================================================
 # KEYBOARD
@@ -360,7 +360,10 @@ def get_global():
         result = {"dom": d["market_cap_percentage"]["btc"], "dom_eth": d["market_cap_percentage"].get("eth", 0), "mcap": tot/1e12, "total2": (tot-btcm)/1e9, "total3": (tot-btcm-ethm)/1e9}
         _cache['g'] = {'d': result, 't': time.time()}
         return result
-    except:
+    except Exception as e:
+        log.warning("get_global: errore CoinGecko (%s). Uso ultima cache se disponibile.", e)
+        if 'g' in _cache:
+            return _cache['g']['d']
         return {"dom": 58, "dom_eth": 0, "mcap": 2.5, "total2": 0, "total3": 0}
 
 def get_prices():
