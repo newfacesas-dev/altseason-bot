@@ -652,6 +652,22 @@ def compute_altseason_score(g, p, fg, stable=None):
     return f"ALTSEASON SCORE: {score}/100 (calcolato su {disp}/7 fattori)\nConfidenza Analisi: {conf}\nALTSEASON SCORE COMPONENTI:\n" + "\n".join(comp)
 
 
+def _pick_model(chat_id=None):
+    """Sceglie il modello in base al piano utente.
+    free -> gpt-5.4-mini, basic/pro -> gpt-5.4.
+    Override: se OPENAI_MODEL e' impostata, vince lei."""
+    forced = os.environ.get('OPENAI_MODEL', '')
+    if forced:
+        return forced
+    try:
+        plan = load_user(chat_id).get('plan', 'free') if chat_id else 'free'
+    except Exception:
+        plan = 'free'
+    if plan in ('basic', 'pro'):
+        return 'gpt-5.4'
+    return 'gpt-5.4-mini'
+
+
 def get_claude_response(user_msg, market_context, chat_id=None):
     try:
         api_key = os.environ.get('OPENAI_API_KEY', '')
@@ -750,7 +766,7 @@ PORTAFOGLIO UTENTE (base di ogni analisi):
 
 Massimo 250-350 parole. Sii compatto e operativo. Non inventare dati: se mancano, dichiaralo. Mai garantire profitti."""
         msg = client.responses.create(
-            model=os.environ.get('OPENAI_MODEL', 'gpt-5.5'),
+            model=_pick_model(chat_id),
             instructions=system,
             input=user_msg,
             max_output_tokens=2500
