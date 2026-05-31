@@ -598,6 +598,10 @@ MONITORA = condizione interessante ma non ancora operativa
 AZIONE = condizione che richiede intervento: specifica coin, percentuale, motivo, finestra
 ALERT CRITICO = condizione che richiede attenzione immediata
 
+REGOLE DECISIONALI (vincolanti):
+Le azioni numeriche precise (percentuali tipo 'riduci BONK 20-25%', oppure 'compra XRP', 'vendi DOGE') sono ammesse SOLO se Confidenza Analisi e' ALTA.
+Se Confidenza Analisi e' MEDIA o BASSA, oppure se mancano dati critici (Open Interest, Funding Rate, Stablecoin Inflow, Volumi reali): NON dare percentuali ne' ordini secchi di acquisto/vendita. Usa invece 👀 MONITORA oppure ⚠️ VALUTARE RIDUZIONE, con una breve spiegazione del perche' i dati non bastano per un'azione precisa.
+
 FINESTRA OPERATIVA:
 Indica il prossimo controllo critico (12h, 24h, 48h o 72h) e il livello di urgenza (BASSA, MEDIA, ALTA o CRITICA).
 
