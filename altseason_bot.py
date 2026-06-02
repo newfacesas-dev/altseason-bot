@@ -509,13 +509,54 @@ def get_derivatives():
                     'oi': float(oi) if oi not in (None, '') else None,
                 }
         if result:
+            log.info('get_derivatives: fonte Bybit OK')
             _cache['deriv'] = {'d': result, 't': time.time()}
         return result
     except Exception as e:
-        log.warning('get_derivatives: errore Bybit (%s). Uso cache se disponibile.', e)
-        if 'deriv' in _cache:
-            return _cache['deriv']['d']
-        return {}
+        log.warning('get_derivatives: Bybit fallito (%s). Provo CoinGecko fallback.', e)
+        try:
+            cg = get_derivatives_coingecko()
+            if cg:
+                log.info('get_derivatives: fonte CoinGecko OK (fallback)')
+                _cache['deriv'] = {'d': cg, 't': time.time()}
+                return cg
+            raise ValueError('CoinGecko vuoto')
+        except Exception as e2:
+            log.warning('get_derivatives: anche CoinGecko fallito (%s). Uso cache se disponibile.', e2)
+            if 'deriv' in _cache:
+                log.info('get_derivatives: uso CACHE')
+                return _cache['deriv']['d']
+            log.warning('get_derivatives: DATO NON DISPONIBILE')
+            return {}
+
+
+def get_derivatives_coingecko():
+    """Fallback funding+OI da CoinGecko /derivatives (NON geo-bloccato).
+    Prende il primo ticker perpetuo per BTC/ETH/SOL/XRP. OI in USD."""
+    symbols = ('BTC', 'ETH', 'SOL', 'XRP')
+    url = 'https://api.coingecko.com/api/v3/derivatives'
+    r = requests.get(url, timeout=12)
+    r.raise_for_status()
+    data = r.json()
+    result = {}
+    for d in data:
+        if not isinstance(d, dict) or d.get('contract_type') != 'perpetual':
+            continue
+        idx = str(d.get('index_id', '')).upper()
+        if idx in symbols and idx not in result:
+            fr = d.get('funding_rate'); oi = d.get('open_interest')
+            try:
+                fr_v = float(fr) if fr not in (None, '') else None
+            except (ValueError, TypeError):
+                fr_v = None
+            try:
+                oi_v = float(oi) if oi not in (None, '') else None
+            except (ValueError, TypeError):
+                oi_v = None
+            result[idx] = {'funding': fr_v, 'oi': oi_v, 'oi_usd': True}
+        if len(result) == len(symbols):
+            break
+    return result
 
 
 def _fmt_deriv(dv):
@@ -523,6 +564,7 @@ def _fmt_deriv(dv):
     if not dv:
         return 'Derivati (Funding/OI): DATO NON DISPONIBILE'
     parti = []
+    fonte_usd = False
     for sym in ('BTC', 'ETH', 'SOL', 'XRP'):
         d = dv.get(sym)
         if not d:
@@ -530,9 +572,16 @@ def _fmt_deriv(dv):
             continue
         fr = d.get('funding'); oi = d.get('oi')
         fr_t = f'{fr:+.4f}%' if fr is not None else 'n/d'
-        oi_t = f'{oi:,.0f}' if oi is not None else 'n/d'
+        if oi is None:
+            oi_t = 'n/d'
+        elif d.get('oi_usd'):
+            fonte_usd = True
+            oi_t = f'${oi/1e9:.2f}B' if oi >= 1e9 else f'${oi/1e6:.0f}M'
+        else:
+            oi_t = f'{oi:,.0f}'
         parti.append(f'{sym} funding {fr_t} OI {oi_t}')
-    return 'Derivati (Bybit) - ' + ', '.join(parti)
+    fonte = 'CoinGecko' if fonte_usd else 'Bybit'
+    return f'Derivati ({fonte}) - ' + ', '.join(parti)
 
 
 def get_stablecoins():
