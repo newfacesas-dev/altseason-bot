@@ -664,7 +664,7 @@ def compute_altseason_score(g, p, fg, stable=None):
     if dom:
         d = round(max(0, min(40, (65 - dom) / (65 - 40) * 40)))
         score += d; disp += 1
-        comp.append(f"- BTC Dominance: {d}/40 (dominance {dom:.1f}%)")
+        comp.append(f"- BTC Dominance: {dom:.1f}%")
     else:
         comp.append("- BTC Dominance: DATO NON DISPONIBILE")
     btc = p.get("BTC", {}).get("price", 0); eth = p.get("ETH", {}).get("price", 0)
@@ -672,26 +672,26 @@ def compute_altseason_score(g, p, fg, stable=None):
         ethbtc = eth / btc
         e = round(max(0, min(15, (ethbtc - 0.025) / (0.05 - 0.025) * 15)))
         score += e; disp += 1
-        comp.append(f"- ETH/BTC: {e}/15 (ratio {ethbtc:.5f})")
+        comp.append(f"- ETH/BTC: {ethbtc:.5f}")
     else:
         comp.append("- ETH/BTC: DATO NON DISPONIBILE")
     total2 = g.get("total2", 0)
     if total2:
         score += 8; disp += 1
-        comp.append(f"- TOTAL2: 8/15 (${total2:,.0f}B, livello attuale)")
+        comp.append(f"- TOTAL2: ${total2:,.0f}B")
     else:
         comp.append("- TOTAL2: DATO NON DISPONIBILE")
     total3 = g.get("total3", 0)
     if total3:
         score += 5; disp += 1
-        comp.append(f"- TOTAL3: 5/10 (${total3:,.0f}B, livello attuale)")
+        comp.append(f"- TOTAL3: ${total3:,.0f}B")
     else:
         comp.append("- TOTAL3: DATO NON DISPONIBILE")
     v = fg.get("v", 0)
     if v:
         s = round(v / 100 * 10)
         score += s; disp += 1
-        comp.append(f"- Sentiment (F&G): {s}/10 (indice {v})")
+        comp.append(f"- Sentiment (Fear & Greed): {v}")
     else:
         comp.append("- Sentiment (F&G): DATO NON DISPONIBILE")
     alts = [s for s in p if s != "BTC"]
@@ -701,7 +701,7 @@ def compute_altseason_score(g, p, fg, stable=None):
         pct = pos / len(valid) * 100
         a = round(pct / 100 * 10)
         score += a; disp += 1
-        comp.append(f"- Altcoin Strength: {a}/10 ({pct:.0f}% alt positive 24h)")
+        comp.append(f"- Altcoin Strength: {pct:.0f}% alt positive 24h")
     else:
         comp.append("- Altcoin Strength: DATO NON DISPONIBILE")
     # 7 fattore: Stablecoin inflow (max 10 punti). INFLOW=10, NEUTRALE=5, OUTFLOW=0.
@@ -709,7 +709,7 @@ def compute_altseason_score(g, p, fg, stable=None):
         seg = stable['segnale']
         st_pts = 10 if seg == 'INFLOW POSITIVO' else 5 if seg == 'NEUTRALE' else 0
         score += st_pts; disp += 1
-        comp.append(f"- Stablecoin Inflow: {st_pts}/10 ({seg})")
+        comp.append(f"- Stablecoin: {seg}")
     else:
         comp.append("- Stablecoin Inflow: DATO NON DISPONIBILE")
     conf = "ALTA" if disp >= 5 else "MEDIA" if disp >= 3 else "BASSA"
