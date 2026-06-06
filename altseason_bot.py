@@ -1077,7 +1077,7 @@ async def cmd_news(u, c):
                         item_title = (item.get("title") or "").strip()
                         item_url = (item.get("url") or "").strip()
                         if item_title and item_url:
-                            news_items.append((item_title, item_url, "CryptoPanic"))
+                            news_items.append((item_title, item_url, "CryptoPanic", ""))
             except Exception as e:
                 log.warning(f"CryptoPanic news error: {e}")
 
@@ -1103,9 +1103,13 @@ async def cmd_news(u, c):
                             break
                         item_title = (item.findtext("title") or "").strip()
                         item_url = (item.findtext("link") or "").strip()
+                        item_desc = (item.findtext("description") or "").strip()
+                        if item_desc:
+                            import re as _re
+                            item_desc = _re.sub(r"<[^>]+>", "", item_desc)[:300]
                         if item_title and item_url and item_url not in seen_urls:
                             seen_urls.add(item_url)
-                            news_items.append((item_title, item_url, source_name))
+                            news_items.append((item_title, item_url, source_name, item_desc))
                 except Exception as e:
                     log.warning(f"RSS news error {source_name}: {e}")
 
@@ -1113,8 +1117,35 @@ async def cmd_news(u, c):
             await u.message.reply_text(empty, reply_markup=kb(uid))
             return
 
+        top_news = news_items[:6]
+        sintesi = ""
+        try:
+            blocco = ""
+            for it in top_news:
+                t = it[0]
+                d = it[3] if len(it) > 3 else ""
+                blocco += f"- {t}"
+                if d:
+                    blocco += f" ({d})"
+                blocco += "\n"
+            istruzione = {
+                "it": "Sei un analista crypto. Ecco titoli e descrizioni delle ultime notizie. Scrivi una sintesi discorsiva dei temi piu rilevanti in 4-6 frasi, in italiano. Basati SOLO su queste notizie, non inventare nulla, niente prezzi o dati non presenti. Niente link.",
+                "en": "You are a crypto analyst. Summarize the main themes in 4-6 sentences, English. ONLY these items, invent nothing. No links.",
+                "pt": "Voce e analista crypto. Resuma os temas em 4-6 frases, portugues. SOMENTE estas, nao invente. Sem links.",
+            }.get(lang, "Riassumi i temi in 4-6 frasi, solo da queste notizie.")
+            sintesi = get_claude_response(blocco, istruzione, uid)
+        except Exception as e:
+            log.warning(f"News sintesi AI error: {e}")
+            sintesi = ""
+
         lines = [title, ""]
-        for item_title, item_url, source in news_items[:6]:
+        if sintesi and sintesi.strip():
+            lines.append(sintesi.strip())
+            lines.append("")
+            lines.append("───────")
+            lines.append("")
+        for it in top_news:
+            item_title = it[0]; item_url = it[1]; source = it[2]
             clean_title = item_title.replace("\n", " ").strip()[:120]
             lines.append(f"• {clean_title}")
             lines.append(f"  Fonte: {source}")
