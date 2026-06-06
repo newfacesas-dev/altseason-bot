@@ -402,12 +402,27 @@ def get_fg():
     except:
         return {"v": 50, "lbl": "Neutral", "em": "😐"}
 
+_CG_OHLC_IDS = {"BTCUSDT": "bitcoin", "ETHUSDT": "ethereum", "SOLUSDT": "solana", "XRPUSDT": "ripple"}
+
 def get_ohlc(symbol="BTCUSDT", limit=30):
+    """Dati storici (close + volume) da CoinGecko market_chart.
+    Binance e' geo-bloccato da Railway (451); CoinGecko no.
+    Ritorna (closes, vols) come prima. Chiede 60gg per margine su RSI/MACD."""
+    cg_id = _CG_OHLC_IDS.get(symbol)
+    if not cg_id:
+        return [], []
     try:
-        r = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit={limit}", timeout=10)
+        url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days=60&interval=daily"
+        r = requests.get(url, timeout=12)
+        r.raise_for_status()
         data = r.json()
-        return [float(x[4]) for x in data], [float(x[5]) for x in data]
-    except:
+        prices = data.get("prices", [])
+        vols = data.get("total_volumes", [])
+        closes = [float(p[1]) for p in prices if isinstance(p, (list, tuple)) and len(p) >= 2]
+        volumes = [float(v[1]) for v in vols if isinstance(v, (list, tuple)) and len(v) >= 2]
+        return closes, volumes
+    except Exception as e:
+        log.warning("get_ohlc: errore CoinGecko per %s (%s). Indicatori non disponibili.", symbol, e)
         return [], []
 
 def calc_rsi(closes, period=14):
@@ -417,7 +432,7 @@ def calc_rsi(closes, period=14):
     gain = delta.clip(lower=0).rolling(period).mean()
     loss = (-delta.clip(upper=0)).rolling(period).mean()
     rs = gain / loss
-    return round((100 - (100 / (1 + rs))).iloc[-1], 1)
+    return round(float((100 - (100 / (1 + rs))).iloc[-1]), 1)
 
 def calc_macd(closes):
     if len(closes) < 26: return None, None, None
@@ -425,7 +440,7 @@ def calc_macd(closes):
     macd = s.ewm(span=12).mean() - s.ewm(span=26).mean()
     signal = macd.ewm(span=9).mean()
     hist = macd - signal
-    return round(macd.iloc[-1], 2), round(signal.iloc[-1], 2), round(hist.iloc[-1], 2)
+    return round(float(macd.iloc[-1]), 2), round(float(signal.iloc[-1]), 2), round(float(hist.iloc[-1]), 2)
 
 def get_indicators():
     result = {}
