@@ -713,7 +713,7 @@ def compute_altseason_score(g, p, fg, stable=None):
     else:
         comp.append("- Stablecoin Inflow: DATO NON DISPONIBILE")
     conf = "ALTA" if disp >= 5 else "MEDIA" if disp >= 3 else "BASSA"
-    return f"ALTSEASON SCORE: {score}/100 (calcolato su {disp}/7 fattori)\nConfidenza Analisi: {conf}\nALTSEASON SCORE COMPONENTI:\n" + "\n".join(comp)
+    return f"Confidenza Analisi: {conf} (basata su {disp}/7 dati disponibili)\nDATI DISPONIBILI PER FATTORE:\n" + "\n".join(comp)
 
 
 def _pick_model(chat_id=None):
@@ -766,20 +766,9 @@ REGOLA ANTI-INVENZIONE (CRITICA):
 - Se un dato chiave manca, ABBASSA la confidenza dello scenario.
 - Mai garantire profitti.
 
-ALTSEASON SCORE:
-Calcola un punteggio sintetico basato solo sui dati disponibili e mostralo come ALTSEASON SCORE: X/100.
-0-30 = mercato debole, nessuna rotazione
-31-50 = accumulo, pre-rotazione
-51-70 = rotazione iniziale
-71-85 = altseason attiva
-86-100 = fase euforica, rischio distribuzione
-ALTSEASON SCORE COMPONENTI: mostra sempre il contributo di ogni fattore al punteggio, una voce per riga. Se un fattore non e' nei dati, scrivi DATO NON DISPONIBILE.
-- BTC Dominance: contributo su 40
-- ETH/BTC: contributo su 15
-- TOTAL2: contributo su 15
-- TOTAL3: contributo su 10
-- Sentiment (Fear & Greed): contributo su 10
-- Altcoin Strength: contributo su 10
+CONFIDENZA ANALISI:
+Riporta la Confidenza Analisi (ALTA / MEDIA / BASSA) fornita nei dati, che indica quanti dati reali sono disponibili. NON inventare un punteggio numerico /100: mostra solo i dati reali e la confidenza.
+DATI DISPONIBILI PER FATTORE: per ogni fattore (BTC Dominance, ETH/BTC, TOTAL2, TOTAL3, Sentiment, Altcoin Strength, Stablecoin) indica il valore reale se presente, oppure DATO NON DISPONIBILE. Non assegnare punteggi o pesi.
 
 TRIGGER CHECKLIST (segna ogni voce come attivo, parziale, o mancante/non disponibile):
 - BTC Dominance sotto area critica
@@ -813,7 +802,7 @@ FINESTRA OPERATIVA:
 Indica il prossimo controllo critico (12h, 24h, 48h o 72h) e il livello di urgenza (BASSA, MEDIA, ALTA o CRITICA).
 
 STRUTTURA RISPOSTA OBBLIGATORIA (usa questi titoli e questo ordine, apri con la data):
-1. FASE MERCATO: stato ciclo, ALTSEASON SCORE, scenario principale / alternativo / avverso con probabilita
+1. FASE MERCATO: stato ciclo, Confidenza Analisi, scenario principale / alternativo / avverso con probabilita
 2. TRIGGER CHECKLIST: trigger attivi, parziali e mancanti
 3. INTERPRETAZIONE DATI: sintesi dei dati disponibili, dichiara i dati mancanti
 4. STRATEGIA PORTAFOGLIO: Blue chip, Quasi blue chip, Emergenti, Meme/microcap con azione per categoria
