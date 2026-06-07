@@ -801,6 +801,74 @@ def get_news_summary(blocco_notizie, lang="it"):
         return ""
 
 
+def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, uid):
+    """Registratore append-only su Railway Volume /data/snapshots.jsonl.
+    Salva i dati grezzi strutturati + l'analisi AI come testo integrale (Opzione A).
+    Crash-safe: se il salvataggio fallisce, logga e NON solleva (il bot prosegue)."""
+    try:
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        # Estraggo i dati grezzi in modo difensivo (se manca qualcosa, None)
+        def _gp(d, k):
+            try:
+                return d.get(k)
+            except Exception:
+                return None
+        snap = {
+            "timestamp_utc": _dt.now(_tz.utc).isoformat(),
+            "tipo_evento": "analisi_manuale",
+            "chat_id": str(uid) if uid else None,
+            "prezzi": {},
+            "btc_dominance": _gp(g, "dom"),
+            "total2": _gp(g, "total2"),
+            "total3": _gp(g, "total3"),
+            "fear_greed": _gp(fg, "v"),
+            "ethbtc": None,
+            "stablecoin": None,
+            "derivati": None,
+            "trend_7d": trend if isinstance(trend, dict) else None,
+            "market_context": market_context,
+            "analisi_completa": analisi_ai,
+        }
+        # prezzi delle coin chiave
+        try:
+            for sym in ("BTC", "ETH", "XRP", "SOL", "BONK", "DOGE", "BNB"):
+                if sym in p:
+                    snap["prezzi"][sym] = {
+                        "price": _gp(p[sym], "price"),
+                        "ch": _gp(p[sym], "ch"),
+                    }
+        except Exception:
+            pass
+        # ETH/BTC ratio dai prezzi
+        try:
+            btc_pr = p.get("BTC", {}).get("price", 0)
+            eth_pr = p.get("ETH", {}).get("price", 0)
+            if btc_pr and eth_pr:
+                snap["ethbtc"] = eth_pr / btc_pr
+        except Exception:
+            pass
+        # stablecoin: salvo il segnale se presente
+        try:
+            if isinstance(stable, dict):
+                snap["stablecoin"] = stable.get("segnale")
+        except Exception:
+            pass
+        # derivati: salvo l'oggetto cosi com'e se serializzabile
+        try:
+            _json.dumps(deriv)
+            snap["derivati"] = deriv
+        except Exception:
+            snap["derivati"] = None
+        # scrittura append-only
+        os.makedirs("/data", exist_ok=True)
+        with open("/data/snapshots.jsonl", "a", encoding="utf-8") as f:
+            f.write(_json.dumps(snap, ensure_ascii=False) + chr(10))
+        log.info("Snapshot salvato (analisi_manuale)")
+    except Exception as e:
+        log.warning(f"salva_snapshot error (non bloccante): {e}")
+
+
 def get_claude_response(user_msg, market_context, chat_id=None):
     try:
         api_key = os.environ.get('OPENAI_API_KEY', '')
@@ -1856,6 +1924,7 @@ async def handle_text(u, c):
         }
         followup = ""
         await u.message.reply_text("\U0001f916 *AI Analysis*\n\n" + response + followup, parse_mode="Markdown", reply_markup=kb(uid))
+        salva_snapshot(g, p, fg, _stable, get_derivatives(), get_trend_7d(), ctx, response, uid)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
