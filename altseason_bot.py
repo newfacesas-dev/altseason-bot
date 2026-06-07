@@ -442,6 +442,50 @@ def calc_macd(closes):
     hist = macd - signal
     return round(float(macd.iloc[-1]), 2), round(float(signal.iloc[-1]), 2), round(float(hist.iloc[-1]), 2)
 
+def get_trend_7d():
+    """Trend a 7 giorni di ETH/BTC e dei prezzi principali, da get_ohlc (CoinGecko).
+    Nessuna chiamata extra: riusa lo storico gia scaricato per RSI/MACD.
+    Il trend dominance NON e incluso (storico globale CoinGecko a pagamento)."""
+    out = {}
+    try:
+        btc_closes, _ = get_ohlc("BTCUSDT")
+        eth_closes, _ = get_ohlc("ETHUSDT")
+        if len(btc_closes) >= 8 and len(eth_closes) >= 8 and btc_closes[-1] and btc_closes[-8]:
+            ratio_oggi = eth_closes[-1] / btc_closes[-1]
+            ratio_7gg = eth_closes[-8] / btc_closes[-8]
+            if ratio_7gg:
+                var = (ratio_oggi - ratio_7gg) / ratio_7gg * 100
+                desc = "in recupero" if var > 1.5 else "in calo" if var < -1.5 else "stabile"
+                out["ethbtc"] = {"oggi": ratio_oggi, "var7d": var, "desc": desc}
+        if len(btc_closes) >= 8 and btc_closes[-8]:
+            out["btc"] = (btc_closes[-1] - btc_closes[-8]) / btc_closes[-8] * 100
+        if len(eth_closes) >= 8 and eth_closes[-8]:
+            out["eth"] = (eth_closes[-1] - eth_closes[-8]) / eth_closes[-8] * 100
+    except Exception as e:
+        log.warning(f"get_trend_7d error: {e}")
+    return out
+
+def _fmt_trend(tr):
+    """Formatta il trend 7gg per il contesto analisi."""
+    if not tr:
+        return "TREND 7 GIORNI: DATO NON DISPONIBILE"
+    righe = ["TREND 7 GIORNI:"]
+    if "ethbtc" in tr:
+        e = tr["ethbtc"]
+        if e["desc"] == "in recupero":
+            nota = "(ETH guida su BTC, possibile rotazione alt)"
+        elif e["desc"] == "in calo":
+            nota = "(ETH non guida su BTC, rotazione alt lontana)"
+        else:
+            nota = "(nessuna direzione chiara)"
+        righe.append(f"- ETH/BTC: {e['oggi']:.5f}, {e['desc']} ({e['var7d']:+.1f}% su 7gg) {nota}")
+    if "btc" in tr:
+        righe.append(f"- BTC prezzo: {tr['btc']:+.1f}% su 7gg")
+    if "eth" in tr:
+        righe.append(f"- ETH prezzo: {tr['eth']:+.1f}% su 7gg")
+    return chr(10).join(righe)
+
+
 def get_indicators():
     result = {}
     for sym, pair in [("BTC", "BTCUSDT"), ("ETH", "ETHUSDT")]:
@@ -1802,6 +1846,7 @@ async def handle_text(u, c):
         ctx = compute_altseason_score(g, p, fg, _stable) + chr(10) + chr(10) + ctx
         ctx = ctx + chr(10) + _fmt_stable(_stable)
         ctx = ctx + chr(10) + _fmt_deriv(get_derivatives())
+        ctx = ctx + chr(10) + _fmt_trend(get_trend_7d())
         response = get_claude_response(t, ctx, uid)
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
