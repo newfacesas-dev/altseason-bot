@@ -732,6 +732,31 @@ def _pick_model(chat_id=None):
     return 'gpt-5.4-mini'
 
 
+def get_news_summary(blocco_notizie, lang="it"):
+    """Sintesi giornalistica delle news. Chiamata OpenAI dedicata,
+    SEPARATA da get_claude_response (che fa analisi di mercato)."""
+    try:
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            return ""
+        client = OpenAI(api_key=api_key)
+        sys_prompt = {
+            "it": "Sei un giornalista crypto. Riassumi i temi principali di queste notizie in 3-5 frasi discorsive, in italiano. NON fare analisi di mercato, NON usare sezioni o titoli, NON dare consigli operativi. Solo un breve riassunto dei temi. Basati solo su queste notizie, non inventare nulla.",
+            "en": "You are a crypto journalist. Summarize the main themes of these news in 3-5 narrative sentences, English. NO market analysis, NO sections or headers, NO trading advice. Just a brief thematic summary. Only these news, invent nothing.",
+            "pt": "Voce e jornalista crypto. Resuma os temas destas noticias em 3-5 frases, portugues. SEM analise de mercado, SEM secoes, SEM conselhos. Apenas um breve resumo. Somente estas noticias, nao invente.",
+        }.get(lang, "Riassumi i temi di queste notizie in 3-5 frasi, niente analisi di mercato, solo un breve riassunto.")
+        msg = client.responses.create(
+            model="gpt-5.4-mini",
+            instructions=sys_prompt,
+            input=blocco_notizie,
+            max_output_tokens=400
+        )
+        return msg.output_text
+    except Exception as e:
+        log.warning(f"get_news_summary error: {e}")
+        return ""
+
+
 def get_claude_response(user_msg, market_context, chat_id=None):
     try:
         api_key = os.environ.get('OPENAI_API_KEY', '')
@@ -1128,12 +1153,7 @@ async def cmd_news(u, c):
                 if d:
                     blocco += f" ({d})"
                 blocco += "\n"
-            istruzione = {
-                "it": "Sei un analista crypto. Ecco titoli e descrizioni delle ultime notizie. Scrivi una sintesi discorsiva dei temi piu rilevanti in 4-6 frasi, in italiano. Basati SOLO su queste notizie, non inventare nulla, niente prezzi o dati non presenti. Niente link.",
-                "en": "You are a crypto analyst. Summarize the main themes in 4-6 sentences, English. ONLY these items, invent nothing. No links.",
-                "pt": "Voce e analista crypto. Resuma os temas em 4-6 frases, portugues. SOMENTE estas, nao invente. Sem links.",
-            }.get(lang, "Riassumi i temi in 4-6 frasi, solo da queste notizie.")
-            sintesi = get_claude_response(blocco, istruzione, uid)
+            sintesi = get_news_summary(blocco, lang)
             if sintesi and len(sintesi) > 900:
                 sintesi = sintesi[:900].rsplit(".", 1)[0] + "."
         except Exception as e:
