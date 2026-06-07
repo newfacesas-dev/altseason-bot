@@ -1134,6 +1134,8 @@ async def cmd_news(u, c):
                 "pt": "Voce e analista crypto. Resuma os temas em 4-6 frases, portugues. SOMENTE estas, nao invente. Sem links.",
             }.get(lang, "Riassumi i temi in 4-6 frasi, solo da queste notizie.")
             sintesi = get_claude_response(blocco, istruzione, uid)
+            if sintesi and len(sintesi) > 900:
+                sintesi = sintesi[:900].rsplit(".", 1)[0] + "."
         except Exception as e:
             log.warning(f"News sintesi AI error: {e}")
             sintesi = ""
@@ -1152,8 +1154,12 @@ async def cmd_news(u, c):
             lines.append(f"  {item_url}")
             lines.append("")
 
+        msg_finale = "\n".join(lines).strip()
+        # Taglio di sicurezza: Telegram limita a 4096 caratteri.
+        if len(msg_finale) > 3900:
+            msg_finale = msg_finale[:3900].rsplit("\n", 1)[0] + "\n\n[...]"
         await u.message.reply_text(
-            "\n".join(lines).strip(),
+            msg_finale,
             reply_markup=kb(uid),
             disable_web_page_preview=True,
         )
