@@ -297,9 +297,60 @@ def kb(uid):
     return get_keyboard(ud.get("lang", "it"))
 
 
+async def cmd_stato_dati(u, c):
+    """Mostra lo stato della raccolta snapshot (sola lettura). Solo admin.
+    Legge /data/snapshots.jsonl: quanti, primo, ultimo. Crash-safe."""
+    uid = get_uid(u)
+    if str(uid) != ADMIN_ID:
+        await u.message.reply_text("Comando riservato.", reply_markup=kb(uid))
+        return
+    try:
+        import json as _json
+        path = "/data/snapshots.jsonl"
+        if not os.path.exists(path):
+            await u.message.reply_text("Nessuno snapshot ancora raccolto.", reply_markup=kb(uid))
+            return
+        n = 0
+        primo = None
+        ultimo = None
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                n += 1
+                try:
+                    d = _json.loads(line)
+                    ts = d.get("timestamp_utc", "")
+                    if ts:
+                        if primo is None:
+                            primo = ts
+                        ultimo = ts
+                except Exception:
+                    continue
+        def _fmt_ts(ts):
+            try:
+                from datetime import datetime as _dt
+                dt = _dt.fromisoformat(ts)
+                return dt.strftime("%d/%m/%Y %H:%M UTC")
+            except Exception:
+                return ts or "n/d"
+        msg = (
+            "STATO RACCOLTA DATI\n\n"
+            f"Snapshot raccolti: {n}\n"
+            f"Primo: {_fmt_ts(primo)}\n"
+            f"Ultimo: {_fmt_ts(ultimo)}"
+        )
+        await u.message.reply_text(msg, reply_markup=kb(uid))
+    except Exception as e:
+        log.warning(f"cmd_stato_dati error: {e}")
+        await u.message.reply_text("Errore lettura snapshot.", reply_markup=kb(uid))
+
+
 ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("👥 I miei Utenti"), KeyboardButton("📊 Stats Admin")],
     [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
+    [KeyboardButton("📈 Stato Dati")],
 ], resize_keyboard=True)
 
 # ============================================================
@@ -1877,6 +1928,7 @@ async def handle_text(u, c):
         # Admin
         "👥 I miei Utenti": cmd_users, "📊 Stats Admin": cmd_admin,
         "💰 Ricavi": cmd_admin, "🔙 Torna al Bot": None,
+        "📈 Stato Dati": cmd_stato_dati,
     }
     if t in handlers:
         fn = handlers[t]
