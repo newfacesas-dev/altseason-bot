@@ -852,6 +852,63 @@ def get_news_summary(blocco_notizie, lang="it"):
         return ""
 
 
+def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_ai):
+    """Variante automatica di salva_snapshot: tipo_evento='automatico', nessun chat_id.
+    Stessa logica crash-safe e append-only su /data/snapshots.jsonl."""
+    try:
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        def _gp(d, k):
+            try:
+                return d.get(k)
+            except Exception:
+                return None
+        snap = {
+            "timestamp_utc": _dt.now(_tz.utc).isoformat(),
+            "tipo_evento": "automatico",
+            "chat_id": None,
+            "prezzi": {},
+            "btc_dominance": _gp(g, "dom"),
+            "total2": _gp(g, "total2"),
+            "total3": _gp(g, "total3"),
+            "fear_greed": _gp(fg, "v"),
+            "ethbtc": None,
+            "stablecoin": None,
+            "derivati": None,
+            "trend_7d": trend if isinstance(trend, dict) else None,
+            "market_context": market_context,
+            "analisi_completa": analisi_ai,
+        }
+        try:
+            for sym in ("BTC", "ETH", "XRP", "SOL", "BONK", "DOGE", "BNB"):
+                if sym in p:
+                    snap["prezzi"][sym] = {"price": _gp(p[sym], "price"), "ch": _gp(p[sym], "ch")}
+        except Exception:
+            pass
+        try:
+            btc_pr = p.get("BTC", {}).get("price", 0)
+            eth_pr = p.get("ETH", {}).get("price", 0)
+            if btc_pr and eth_pr:
+                snap["ethbtc"] = eth_pr / btc_pr
+        except Exception:
+            pass
+        try:
+            if isinstance(stable, dict):
+                snap["stablecoin"] = stable.get("segnale")
+        except Exception:
+            pass
+        try:
+            _json.dumps(deriv)
+            snap["derivati"] = deriv
+        except Exception:
+            snap["derivati"] = None
+        os.makedirs("/data", exist_ok=True)
+        with open("/data/snapshots.jsonl", "a", encoding="utf-8") as f:
+            f.write(_json.dumps(snap, ensure_ascii=False) + chr(10))
+    except Exception as e:
+        log.warning(f"salva_snapshot_auto error (non bloccante): {e}")
+
+
 def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, uid):
     """Registratore append-only su Railway Volume /data/snapshots.jsonl.
     Salva i dati grezzi strutturati + l'analisi AI come testo integrale (Opzione A).
@@ -1988,6 +2045,7 @@ async def auto_monitor(app):
     last_phase = None
     last_reset_day = -1
     last_briefing_day = -1
+    last_snapshot_day = -1
     while True:
         try:
             now = datetime.now()
@@ -2054,6 +2112,21 @@ async def auto_monitor(app):
                     log.info(f"Morning briefing inviato a {len(users)} utenti")
                 except Exception as e:
                     log.error(f"Briefing error: {e}")
+            # Snapshot automatico giornaliero alle 9:00 (per validazione statistica)
+            if hour == 9 and today != last_snapshot_day:
+                last_snapshot_day = today
+                try:
+                    sg = get_global(); sp = get_prices(); sfg = get_fg()
+                    s_stable = get_stablecoins()
+                    s_ctx = compute_altseason_score(sg, sp, sfg, s_stable)
+                    s_ctx = s_ctx + chr(10) + _fmt_stable(s_stable)
+                    s_ctx = s_ctx + chr(10) + _fmt_deriv(get_derivatives())
+                    s_ctx = s_ctx + chr(10) + _fmt_trend(get_trend_7d())
+                    s_resp = get_claude_response("Analisi automatica giornaliera", s_ctx, ADMIN_ID)
+                    salva_snapshot_auto(sg, sp, sfg, s_stable, get_derivatives(), get_trend_7d(), s_ctx, s_resp)
+                    log.info("Snapshot automatico giornaliero salvato")
+                except Exception as e:
+                    log.error(f"Snapshot automatico error: {e}")
             g = get_global(); p = get_prices(); fg = get_fg()
             ph, desc, level = phase(g["dom"])
             # Check alerts per ogni utente
