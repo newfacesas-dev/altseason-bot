@@ -241,7 +241,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
     [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
     [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
-    [KeyboardButton("📢 Condividi"), KeyboardButton("👥 Utenti")],
+    [KeyboardButton("📢 Condividi"), KeyboardButton("🔧 Admin")],
     [KeyboardButton("❓ Aiuto")],
 ], resize_keyboard=True)
 
@@ -260,7 +260,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("📤 Exit Plan"), KeyboardButton("🚨 Check Exit")],
             [KeyboardButton("🤖 Ask AI"), KeyboardButton("📊 My Plan")],
             [KeyboardButton("💳 Subscribe"), KeyboardButton("🔗 Referral")],
-            [KeyboardButton("📢 Share"), KeyboardButton("👥 Users")],
+            [KeyboardButton("📢 Share"), KeyboardButton("🔧 Admin")],
             [KeyboardButton("❓ Help")],
         ], resize_keyboard=True)
     elif lang == "pt":
@@ -274,7 +274,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("📤 Plano de Saida"), KeyboardButton("🚨 Verificar Saida")],
             [KeyboardButton("🤖 Perguntar AI"), KeyboardButton("📊 Meu Plano")],
             [KeyboardButton("💳 Assinar"), KeyboardButton("🔗 Referral")],
-            [KeyboardButton("📢 Compartilhar"), KeyboardButton("👥 Usuarios")],
+            [KeyboardButton("📢 Compartilhar"), KeyboardButton("🔧 Admin")],
             [KeyboardButton("❓ Ajuda")],
         ], resize_keyboard=True)
     else:  # it default
@@ -288,7 +288,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
             [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
             [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
-            [KeyboardButton("📢 Condividi"), KeyboardButton("👥 Utenti")],
+            [KeyboardButton("📢 Condividi"), KeyboardButton("🔧 Admin")],
             [KeyboardButton("❓ Aiuto")],
         ], resize_keyboard=True)
 
@@ -1966,7 +1966,7 @@ async def handle_text(u, c):
         "🤖 Chiedi AI": cmd_ai, "📊 Il mio piano": cmd_myplan,
         "💳 Abbonati": cmd_pay, "🔗 Referral": cmd_referral,
         "📢 Condividi": cmd_share, "❓ Aiuto": cmd_help,
-        "👥 Utenti": cmd_users,
+        "🔧 Admin": cmd_admin,
         # EN
         "🎯 Phase": cmd_phase, "🏆 Top Performers": cmd_top,
         "💱 Forex & Indices": cmd_forex, "💹 Add Coin": cmd_addwizard,
@@ -1974,14 +1974,14 @@ async def handle_text(u, c):
         "📤 Exit Plan": cmd_exit_plan, "🚨 Check Exit": cmd_stoploss,
         "🤖 Ask AI": cmd_ai, "📊 My Plan": cmd_myplan,
         "💳 Subscribe": cmd_pay, "📢 Share": cmd_share,
-        "👥 Users": cmd_users, "❓ Help": cmd_help,
+        "🔧 Admin": cmd_admin, "❓ Help": cmd_help,
         # PT
         "📰 Noticias": cmd_news, "💹 Adicionar Moeda": cmd_addwizard,
         "🔔 Meus Alertas": cmd_alerts, "⚙️ Config Alertas": cmd_setup,
         "📤 Plano de Saida": cmd_exit_plan, "🚨 Verificar Saida": cmd_stoploss,
         "🤖 Perguntar AI": cmd_ai, "📊 Meu Plano": cmd_myplan,
         "💳 Assinar": cmd_pay, "📢 Compartilhar": cmd_share,
-        "👥 Usuarios": cmd_users, "❓ Ajuda": cmd_help,
+        "🔧 Admin": cmd_admin, "❓ Ajuda": cmd_help,
         # Admin
         "👥 I miei Utenti": cmd_users, "📊 Stats Admin": cmd_admin,
         "💰 Ricavi": cmd_admin, "🔙 Torna al Bot": None,
