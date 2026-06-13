@@ -2298,7 +2298,15 @@ async def handle_text(u, c):
             "pt": "\n\n\U0001f4ac _Mais perguntas? Pode me perguntar!_",
         }
         followup = ""
-        await u.message.reply_text("\U0001f916 *AI Analysis*\n\n" + response + followup, parse_mode="Markdown", reply_markup=kb(uid))
+        _full_msg = "\U0001f916 *AI Analysis*\n\n" + response + followup
+        try:
+            await u.message.reply_text(_full_msg, parse_mode="Markdown", reply_markup=kb(uid))
+        except Exception as _e_md:
+            log.warning(f"Markdown analisi fallito, invio testo semplice: {_e_md}")
+            try:
+                await u.message.reply_text("\U0001f916 AI Analysis\n\n" + response + followup, reply_markup=kb(uid))
+            except Exception as _e_plain:
+                log.error(f"Invio analisi fallito anche in testo semplice: {_e_plain}")
         salva_snapshot(g, p, fg, _stable, get_derivatives(), get_trend_7d(), ctx, response, uid)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
