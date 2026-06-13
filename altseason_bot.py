@@ -196,17 +196,26 @@ QUIET_END = 8
 AI_LIMITS = {"free": 5, "basic": 50, "pro": 999}
 
 ADMIN_PORTFOLIO = {
-    "XRP": {"qty": 25142, "buy": 1.36},
-    "SOL": {"qty": 201, "buy": 85.9},
-    "ETH": {"qty": 10.52, "buy": 2117},
-    "DOGE": {"qty": 31128, "buy": 0.10},
+    # Coin con prezzo d'acquisto reale (P&L vero)
+    "XRP": {"qty": 22573, "buy": 1.36},
+    "SOL": {"qty": 208.33, "buy": 85.9},
+    "ETH": {"qty": 10.45, "buy": 2117},
+    "DOGE": {"qty": 31128.9, "buy": 0.10},
     "BNB": {"qty": 5.05, "buy": 590},
-    "HBAR": {"qty": 14686, "buy": 0.07},
-    "BONK": {"qty": 150804881, "buy": 0.000006},
-    "SEI": {"qty": 13723, "buy": 0.40},
-    "FET": {"qty": 3223, "buy": 0.21},
-    "LUNA": {"qty": 9057, "buy": 0.50},
-    "GRT": {"qty": 43036, "buy": 0.12},
+    "HBAR": {"qty": 14686.06, "buy": 0.07},
+    "BONK": {"qty": 161816078, "buy": 0.000006},
+    "SEI": {"qty": 13723.39, "buy": 0.40},
+    "FET": {"qty": 3223.11, "buy": 0.21},
+    "GRT": {"qty": 43036.4, "buy": 0.12},
+    # Coin nuove: buy=None -> al /reset viene messo il prezzo attuale (P&L da zero)
+    "ADA": {"qty": 4996.03, "buy": None},
+    "AGIX": {"qty": 6900, "buy": None},
+    "ALGO": {"qty": 14606.8, "buy": None},
+    "MANA": {"qty": 1186.94, "buy": None},
+    "NEAR": {"qty": 379.379, "buy": None},
+    "POL": {"qty": 24281.1, "buy": None},
+    "TRX": {"qty": 5437.16, "buy": None},
+    "XLM": {"qty": 13136.3, "buy": None},
 }
 
 ASSETS = {
@@ -1741,7 +1750,20 @@ async def cmd_reset(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
     if uid == ADMIN_ID:
-        ud["portfolio"] = ADMIN_PORTFOLIO.copy()
+        import copy as _copy
+        _pf = _copy.deepcopy(ADMIN_PORTFOLIO)
+        try:
+            _prezzi = get_prices()
+            for _sym, _pos in _pf.items():
+                if _pos.get("buy") is None:
+                    _pr = _prezzi.get(_sym, {}).get("price", 0)
+                    _pos["buy"] = _pr if _pr else 0
+        except Exception as _e:
+            log.warning(f"reset: prezzi non recuperati per buy dinamico: {_e}")
+            for _sym, _pos in _pf.items():
+                if _pos.get("buy") is None:
+                    _pos["buy"] = 0
+        ud["portfolio"] = _pf
         ud["plan"] = "pro"
         ud["ai_msgs"] = 0
         save_user(uid, ud)
