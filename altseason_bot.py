@@ -852,6 +852,251 @@ def get_news_summary(blocco_notizie, lang="it"):
         return ""
 
 
+# ============================================================
+# ROTATION ENGINE (descrittivo, non segnale automatico di trading)
+# ============================================================
+# Coin capofila per categoria (proxy). ID CoinGecko standard.
+_ROT_CATEGORIES = {
+    "BTC": ["bitcoin"],
+    "ETH": ["ethereum"],
+    "LARGE": ["ripple", "solana", "binancecoin"],
+    "MID": ["cardano", "hedera-hashgraph", "stellar"],
+    "AI": ["fetch-ai", "singularitynet"],
+    "MEME": ["dogecoin", "bonk", "book-of-meme"],
+}
+# Cache storici: { cg_id: (timestamp_epoch, closes_list) }
+_rot_cache = {}
+_ROT_CACHE_TTL = 43200  # 12 ore (>= 6h richiesto). Storici 7/30gg cambiano lentamente.
+
+def _rot_get_history(cg_id):
+    """Storico prezzi (closes) di una coin, con cache 12h e tolleranza errori.
+    Ritorna lista closes oppure None. In caso di 429/errore usa cache se esiste."""
+    import time as _t
+    now = _t.time()
+    # cache valida?
+    cached = _rot_cache.get(cg_id)
+    if cached and (now - cached[0]) < _ROT_CACHE_TTL:
+        return cached[1]
+    # scarico
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days=30&interval=daily"
+        r = requests.get(url, timeout=12)
+        if r.status_code == 429:
+            # rate limit: uso l'ultimo cached valido se esiste (anche se scaduto)
+            if cached:
+                return cached[1]
+            return None
+        r.raise_for_status()
+        prices = r.json().get("prices", [])
+        closes = [float(p[1]) for p in prices if isinstance(p, (list, tuple)) and len(p) >= 2]
+        if len(closes) >= 8:
+            _rot_cache[cg_id] = (now, closes)
+            return closes
+        # pochi dati: se ho cache vecchia, meglio quella
+        if cached:
+            return cached[1]
+        return None
+    except Exception:
+        if cached:
+            return cached[1]
+        return None
+
+def _rot_perf(closes, giorni):
+    """Variazione % su 'giorni' (7 o 30). closes[-1]=oggi. None se dati insuff."""
+    if not closes or len(closes) < giorni + 1:
+        return None
+    base = closes[-(giorni + 1)]
+    if not base:
+        return None
+    return (closes[-1] - base) / base * 100
+
+def _rot_category_strength(category_ids, giorni):
+    """Forza media di una categoria su 'giorni'. Ritorna (media_perf, n_validi, n_totali).
+    Salta le coin che falliscono (tolleranza errori)."""
+    perfs = []
+    for cg in category_ids:
+        closes = _rot_get_history(cg)
+        p = _rot_perf(closes, giorni)
+        if p is not None:
+            perfs.append(p)
+    n_validi = len(perfs)
+    n_totali = len(category_ids)
+    media = sum(perfs) / n_validi if n_validi else None
+    return media, n_validi, n_totali
+
+def compute_rotation_state(g=None, trend=None, stable=None):
+    """ROTATION ENGINE DETERMINISTICO (descrittivo, non trading automatico).
+
+    SOGLIE: scelte ragionevoli ma NON validate statisticamente. Dichiarate qui.
+    Lo stato e' un'indicazione descrittiva, sempre accompagnata da confidence.
+
+    Ritorna dict: state, confidence, suggested_action, dettagli.
+    Tollerante agli errori: coin/categorie mancanti -> saltate, confidence abbassata,
+    dati mancanti elencati in dettagli['dati_mancanti'].
+    """
+    dettagli = {"forza_7d": {}, "forza_30d": {}, "dati_mancanti": [], "note": []}
+
+    # --- 1) Raccolgo forza per categoria (7 e 30 giorni) ---
+    forza7 = {}
+    forza30 = {}
+    categorie_complete = 0
+    categorie_totali = len(_ROT_CATEGORIES)
+    for cat, ids in _ROT_CATEGORIES.items():
+        m7, v7, t7 = _rot_category_strength(ids, 7)
+        m30, v30, t30 = _rot_category_strength(ids, 30)
+        forza7[cat] = m7
+        forza30[cat] = m30
+        if m7 is not None:
+            dettagli["forza_7d"][cat] = round(m7, 1)
+        if m30 is not None:
+            dettagli["forza_30d"][cat] = round(m30, 1)
+        if v7 < t7:
+            dettagli["dati_mancanti"].append(f"{cat}: {t7-v7}/{t7} coin senza dati 7gg")
+        if m7 is not None:
+            categorie_complete += 1
+
+    # --- 2) Dati di contesto ---
+    dom = None
+    try:
+        dom = g.get("dom") if g else None
+    except Exception:
+        dom = None
+    ethbtc_desc = None
+    ethbtc_var = None
+    try:
+        if trend and isinstance(trend, dict) and "ethbtc" in trend:
+            ethbtc_desc = trend["ethbtc"].get("desc")
+            ethbtc_var = trend["ethbtc"].get("var7d")
+    except Exception:
+        pass
+    stable_sig = None
+    try:
+        if stable and isinstance(stable, dict):
+            stable_sig = stable.get("segnale")
+    except Exception:
+        pass
+
+    # --- 3) Euforia meme e % positive 7gg ---
+    meme7 = forza7.get("MEME")
+    euforia_meme = (meme7 is not None and meme7 > 25)  # soglia: meme +25% su 7gg = euforia
+    # % categorie positive su 7gg
+    valide7 = [v for v in forza7.values() if v is not None]
+    pct_positive = (sum(1 for v in valide7 if v > 0) / len(valide7) * 100) if valide7 else None
+
+    # --- 4) LOGICA DETERMINISTICA DEGLI STATI (soglie dichiarate) ---
+    # Ordine di priorita': prima i segnali di rischio (distribuzione/risk-off), poi rotazioni.
+    state = "BTC_LED"  # default prudente
+    motivi = []
+
+    btc7 = forza7.get("BTC")
+    eth7 = forza7.get("ETH")
+    large7 = forza7.get("LARGE")
+    mid7 = forza7.get("MID")
+
+    dom_su = (dom is not None and dom > 56)        # dominance alta (soglia indicativa)
+    ethbtc_giu = (ethbtc_desc == "in calo")
+    ethbtc_su = (ethbtc_desc == "in recupero")
+    stable_outflow = (stable_sig == "OUTFLOW")
+
+    # DISTRIBUTION_WARNING: euforia meme + dominance che risale + ETH/BTC che gira giu
+    if euforia_meme and dom_su and ethbtc_giu:
+        state = "DISTRIBUTION_WARNING"
+        motivi.append("euforia meme + dominance alta + ETH/BTC in calo")
+    # RISK_OFF: maggioranza negativa 7gg + ETH/BTC giu + stablecoin outflow
+    elif (pct_positive is not None and pct_positive < 35) and ethbtc_giu and stable_outflow:
+        state = "RISK_OFF"
+        motivi.append("maggioranza categorie negative + ETH/BTC in calo + stablecoin outflow")
+    # MEME_EUPHORIA: meme nettamente i piu forti
+    elif euforia_meme and (meme7 is not None) and (btc7 is not None) and meme7 > btc7 + 15:
+        state = "MEME_EUPHORIA"
+        motivi.append("meme dominano la forza relativa (possibile fine ciclo)")
+    # MID_CAP_ROTATION: mid cap sovraperformano large cap ed ETH
+    elif (mid7 is not None and large7 is not None and eth7 is not None
+          and mid7 > large7 + 5 and mid7 > eth7 + 5 and mid7 > 0):
+        state = "MID_CAP_ROTATION"
+        motivi.append("mid cap sovraperformano large cap ed ETH")
+    # LARGE_CAP_ROTATION: large cap sovraperformano BTC ed ETH
+    elif (large7 is not None and btc7 is not None and eth7 is not None
+          and large7 > btc7 + 3 and large7 > eth7 + 3 and large7 > 0):
+        state = "LARGE_CAP_ROTATION"
+        motivi.append("large cap sovraperformano BTC ed ETH")
+    # ETH_ROTATION: ETH/BTC in recupero + ETH sovraperforma BTC
+    elif ethbtc_su and (eth7 is not None and btc7 is not None and eth7 > btc7):
+        state = "ETH_ROTATION"
+        motivi.append("ETH/BTC in recupero, ETH sovraperforma BTC")
+    # BTC_LED: BTC guida o nessun segnale chiaro (default)
+    else:
+        state = "BTC_LED"
+        if btc7 is not None and eth7 is not None and btc7 >= eth7:
+            motivi.append("BTC guida o pari rispetto alle alt")
+        else:
+            motivi.append("nessuna rotazione chiara (default prudente)")
+
+    # --- 5) CONFIDENCE: dipende da quanti dati + coerenza ---
+    # Base sui dati disponibili
+    copertura = categorie_complete / categorie_totali if categorie_totali else 0
+    dati_contesto = sum(x is not None for x in [dom, ethbtc_desc, stable_sig])  # max 3
+    if copertura >= 0.8 and dati_contesto >= 2 and len(dettagli["dati_mancanti"]) == 0:
+        confidence = "HIGH"
+    elif copertura >= 0.5 and dati_contesto >= 1:
+        confidence = "MEDIUM"
+    else:
+        confidence = "LOW"
+    # Segnali contraddittori abbassano la confidence
+    if state in ("DISTRIBUTION_WARNING", "RISK_OFF") and confidence == "HIGH":
+        # questi stati richiedono piu' certezza: se i dati non sono pieni, scendo
+        if len(dettagli["dati_mancanti"]) > 0:
+            confidence = "MEDIUM"
+
+    # --- 6) SUGGESTED_ACTION (sempre prudente, mai "tutto") ---
+    action_map = {
+        "BTC_LED": "HOLD",
+        "ETH_ROTATION": "MONITORA",
+        "LARGE_CAP_ROTATION": "MONITORA",
+        "MID_CAP_ROTATION": "RUOTA_PARZIALE",
+        "MEME_EUPHORIA": "PREPARA_DISTRIBUZIONE",
+        "DISTRIBUTION_WARNING": "PREPARA_DISTRIBUZIONE",
+        "RISK_OFF": "ESCI_USDC",
+    }
+    suggested_action = action_map.get(state, "MONITORA")
+    # Se confidence LOW, l'azione e' sempre piu' prudente (non spingere oltre MONITORA)
+    if confidence == "LOW" and suggested_action in ("RUOTA_PARZIALE", "PREPARA_DISTRIBUZIONE", "ESCI_USDC"):
+        dettagli["note"].append("confidence LOW: azione declassata a MONITORA per prudenza")
+        suggested_action = "MONITORA"
+
+    dettagli["motivi"] = motivi
+    dettagli["euforia_meme"] = euforia_meme
+    if pct_positive is not None:
+        dettagli["pct_categorie_positive_7gg"] = round(pct_positive, 0)
+
+    return {
+        "state": state,
+        "confidence": confidence,
+        "suggested_action": suggested_action,
+        "dettagli": dettagli,
+    }
+
+def _fmt_rotation(rot):
+    """Formatta il Rotation Engine per il market_context. Dichiara SEMPRE i limiti."""
+    if not rot:
+        return "ROTATION ENGINE: DATO NON DISPONIBILE"
+    d = rot.get("dettagli", {})
+    righe = ["ROTATION ENGINE (descrittivo, non segnale automatico di trading):"]
+    righe.append(f"Stato: {rot.get('state')}")
+    righe.append(f"Confidenza motore: {rot.get('confidence')}")
+    righe.append(f"Azione suggerita: {rot.get('suggested_action')}")
+    f7 = d.get("forza_7d", {})
+    if f7:
+        parti = ", ".join(f"{k} {v:+.0f}%" for k, v in f7.items())
+        righe.append(f"Forza relativa 7gg: {parti}")
+    if d.get("motivi"):
+        righe.append("Motivi: " + "; ".join(d["motivi"]))
+    if d.get("dati_mancanti"):
+        righe.append("Dati mancanti: " + "; ".join(d["dati_mancanti"]))
+    if d.get("note"):
+        righe.append("Note: " + "; ".join(d["note"]))
+    return chr(10).join(righe)
+
 def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_ai):
     """Variante automatica di salva_snapshot: tipo_evento='automatico', nessun chat_id.
     Stessa logica crash-safe e append-only su /data/snapshots.jsonl."""
@@ -863,6 +1108,10 @@ def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_
                 return d.get(k)
             except Exception:
                 return None
+        try:
+            _rot = compute_rotation_state(g, trend, stable)
+        except Exception:
+            _rot = None
         snap = {
             "timestamp_utc": _dt.now(_tz.utc).isoformat(),
             "tipo_evento": "automatico",
@@ -876,6 +1125,7 @@ def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_
             "stablecoin": None,
             "derivati": None,
             "trend_7d": trend if isinstance(trend, dict) else None,
+            "rotation_state": None,
             "market_context": market_context,
             "analisi_completa": analisi_ai,
         }
@@ -902,6 +1152,10 @@ def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_
             snap["derivati"] = deriv
         except Exception:
             snap["derivati"] = None
+        try:
+            snap["rotation_state"] = _rot
+        except Exception:
+            pass
         os.makedirs("/data", exist_ok=True)
         with open("/data/snapshots.jsonl", "a", encoding="utf-8") as f:
             f.write(_json.dumps(snap, ensure_ascii=False) + chr(10))
@@ -922,6 +1176,10 @@ def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, u
                 return d.get(k)
             except Exception:
                 return None
+        try:
+            _rot = compute_rotation_state(g, trend, stable)
+        except Exception:
+            _rot = None
         snap = {
             "timestamp_utc": _dt.now(_tz.utc).isoformat(),
             "tipo_evento": "analisi_manuale",
@@ -935,6 +1193,7 @@ def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, u
             "stablecoin": None,
             "derivati": None,
             "trend_7d": trend if isinstance(trend, dict) else None,
+            "rotation_state": None,
             "market_context": market_context,
             "analisi_completa": analisi_ai,
         }
@@ -969,6 +1228,10 @@ def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, u
         except Exception:
             snap["derivati"] = None
         # scrittura append-only
+        try:
+            snap["rotation_state"] = _rot
+        except Exception:
+            pass
         os.makedirs("/data", exist_ok=True)
         with open("/data/snapshots.jsonl", "a", encoding="utf-8") as f:
             f.write(_json.dumps(snap, ensure_ascii=False) + chr(10))
@@ -1061,6 +1324,8 @@ PORTAFOGLIO UTENTE (base di ogni analisi):
 {pf_str}
 
 {lang_block}
+
+ROTATION ENGINE: nel contesto trovi un blocco "ROTATION ENGINE (descrittivo...)". Usalo come DATO OGGETTIVO per arricchire la lettura della rotazione di mercato, citando stato, confidenza e azione suggerita. MA dichiara SEMPRE che e' un motore descrittivo e non un segnale automatico di trading: scrivi esplicitamente "Rotation Engine descrittivo, non segnale automatico". Non trasformare mai la sua azione suggerita in un ordine secco; resta su formulazioni prudenti (valutare, monitorare). Se la sua confidenza e' LOW, trattalo come indicazione debole.
 
 Massimo 250-350 parole. Sii compatto e operativo. Non inventare dati: se mancano, dichiaralo. Mai garantire profitti."""
         msg = client.responses.create(
@@ -2024,6 +2289,7 @@ async def handle_text(u, c):
         ctx = ctx + chr(10) + _fmt_stable(_stable)
         ctx = ctx + chr(10) + _fmt_deriv(get_derivatives())
         ctx = ctx + chr(10) + _fmt_trend(get_trend_7d())
+        ctx = ctx + chr(10) + _fmt_rotation(compute_rotation_state(g, get_trend_7d(), _stable))
         response = get_claude_response(t, ctx, uid)
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
@@ -2122,6 +2388,7 @@ async def auto_monitor(app):
                     s_ctx = s_ctx + chr(10) + _fmt_stable(s_stable)
                     s_ctx = s_ctx + chr(10) + _fmt_deriv(get_derivatives())
                     s_ctx = s_ctx + chr(10) + _fmt_trend(get_trend_7d())
+                    s_ctx = s_ctx + chr(10) + _fmt_rotation(compute_rotation_state(sg, get_trend_7d(), s_stable))
                     s_resp = get_claude_response("Analisi automatica giornaliera", s_ctx, ADMIN_ID)
                     salva_snapshot_auto(sg, sp, sfg, s_stable, get_derivatives(), get_trend_7d(), s_ctx, s_resp)
                     log.info("Snapshot automatico giornaliero salvato")
