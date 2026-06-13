@@ -1106,6 +1106,227 @@ def _fmt_rotation(rot):
         righe.append("Note: " + "; ".join(d["note"]))
     return chr(10).join(righe)
 
+# ============================================================
+# PORTFOLIO CONTEXT ENGINE (descrittivo, non consulenza finanziaria)
+# ============================================================
+# Collega il portafoglio reale al Rotation Engine + indicatori per evidenziare
+# concentrazioni, asset deboli/forti, aree di rotazione da studiare, rischi euforia.
+# VINCOLI: nessuna percentuale operativa, nessun "vendi/compra", nessuna urgency,
+# solo linguaggio descrittivo dal vocabolario consentito. Soglie dichiarate, non validate.
+
+_PCTX_DISCLAIMER = "Modulo descrittivo, non consulenza finanziaria, non segnale automatico."
+_PCTX_SOGLIA_CONCENTRAZIONE = 25.0  # % del portafoglio oltre cui una posizione e' "concentrata"
+_PCTX_GIORNI_PERSISTENZA = 3        # snapshot consecutivi per confermare una rotazione
+
+# Mappa coin -> categoria (coerente col Rotation Engine)
+_PCTX_CAT = {
+    "BTC": "BTC", "ETH": "ETH",
+    "XRP": "LARGE", "SOL": "LARGE", "BNB": "LARGE",
+    "ADA": "MID", "HBAR": "MID", "XLM": "MID", "POL": "MID", "ALGO": "MID",
+    "TRX": "MID", "NEAR": "MID", "GRT": "MID",
+    "FET": "AI", "AGIX": "AI",
+    "DOGE": "MEME", "BONK": "MEME", "MANA": "MEME", "SEI": "MID",
+}
+
+def _pctx_pesi(portfolio, prices):
+    """Calcola il peso % di ogni posizione sul totale. Fatto oggettivo, non consiglio.
+    Ritorna (lista (sym, peso%, valore), valore_totale). Salta coin senza prezzo."""
+    valori = []
+    totale = 0.0
+    for sym, pos in portfolio.items():
+        try:
+            pr = prices.get(sym, {}).get("price", 0)
+            qty = pos.get("qty", 0)
+            if pr and qty:
+                val = qty * pr
+                valori.append([sym, 0.0, val])
+                totale += val
+        except Exception:
+            continue
+    if totale > 0:
+        for v in valori:
+            v[1] = v[2] / totale * 100
+    valori.sort(key=lambda x: x[1], reverse=True)
+    return valori, totale
+
+def _pctx_rotazione_persistente(stato_attuale, leggi_snapshot_func=None):
+    """Verifica se lo stato del Rotation Engine e' confermato per piu' giorni (snapshot).
+    Ritorna (confermato_bool, n_giorni_concordi, n_snapshot_disponibili, nota).
+    Se snapshot insufficienti -> confermato=False + nota che abbassa confidence."""
+    if not leggi_snapshot_func:
+        return False, 0, 0, "persistenza non verificabile (storico non disponibile)"
+    try:
+        recenti = leggi_snapshot_func(_PCTX_GIORNI_PERSISTENZA)
+    except Exception:
+        return False, 0, 0, "persistenza non verificabile (errore lettura storico)"
+    if not recenti:
+        return False, 0, 0, "nessuno snapshot disponibile per la persistenza"
+    stati = []
+    for snap in recenti:
+        try:
+            rs = snap.get("rotation_state")
+            if isinstance(rs, dict):
+                stati.append(rs.get("state"))
+        except Exception:
+            continue
+    n_disp = len(stati)
+    if n_disp < _PCTX_GIORNI_PERSISTENZA:
+        return False, 0, n_disp, f"snapshot insufficienti per confermare ({n_disp}/{_PCTX_GIORNI_PERSISTENZA} giorni)"
+    concordi = sum(1 for s in stati[-_PCTX_GIORNI_PERSISTENZA:] if s == stato_attuale)
+    confermato = (concordi >= _PCTX_GIORNI_PERSISTENZA)
+    if confermato:
+        nota = f"rotazione {stato_attuale} confermata per {concordi} giorni"
+    else:
+        nota = f"rotazione non ancora confermata ({concordi}/{_PCTX_GIORNI_PERSISTENZA} giorni concordi)"
+    return confermato, concordi, n_disp, nota
+
+def compute_portfolio_context(portfolio, rot=None, g=None, trend=None, stable=None, fg=None, prices=None, leggi_snapshot_func=None):
+    """PORTFOLIO CONTEXT ENGINE (descrittivo). Restituisce osservazioni, MAI ordini.
+    Nessuna percentuale operativa, nessun 'vendi/compra', nessuna urgency.
+    """
+    out = {
+        "note": [],
+        "concentrazioni": [],
+        "asset_deboli": [],
+        "asset_forti": [],
+        "aree_rotazione": [],
+        "rischio_euforia": False,
+        "confidence": "LOW",
+        "disclaimer": _PCTX_DISCLAIMER,
+    }
+    if not portfolio:
+        out["note"].append("portafoglio vuoto o non disponibile")
+        return out
+    if prices is None:
+        prices = {}
+
+    # --- 1) Concentrazioni (fatto oggettivo: peso % sul totale) ---
+    pesi, totale = _pctx_pesi(portfolio, prices)
+    if totale <= 0:
+        out["note"].append("valore portafoglio non calcolabile (prezzi mancanti)")
+        return out
+    for sym, peso, val in pesi:
+        if peso >= _PCTX_SOGLIA_CONCENTRAZIONE:
+            out["concentrazioni"].append({"sym": sym, "peso": round(peso, 1)})
+
+    # --- 2) Forza relativa: asset deboli/forti rispetto al gruppo ---
+    # Uso la forza 7gg delle categorie dal Rotation Engine, se disponibile.
+    forza_cat = {}
+    rot_state = None
+    rot_conf = None
+    try:
+        if rot and isinstance(rot, dict):
+            rot_state = rot.get("state")
+            rot_conf = rot.get("confidence")
+            forza_cat = rot.get("dettagli", {}).get("forza_7d", {}) or {}
+    except Exception:
+        pass
+
+    for sym, peso, val in pesi:
+        cat = _PCTX_CAT.get(sym)
+        if cat is None:
+            continue
+        fcat = forza_cat.get(cat)
+        if fcat is None:
+            continue
+        # debole: categoria nettamente negativa
+        if fcat < -5:
+            out["asset_deboli"].append({"sym": sym, "cat": cat, "forza": round(fcat, 1)})
+        # forte: categoria nettamente positiva
+        elif fcat > 8:
+            out["asset_forti"].append({"sym": sym, "cat": cat, "forza": round(fcat, 1)})
+
+    # --- 3) Aree di rotazione da studiare (con persistenza multi-giorno) ---
+    confermato, concordi, n_disp, nota_pers = _pctx_rotazione_persistente(rot_state, leggi_snapshot_func)
+    if rot_state in ("ETH_ROTATION", "LARGE_CAP_ROTATION", "MID_CAP_ROTATION"):
+        # se il portafoglio e' concentrato in una categoria diversa da quella che ruota
+        cat_che_ruota = {"ETH_ROTATION": "ETH", "LARGE_CAP_ROTATION": "LARGE", "MID_CAP_ROTATION": "MID"}.get(rot_state)
+        concentrate_diverse = [c["sym"] for c in out["concentrazioni"] if _PCTX_CAT.get(c["sym"]) != cat_che_ruota]
+        if concentrate_diverse:
+            out["aree_rotazione"].append({
+                "stato": rot_state,
+                "confermato": confermato,
+                "nota_persistenza": nota_pers,
+                "posizioni_concentrate_altrove": concentrate_diverse,
+            })
+
+    # --- 4) Rischio euforia/distribuzione ---
+    if rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"):
+        # esposizione meme nel portafoglio?
+        meme_pos = [s for s, _, _ in pesi if _PCTX_CAT.get(s) == "MEME"]
+        if meme_pos:
+            out["rischio_euforia"] = True
+
+    # --- 5) Confidence del modulo ---
+    # dipende da: dati Rotation disponibili + snapshot per persistenza
+    if rot_state and rot_conf == "HIGH" and n_disp >= _PCTX_GIORNI_PERSISTENZA:
+        out["confidence"] = "HIGH"
+    elif rot_state and (rot_conf in ("MEDIUM", "HIGH") or n_disp >= 1):
+        out["confidence"] = "MEDIUM"
+    else:
+        out["confidence"] = "LOW"
+
+    # --- 6) Costruzione NOTE testuali (vocabolario consentito) ---
+    note = []
+    for c in out["concentrazioni"]:
+        frase = f"{c['sym']} ha un peso rilevante ({c['peso']:.0f}% del portafoglio): posizione concentrata, da valutare se coerente con la tua strategia"
+        note.append(frase)
+    for a in out["asset_deboli"]:
+        note.append(f"{a['sym']}: asset debole rispetto al gruppo, da monitorare")
+    for a in out["asset_forti"]:
+        note.append(f"{a['sym']}: asset forte da monitorare")
+    for ar in out["aree_rotazione"]:
+        if ar["confermato"]:
+            note.append(f"possibile rotazione da studiare: {ar['stato']} ({ar['nota_persistenza']}). Le tue posizioni concentrate ({', '.join(ar['posizioni_concentrate_altrove'])}) sono in categorie diverse: da valutare se coerente con la tua strategia")
+        else:
+            note.append(f"possibile rotazione da studiare: {ar['stato']}, ma {ar['nota_persistenza']}. Fase non confermata")
+    if out["rischio_euforia"]:
+        note.append("fase di possibile euforia/distribuzione sul comparto meme: da osservare con prudenza, fase non confermata")
+    if not note:
+        note.append("nessuna azione necessaria al momento")
+
+    out["note"] = note
+    return out
+
+def _fmt_portfolio_context(pctx):
+    """Formatta la NOTA PORTAFOGLIO. Include SEMPRE il disclaimer. Mai linguaggio operativo."""
+    if not pctx:
+        return ""
+    righe = ["NOTA PORTAFOGLIO (descrittiva):"]
+    if pctx.get("confidence"):
+        righe.append(f"Confidenza modulo: {pctx['confidence']}")
+    for n in pctx.get("note", []):
+        righe.append(f"- {n}")
+    righe.append(pctx.get("disclaimer", _PCTX_DISCLAIMER))
+    return chr(10).join(righe)
+
+def _leggi_ultimi_snapshot(n=3):
+    """Legge gli ultimi n snapshot da /data/snapshots.jsonl. Read-only, crash-safe.
+    Ritorna lista di dict (i piu' recenti). Per la persistenza del Portfolio Context."""
+    try:
+        import json as _json
+        path = "/data/snapshots.jsonl"
+        if not os.path.exists(path):
+            return []
+        righe = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                righe.append(line)
+        ultimi = righe[-n:] if len(righe) >= n else righe
+        out = []
+        for r in ultimi:
+            try:
+                out.append(_json.loads(r))
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        log.warning(f"_leggi_ultimi_snapshot error: {e}")
+        return []
+
 def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_ai):
     """Variante automatica di salva_snapshot: tipo_evento='automatico', nessun chat_id.
     Stessa logica crash-safe e append-only su /data/snapshots.jsonl."""
@@ -1335,6 +1556,8 @@ PORTAFOGLIO UTENTE (base di ogni analisi):
 {lang_block}
 
 ROTATION ENGINE: nel contesto trovi un blocco "ROTATION ENGINE (descrittivo...)". Usalo come DATO OGGETTIVO per arricchire la lettura della rotazione di mercato, citando stato, confidenza e azione suggerita. MA dichiara SEMPRE che e' un motore descrittivo e non un segnale automatico di trading: scrivi esplicitamente "Rotation Engine descrittivo, non segnale automatico". Non trasformare mai la sua azione suggerita in un ordine secco; resta su formulazioni prudenti (valutare, monitorare). Se la sua confidenza e' LOW, trattalo come indicazione debole.
+
+NOTA PORTAFOGLIO: nel contesto puoi trovare un blocco NOTA PORTAFOGLIO (descrittiva) con osservazioni sul portafoglio reale dell utente (concentrazioni, asset deboli o forti, possibili aree di rotazione). Usalo come spunto descrittivo, MANTENENDO il linguaggio prudente: parla solo di da valutare, da monitorare, posizione concentrata, possibile rotazione da studiare. NON dare MAI percentuali operative, NON dire MAI vendi o compra, NON indicare quantita da spostare. Ricorda sempre che e un modulo descrittivo, non consulenza finanziaria, non segnale automatico.
 
 Massimo 250-350 parole. Sii compatto e operativo. Non inventare dati: se mancano, dichiaralo. Mai garantire profitti."""
         msg = client.responses.create(
@@ -2331,6 +2554,11 @@ async def handle_text(u, c):
         ctx = ctx + chr(10) + _fmt_deriv(get_derivatives())
         ctx = ctx + chr(10) + _fmt_trend(get_trend_7d())
         ctx = ctx + chr(10) + _fmt_rotation(compute_rotation_state(g, get_trend_7d(), _stable))
+        try:
+            _pctx = compute_portfolio_context(load_user(uid).get("portfolio", {}), rot=compute_rotation_state(g, get_trend_7d(), _stable), g=g, trend=get_trend_7d(), stable=_stable, fg=fg, prices=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+            ctx = ctx + chr(10) + chr(10) + chr(128204) + " " + _fmt_portfolio_context(_pctx)
+        except Exception as _e_pctx:
+            log.warning(f"Portfolio context error (non bloccante): {_e_pctx}")
         response = get_claude_response(t, ctx, uid)
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
@@ -2417,12 +2645,21 @@ async def auto_monitor(app):
                         "\U0001f4a1 Scrivi qualsiasi domanda al tuo AI consulente!",
                     ]
                     briefing = "\n".join(lines)
+                    _briefing_admin = briefing
+                    try:
+                        _pf_admin = load_user(ADMIN_ID).get("portfolio", {})
+                        if _pf_admin:
+                            _pctx_b = compute_portfolio_context(_pf_admin, rot=compute_rotation_state(g, get_trend_7d(), get_stablecoins()), g=g, trend=get_trend_7d(), stable=get_stablecoins(), fg=fg, prices=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+                            _briefing_admin = briefing + "\n\n" + chr(128204) + " " + _fmt_portfolio_context(_pctx_b)
+                    except Exception as _e_nb:
+                        log.warning("Nota portafoglio briefing error: " + str(_e_nb))
                     users = list_users()
                     for cid in users:
                         ud = load_user(cid)
                         if not ud.get("quiet_mode", False):
                             try:
-                                await app.bot.send_message(chat_id=int(cid), text=briefing, parse_mode="Markdown")
+                                _txt = _briefing_admin if str(cid) == ADMIN_ID else briefing
+                                await app.bot.send_message(chat_id=int(cid), text=_txt, parse_mode="Markdown")
                             except: pass
                     log.info(f"Morning briefing inviato a {len(users)} utenti")
                 except Exception as e:
