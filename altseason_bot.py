@@ -1715,6 +1715,25 @@ Fear&Greed >85 tre giorni → ESCI
 BTC Dom <48% → ESCI tutto"""
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
+def _fmt_qty(q):
+    """Formatta la quantita in modo compatto: 161.8M, 22.6K, 10.45."""
+    try:
+        q = float(q)
+    except Exception:
+        return str(q)
+    aq = abs(q)
+    if aq >= 1_000_000_000:
+        return f"{q/1_000_000_000:.1f}B"
+    if aq >= 1_000_000:
+        return f"{q/1_000_000:.1f}M"
+    if aq >= 1_000:
+        return f"{q/1_000:.1f}K"
+    if aq >= 1:
+        # numeri piccoli: max 2 decimali, senza decimali inutili
+        return f"{q:.2f}".rstrip("0").rstrip(".")
+    # micro (es. prezzi non quantita, ma per sicurezza)
+    return f"{q:.4f}".rstrip("0").rstrip(".")
+
 async def cmd_portfolio(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
@@ -1734,7 +1753,7 @@ async def cmd_portfolio(u, c):
             pnl = cur - inv
             pct = ((pr - buy) / buy * 100) if buy else 0
             a = "🟢" if pnl >= 0 else "🔴"
-            lines.append(f"{a} *{sym}*: `{pct:+.1f}%` (`${pnl:+,.0f}`)")
+            lines.append(f"{a} *{sym}*: `{_fmt_qty(qty)}` | `{pct:+.1f}%` (`${pnl:+,.0f}`)")
             ti += inv; tc += cur
         tp = tc - ti
         tpct = ((tc - ti) / ti * 100) if ti else 0
