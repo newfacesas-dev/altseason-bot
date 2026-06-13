@@ -1327,6 +1327,209 @@ def _leggi_ultimi_snapshot(n=3):
         log.warning(f"_leggi_ultimi_snapshot error: {e}")
         return []
 
+# ============================================================
+# STATE CHANGE ALERT (informativo, non operativo di trading)
+# ============================================================
+# Invia un alert Telegram all'admin SOLO quando il Rotation Engine cambia fase,
+# o conferma una fase per >=3 giorni di calendario, o quando la confidence sale.
+# Testo deterministico (frasi pre-approvate), nessun linguaggio operativo.
+# Stato notificato persistito su /data/last_state_alert.json. Max 1/24h (eccezione DISTRIBUTION_WARNING).
+
+_SCA_PATH = "/data/last_state_alert.json"
+_SCA_GIORNI_CONFERMA = 3
+_SCA_MIN_ORE = 24  # frequenza minima tra alert (eccetto DISTRIBUTION_WARNING)
+_SCA_STATI_MONITORATI = {
+    "RISK_OFF", "BTC_LED", "ETH_ROTATION", "LARGE_CAP_ROTATION",
+    "MID_CAP_ROTATION", "MEME_EUPHORIA", "DISTRIBUTION_WARNING",
+}
+
+# Frasi di lettura APPROVATE (esatte). Non passano dall'AI: testo fisso.
+_SCA_LETTURE = {
+    "RISK_OFF": "Il quadro descrittivo segnala una fase di possibile riduzione del rischio sul mercato: il capitale sembra muoversi verso maggiore prudenza. Fase da osservare, nessuna azione automatica.",
+    "BTC_LED": "Il quadro descrittivo indica che Bitcoin mantiene la leadership: la rotazione verso le altcoin non risulta confermata. Segnale informativo, fase da monitorare.",
+    "ETH_ROTATION": "Il mercato mostra segnali di possibile rotazione verso Ethereum, che sembra guadagnare forza relativa su Bitcoin. Possibile rotazione, conferma da verificare.",
+    "LARGE_CAP_ROTATION": "Il quadro descrittivo evidenzia una possibile rotazione verso le large cap, che mostrano forza relativa rispetto a Bitcoin ed Ethereum. Fase da osservare, conferma da verificare.",
+    "MID_CAP_ROTATION": "Il quadro descrittivo segnala una possibile rotazione verso le mid cap, che mostrano forza relativa crescente. Fase da monitorare, conferma da verificare.",
+    "MEME_EUPHORIA": "Il quadro descrittivo evidenzia forza marcata sul comparto meme, un segnale storicamente associato a fasi avanzate di mercato. Fase da osservare con attenzione, conferma da verificare.",
+    "DISTRIBUTION_WARNING": "Il quadro descrittivo segnala possibili segni di distribuzione: euforia sui meme insieme a debolezza relativa nelle fasi guida. Attenzione alla distribuzione, fase da osservare, nessuna azione automatica.",
+}
+
+_SCA_CONF_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+
+def _sca_carica_stato_notificato():
+    """Legge /data/last_state_alert.json. Ritorna dict o None. Crash-safe."""
+    try:
+        import json as _json
+        if not os.path.exists(_SCA_PATH):
+            return None
+        with open(_SCA_PATH, encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception as e:
+        log.warning(f"_sca_carica_stato error: {e}")
+        return None
+
+def _sca_salva_stato_notificato(state, confidence, giorni):
+    """Scrive lo stato notificato su /data/last_state_alert.json. Crash-safe."""
+    try:
+        import json as _json
+        from datetime import datetime as _dt, timezone as _tz
+        data = {
+            "state": state,
+            "confidence": confidence,
+            "timestamp": _dt.now(_tz.utc).isoformat(),
+            "giorni_conferma": giorni,
+        }
+        os.makedirs("/data", exist_ok=True)
+        with open(_SCA_PATH, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False)
+        return True
+    except Exception as e:
+        log.warning(f"_sca_salva_stato error (non bloccante): {e}")
+        return False
+
+def _sca_giorni_conferma(stato_attuale, leggi_snapshot_func, max_giorni=10):
+    """Conta da quanti GIORNI DI CALENDARIO consecutivi lo stato e' lo stesso.
+    Filtra gli snapshot per data (un rappresentante per giorno, il piu' recente).
+    Ritorna il numero di giorni consecutivi (>=1 se oggi e' nello stato)."""
+    try:
+        snaps = leggi_snapshot_func(200)  # leggo abbastanza storia
+    except Exception:
+        return 0
+    if not snaps:
+        return 0
+    # Raggruppo per giorno di calendario, tenendo lo stato dell'ultimo snapshot del giorno
+    from datetime import datetime as _dt
+    per_giorno = {}  # giorno (date) -> state
+    for snap in snaps:
+        try:
+            ts = snap.get("timestamp_utc", "")
+            rs = snap.get("rotation_state")
+            if not ts or not isinstance(rs, dict):
+                continue
+            stato = rs.get("state")
+            if not stato:
+                continue
+            giorno = _dt.fromisoformat(ts).date()
+            # l'ultimo snapshot del giorno vince (gli snaps sono in ordine cronologico)
+            per_giorno[giorno] = stato
+        except Exception:
+            continue
+    if not per_giorno:
+        return 0
+    # Ordino i giorni dal piu' recente
+    giorni_ordinati = sorted(per_giorno.keys(), reverse=True)
+    # Conto da quanti giorni consecutivi (a ritroso) lo stato == stato_attuale
+    conteggio = 0
+    for g in giorni_ordinati:
+        if per_giorno[g] == stato_attuale:
+            conteggio += 1
+        else:
+            break
+        if conteggio >= max_giorni:
+            break
+    return conteggio
+
+def compute_state_change_alert(rot_attuale, leggi_snapshot_func):
+    """Decide se inviare un State Change Alert. Restituisce dict:
+    {invia: bool, tipo: str, stato: str, confidence: str, giorni: int, testo: str}
+    Tollerante a errori. Non invia (e non crasha) se i dati mancano.
+    """
+    risultato = {"invia": False}
+    try:
+        if not rot_attuale or not isinstance(rot_attuale, dict):
+            return risultato
+        stato = rot_attuale.get("state")
+        conf = rot_attuale.get("confidence")
+        if stato not in _SCA_STATI_MONITORATI:
+            return risultato
+
+        # giorni di conferma (per calendario)
+        giorni = _sca_giorni_conferma(stato, leggi_snapshot_func)
+
+        # stato notificato precedente
+        prec = _sca_carica_stato_notificato()
+        prec_state = prec.get("state") if prec else None
+        prec_conf = prec.get("confidence") if prec else None
+        prec_ts = prec.get("timestamp") if prec else None
+        prec_giorni = prec.get("giorni_conferma", 0) if prec else 0
+
+        # --- Controllo frequenza: ore dall'ultimo alert ---
+        ore_passate = None
+        if prec_ts:
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                t0 = _dt.fromisoformat(prec_ts)
+                ore_passate = (_dt.now(_tz.utc) - t0).total_seconds() / 3600.0
+            except Exception:
+                ore_passate = None
+
+        # --- Determino se c'e' un motivo per inviare ---
+        motivo = None
+        # 1) cambio stato
+        if prec_state != stato:
+            motivo = "cambio"
+        # 2) stesso stato confermato >=3 giorni (e non gia' notificato come conferma a >=3)
+        elif giorni >= _SCA_GIORNI_CONFERMA and prec_giorni < _SCA_GIORNI_CONFERMA:
+            motivo = "conferma"
+        # 3) confidence aumentata (LOW->MEDIUM/HIGH oppure MEDIUM->HIGH)
+        elif prec_conf and conf and _SCA_CONF_RANK.get(conf, 0) > _SCA_CONF_RANK.get(prec_conf, 0):
+            motivo = "confidence"
+
+        if not motivo:
+            return risultato
+
+        # --- Limite frequenza 24h (eccezione DISTRIBUTION_WARNING) ---
+        if stato != "DISTRIBUTION_WARNING":
+            if ore_passate is not None and ore_passate < _SCA_MIN_ORE:
+                return risultato  # troppo presto, non invio
+
+        # --- Costruisco l'alert ---
+        testo = _fmt_state_change_alert(prec_state, stato, conf, giorni, motivo)
+        risultato = {
+            "invia": True,
+            "tipo": motivo,
+            "stato": stato,
+            "stato_precedente": prec_state,
+            "confidence": conf,
+            "giorni": giorni,
+            "testo": testo,
+        }
+        return risultato
+    except Exception as e:
+        try:
+            log.warning(f"compute_state_change_alert error (non bloccante): {e}")
+        except Exception:
+            pass
+        return {"invia": False}
+
+def _fmt_state_change_alert(stato_prec, stato_nuovo, conf, giorni, motivo):
+    """Costruisce il messaggio dell'alert nel formato approvato. Testo fisso, prudente."""
+    from datetime import datetime as _dt, timezone as _tz
+    ts = _dt.now(_tz.utc).strftime("%d/%m/%Y %H:%M UTC")
+    lettura = _SCA_LETTURE.get(stato_nuovo, "Quadro descrittivo aggiornato. Fase da osservare.")
+    prec_txt = stato_prec if stato_prec else "(nessuno stato precedente registrato)"
+    conf_txt = conf if conf else "n/d"
+    if giorni and giorni >= 1:
+        conferma_txt = f"{giorni} giorn{'o' if giorni == 1 else 'i'}"
+    else:
+        conferma_txt = "in valutazione"
+    righe = [
+        "\U0001f4c8 CAMBIO DI FASE",
+        "",
+        f"Data/Ora: {ts}",
+        "",
+        f"Stato precedente: {prec_txt}",
+        f"Nuovo stato: {stato_nuovo}",
+        f"Confidenza: {conf_txt}",
+        f"Conferma: {conferma_txt}",
+        "",
+        "Lettura:",
+        lettura,
+        "",
+        "Nota: Segnale descrittivo, non ordine operativo.",
+    ]
+    return chr(10).join(righe)
+
 def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_ai):
     """Variante automatica di salva_snapshot: tipo_evento='automatico', nessun chat_id.
     Stessa logica crash-safe e append-only su /data/snapshots.jsonl."""
@@ -2703,6 +2906,19 @@ async def auto_monitor(app):
                 try:
                     await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti >8%\n⚠️ Segnale euforia!", parse_mode="Markdown")
                 except: pass
+            # State Change Alert (informativo, solo admin, max 1/24h)
+            try:
+                _rot_sca = compute_rotation_state(g, get_trend_7d(), get_stablecoins())
+                _sca = compute_state_change_alert(_rot_sca, _leggi_ultimi_snapshot)
+                if _sca.get("invia"):
+                    try:
+                        await app.bot.send_message(chat_id=CHAT_ID, text=_sca["testo"])
+                        _sca_salva_stato_notificato(_sca["stato"], _sca["confidence"], _sca["giorni"])
+                        log.info(f"State Change Alert inviato: {_sca['stato']} ({_sca['tipo']})")
+                    except Exception as _e_send:
+                        log.error(f"State Change Alert invio fallito: {_e_send}")
+            except Exception as _e_sca:
+                log.warning(f"State Change Alert error (non bloccante): {_e_sca}")
         except Exception as e:
             log.error(f"Monitor error: {e}")
         await asyncio.sleep(CHECK_INTERVAL)
