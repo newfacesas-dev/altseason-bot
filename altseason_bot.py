@@ -2472,6 +2472,58 @@ _SCENARIO_DISPLAY = {
 # Soglia BTC Dominance "alta" per PANIC_RISK. Dichiarata, non validata.
 _SENT_DOM_ALTA = 55.0
 
+# ============================================================
+# BIAS ENGINE (deterministico, non da AI)
+# ============================================================
+# Sintetizza in un'unica etichetta il quadro Scenario+Signal Strength+Rotation.
+# Nessun linguaggio operativo. Solo lettura sintetica del quadro descrittivo.
+
+_BIAS_SCENARI_VALIDI = ("ACCUMULO", "PANIC_RISK", "EUFORIA", "NEUTRO")
+
+def _mid_cap_contesto_forte(fg_val, stable_flow):
+    """Contesto forte per MID_CAP_ROTATION. SCELTA TEMPORANEA: il bot non ha ancora
+    una metrica di breadth alt affidabile, quindi valutiamo solo sui 2 criteri disponibili
+    (Fear & Greed > 20, Stablecoin Flow POSITIVE). Se ENTRAMBI veri -> forte.
+    Da rivedere quando sara' disponibile una vera metrica di breadth."""
+    fear_ok = (fg_val is not None and fg_val > 20)
+    stable_ok = (stable_flow == "POSITIVE")
+    return fear_ok and stable_ok
+
+def compute_bias(scenario, signal_strength, rot_state, fg_val, stable_flow):
+    """Bias Engine deterministico. Ritorna (emoji, etichetta).
+    Vincoli rispettati: MEME_EUPHORIA e DISTRIBUTION_WARNING non risultano MAI bullish.
+    Scenari non riconosciuti (None o valori imprevisti) -> fallback sicuro Neutral."""
+    if scenario not in _BIAS_SCENARI_VALIDI:
+        return ("\U0001f7e1", "Neutral")  # fallback sicuro: scenario assente/sconosciuto
+
+    if scenario == "EUFORIA":
+        return ("\U0001f7e3", "Euforia Avanzata")
+
+    if scenario == "ACCUMULO":
+        if signal_strength is not None and signal_strength >= 4:
+            return ("\U0001f7e2", "Bullish")
+        if signal_strength == 3:
+            return ("\U0001f7e2", "Leggermente Bullish")
+        return ("\U0001f7e1", "Neutral")
+
+    if scenario == "PANIC_RISK":
+        if signal_strength is not None and signal_strength >= 4:
+            return ("\U0001f534", "Bearish")
+        return ("\U0001f7e0", "Cautela")
+
+    # scenario == "NEUTRO" -> guarda il Rotation Engine
+    if rot_state in ("RISK_OFF", "DISTRIBUTION_WARNING"):
+        return ("\U0001f7e0", "Cautela")
+    if rot_state in ("ETH_ROTATION", "LARGE_CAP_ROTATION"):
+        return ("\U0001f7e2", "Leggermente Bullish")
+    if rot_state == "MID_CAP_ROTATION":
+        if _mid_cap_contesto_forte(fg_val, stable_flow):
+            return ("\U0001f7e2", "Bullish")
+        return ("\U0001f7e2", "Leggermente Bullish")
+
+    # BTC_LED, MEME_EUPHORIA (in NEUTRO), None, qualsiasi altro -> fallback sicuro
+    return ("\U0001f7e1", "Neutral")
+
 def _sent_stable_flow(stable):
     """Mappa il segnale stablecoin -> POSITIVE/NEUTRAL/NEGATIVE. Tollerante."""
     try:
@@ -2781,6 +2833,9 @@ def _fmt_sentiment_context(sc):
         righe.append("Driver principali:")
         for d in driver:
             righe.append(f"\u2022 {d}")
+
+    _bias_emoji, _bias_label = compute_bias(sc.get("scenario"), sc.get("signal_strength"), sc.get("rot_state"), sc.get("fg"), sc.get("stable_flow"))
+    righe.append(f"Bias Attuale: {_bias_emoji} {_bias_label}")
 
     righe += [
         "",
@@ -3196,6 +3251,13 @@ async def handle_text(u, c):
         except Exception as _e_pctx:
             log.warning(f"Portfolio context error (non bloccante): {_e_pctx}")
         response = get_claude_response(t, ctx, uid)
+        try:
+            _rot_bias = compute_rotation_state(g, get_trend_7d(), _stable)
+            _sc_bias = compute_sentiment_context(fg=fg, rot=_rot_bias, g=g, trend=get_trend_7d(), stable=_stable)
+            _b_emoji, _b_label = compute_bias(_sc_bias.get("scenario"), _sc_bias.get("signal_strength"), _sc_bias.get("rot_state"), _sc_bias.get("fg"), _sc_bias.get("stable_flow"))
+            response = response + chr(10) + chr(10) + f"Bias Attuale: {_b_emoji} {_b_label}"
+        except Exception as _e_bias:
+            log.warning(f"Bias Engine error (non bloccante): {_e_bias}")
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
         followups = {
