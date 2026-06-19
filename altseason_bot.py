@@ -2414,7 +2414,28 @@ def _sanitize_ai_analysis_v3(report_text):
         txt = txt.replace("posizioni long", "posizioni da osservare")
         txt = txt.replace("Posizioni long", "Posizioni da osservare")
         txt = txt.replace("ordine secco", "indicazione secca")
+        
         txt = txt.replace("ordine automatico", "segnale automatico")
+
+        # FIX 1: rimuovi Bias Attuale generato dall'AI (teniamo solo quello finale del bot)
+        righe = txt.split("\n")
+        nuove = []
+        bias_count = 0
+        for r in righe:
+            if "Bias Attuale:" in r:
+                bias_count += 1
+                if bias_count == 1:
+                    continue
+            nuove.append(r)
+        txt = "\n".join(nuove)
+
+        # FIX 2: Stablecoin NEUTRALE => trigger non puo' essere mancante
+        if "Stablecoin NEUTRALE" in txt or "Stablecoin: NEUTRALE" in txt:
+            txt = txt.replace(
+                "Stablecoin inflow positivo: mancante",
+                "Stablecoin inflow positivo: parziale"
+            )
+
 
         return txt
     except Exception:
