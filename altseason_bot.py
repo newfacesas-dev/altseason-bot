@@ -2487,48 +2487,158 @@ def _sent_stable_flow(stable):
         pass
     return None
 
+_SENT_DOM_ALTA = 55.0   # soglia dominance "alta" (sfavorevole accumulo) - dichiarata, non validata
+_SENT_DOM_BASSA = 55.0  # soglia dominance "favorevole accumulo" (<55%) - stessa soglia, simmetrica
+
 def _sent_signal_strength(scenario, fg_val, rot_state, ethbtc_desc, stable_flow, dom):
-    """Signal Strength 0-5 RELATIVO allo scenario attivo. Ritorna (score, etichetta) o (None, nota)."""
+    """Signal Strength 0-5 RELATIVO allo scenario attivo (FIX: dominance ora guarda il VALORE reale,
+    non duplica ethbtc_desc). Ritorna (score, etichetta) o (None, nota)."""
     if scenario == "NEUTRO" or not scenario:
         return None, "nessuno scenario attivo"
     fattori = 0
+
     if scenario == "ACCUMULO":
+        # 1. Fear estremo
         if fg_val is not None and fg_val <= 20: fattori += 1
+        # 2. Rotation favorevole
         if rot_state in ("ETH_ROTATION", "LARGE_CAP_ROTATION"): fattori += 1
-        if ethbtc_desc is not None and ethbtc_desc != "in calo": fattori += 1
+        # 3. BTC Dominance favorevole (FIX: valore reale, soglia <55%, NON duplica ethbtc)
+        if dom is not None and dom < _SENT_DOM_BASSA: fattori += 1
+        # 4. ETH/BTC favorevole (in recupero/rialzo)
         if ethbtc_desc in ("in recupero", "in rialzo"): fattori += 1
+        # 5. Stablecoin favorevole
         if stable_flow == "POSITIVE": fattori += 1
         return fattori, "supporto scenario ACCUMULO"
+
     if scenario == "PANIC_RISK":
+        # 1. Fear estremo (molto basso)
         if fg_val is not None and fg_val <= 15: fattori += 1
+        # 2. Rotation difensiva
         if rot_state in ("RISK_OFF", "BTC_LED"): fattori += 1
-        if ethbtc_desc == "in calo": fattori += 1
-        if stable_flow == "NEGATIVE": fattori += 1
+        # 3. BTC Dominance favorevole alla tesi (FIX: valore reale, soglia >55%)
         if dom is not None and dom > _SENT_DOM_ALTA: fattori += 1
+        # 4. ETH/BTC debole
+        if ethbtc_desc == "in calo": fattori += 1
+        # 5. Stablecoin coerente (outflow)
+        if stable_flow == "NEGATIVE": fattori += 1
         return fattori, "supporto scenario PANIC_RISK"
+
     if scenario == "EUFORIA":
+        # 1. Fear estremo (molto alto)
         if fg_val is not None and fg_val >= 80: fattori += 1
+        # 2. Rotation euforica
         if rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"): fattori += 1
+        # 3. BTC Dominance favorevole a euforia (FIX: dominance bassa, capitale su alt/meme)
+        if dom is not None and dom < _SENT_DOM_BASSA: fattori += 1
+        # 4. ETH/BTC in movimento (recupero/rialzo)
         if ethbtc_desc in ("in recupero", "in rialzo"): fattori += 1
-        if ethbtc_desc in ("in recupero", "in rialzo", "stabile"): fattori += 1
+        # 5. Stablecoin favorevole
         if stable_flow == "POSITIVE": fattori += 1
         return fattori, "supporto scenario EUFORIA"
+
     return None, "scenario non riconosciuto"
 
+_DRIVER_FRASI = {
+    "ACCUMULO": {
+        "fear": "Fear estremo",
+        "rotation": "Rotation verso ETH/large cap confermata",
+        "dominance": "BTC Dominance in calo",
+        "ethbtc": "ETH in forza relativa",
+        "stable": "Stablecoin in ingresso",
+    },
+    "PANIC_RISK": {
+        "fear": "Fear estremo",
+        "rotation": "Mercato in fase difensiva",
+        "dominance": "BTC Dominance in salita",
+        "ethbtc": "ETH/BTC in debolezza",
+        "stable": "Stablecoin in uscita",
+    },
+    "EUFORIA": {
+        "fear": "Sentiment in area di euforia",
+        "rotation": "Rotazione su meme/distribuzione",
+        "dominance": "BTC Dominance in calo (capitale su alt)",
+        "ethbtc": "ETH/BTC in movimento",
+        "stable": "Stablecoin in ingresso",
+    },
+}
+
+def _sent_driver_principali(scenario, fg_val, rot_state, ethbtc_desc, stable_flow, dom):
+    """Lista di driver DETERMINISTICI (frasi fisse) basati sugli stessi fattori del Signal Strength.
+    Nessun testo libero/AI. Ritorna lista di stringhe (max 3, le piu' rilevanti)."""
+    if scenario not in _DRIVER_FRASI:
+        return []
+    frasi = _DRIVER_FRASI[scenario]
+    driver = []
+
+    if scenario == "ACCUMULO":
+        if fg_val is not None and fg_val <= 20: driver.append(frasi["fear"])
+        if rot_state in ("ETH_ROTATION", "LARGE_CAP_ROTATION"): driver.append(frasi["rotation"])
+        if dom is not None and dom < _SENT_DOM_BASSA: driver.append(frasi["dominance"])
+        if ethbtc_desc in ("in recupero", "in rialzo"): driver.append(frasi["ethbtc"])
+        if stable_flow == "POSITIVE": driver.append(frasi["stable"])
+    elif scenario == "PANIC_RISK":
+        if fg_val is not None and fg_val <= 15: driver.append(frasi["fear"])
+        if rot_state in ("RISK_OFF", "BTC_LED"): driver.append(frasi["rotation"])
+        if dom is not None and dom > _SENT_DOM_ALTA: driver.append(frasi["dominance"])
+        if ethbtc_desc == "in calo": driver.append(frasi["ethbtc"])
+        if stable_flow == "NEGATIVE": driver.append(frasi["stable"])
+    elif scenario == "EUFORIA":
+        if fg_val is not None and fg_val >= 80: driver.append(frasi["fear"])
+        if rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"): driver.append(frasi["rotation"])
+        if dom is not None and dom < _SENT_DOM_BASSA: driver.append(frasi["dominance"])
+        if ethbtc_desc in ("in recupero", "in rialzo"): driver.append(frasi["ethbtc"])
+        if stable_flow == "POSITIVE": driver.append(frasi["stable"])
+
+    return driver[:3]  # max 3 driver principali, per leggibilita'
+
+def _sent_setup_quality(signal_strength):
+    """Mappa Signal Strength -> etichetta leggibile. Pura rappresentazione, non nuovo segnale."""
+    if signal_strength is None:
+        return None
+    if signal_strength <= 2:
+        return "DEBOLE"
+    if signal_strength == 3:
+        return "MODERATO"
+    if signal_strength == 4:
+        return "FORTE"
+    return "MOLTO FORTE"  # 5
+
+def _sent_data_quality(dati_mancanti, ethbtc_stale, fg_val, rot_state):
+    """Valuta la qualita' dei dati. Ritorna (emoji, etichetta, note).
+    LIVE = nessun dato mancante/stale. PARZIALE = almeno 1 da cache o secondario mancante.
+    LIMITATA = manca un dato strutturale (Fear&Greed o Rotation Engine)."""
+    note = []
+    if ethbtc_stale:
+        note.append("ETH/BTC da cache")
+    # dati mancanti diversi da ETH/BTC (gia' coperto da stale) - es. dominance
+    secondari_mancanti = [d for d in dati_mancanti if d not in ("ETH/BTC",)]
+    for d in secondari_mancanti:
+        if d not in ("Fear & Greed", "Rotation Engine"):
+            note.append(f"{d} non disponibile")
+    if "ETH/BTC" in dati_mancanti and not ethbtc_stale:
+        note.append("ETH/BTC non disponibile")
+
+    # LIMITATA: manca un dato strutturale
+    if fg_val is None or rot_state is None:
+        return "\U0001f534", "LIMITATA", note
+    # PARZIALE: qualcosa stale o secondario mancante
+    if note:
+        return "\U0001f7e1", "PARZIALE", note
+    # LIVE: tutto a posto
+    return "\U0001f7e2", "LIVE", note
+
 def compute_sentiment_context(fg=None, rot=None, g=None, trend=None, stable=None):
-    """Valuta il sentiment NEL contesto. Descrittivo, tollerante a dati mancanti.
-    PANIC_RISK opzione B: Fear estremo + Rotation difensiva + >=1 conferma di debolezza
-    da fonti multiple (ETH/BTC in calo, stablecoin OUTFLOW, dominance alta).
-    REGOLA ANTI-AMBIGUITA: se ETH/BTC e' in recupero (segnale di forza che contraddice
-    il quadro difensivo), PANIC_RISK NON scatta -> resta NEUTRO.
-    """
+    """Sentiment & Market Context. FIX: Signal Strength dominance guarda il valore reale.
+    Aggiunge Data Quality, Driver principali (deterministici), Setup Quality.
+    PANIC_RISK opzione B + regola anti-ambiguita (gia' presenti, invariate)."""
     out = {
         "scenario": "NEUTRO", "interpretazione": _SENT_FRASI["NEUTRO"],
         "fg": None, "rot_state": None, "rot_conf": None, "dom": None, "ethbtc": None,
         "stable_flow": None, "signal_strength": None, "signal_label": None,
+        "setup_quality": None, "driver_principali": [],
+        "data_quality_emoji": None, "data_quality_label": None, "data_quality_note": [],
         "confidence_note": None, "dati_mancanti": [],
     }
-    # Estrazione tollerante
     fg_val = None
     try:
         if fg and isinstance(fg, dict): fg_val = fg.get("v")
@@ -2562,40 +2672,33 @@ def compute_sentiment_context(fg=None, rot=None, g=None, trend=None, stable=None
     out["fg"] = fg_val; out["rot_state"] = rot_state; out["rot_conf"] = rot_conf
     out["dom"] = dom; out["ethbtc"] = ethbtc_val; out["stable_flow"] = stable_flow
 
-    # Segnali derivati (niente piu' ridondanza dom_su = ethbtc_debole)
     ethbtc_su = (ethbtc_desc in ("in recupero", "in rialzo"))
     ethbtc_debole = (ethbtc_desc == "in calo")
     ethbtc_non_in_calo = (ethbtc_desc is not None and ethbtc_desc != "in calo")
     dom_alta = (dom is not None and dom > _SENT_DOM_ALTA)
     stable_outflow = (stable_flow == "NEGATIVE")
 
-    # --- Valutazione scenari ---
+    # --- Valutazione scenari (INVARIATA) ---
     scenario = "NEUTRO"
     confidence_note = None
     if fg_val is not None and rot_state is not None:
-        # EUFORIA (invariato)
         if fg_val >= 80 and rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"):
             scenario = "EUFORIA"
-        # PANIC_RISK (opzione B + regola anti-ambiguita)
         elif fg_val <= 15 and rot_state in ("RISK_OFF", "BTC_LED"):
-            # conferme di debolezza da fonti multiple
             conferme = []
             if ethbtc_debole: conferme.append("ETH/BTC in calo")
             if stable_outflow: conferme.append("stablecoin in uscita")
             if dom_alta: conferme.append("BTC Dominance alta")
-            # REGOLA ANTI-AMBIGUITA: se ETH/BTC e' in recupero (forza che contraddice), resta NEUTRO
             if ethbtc_su:
-                scenario = "NEUTRO"  # segnale contraddittorio -> ambiguo
+                scenario = "NEUTRO"
             elif len(conferme) >= 1:
                 scenario = "PANIC_RISK"
-                # confidence ridotta se l'unica conferma e' debole o ETH/BTC e' n/d
                 if ethbtc_val is None:
                     confidence_note = "confidenza ridotta: ETH/BTC non disponibile"
                 elif len(conferme) == 1 and "BTC Dominance alta" in conferme:
                     confidence_note = "confidenza ridotta: conferma solo da dominance"
             else:
-                scenario = "NEUTRO"  # nessuna conferma -> non difensivo abbastanza
-        # ACCUMULO (invariato)
+                scenario = "NEUTRO"
         elif fg_val <= 20 and rot_state in ("ETH_ROTATION", "LARGE_CAP_ROTATION") and ethbtc_non_in_calo:
             scenario = "ACCUMULO"
         else:
@@ -2607,16 +2710,26 @@ def compute_sentiment_context(fg=None, rot=None, g=None, trend=None, stable=None
     if ethbtc_stale and not confidence_note:
         out["confidence_note"] = "ETH/BTC da cache (dato non aggiornato)"
 
+    # Signal Strength (FIX dominance) + Setup Quality + Driver principali
     ss, lbl = _sent_signal_strength(scenario, fg_val, rot_state, ethbtc_desc, stable_flow, dom)
     out["signal_strength"] = ss; out["signal_label"] = lbl
+    out["setup_quality"] = _sent_setup_quality(ss)
+    out["driver_principali"] = _sent_driver_principali(scenario, fg_val, rot_state, ethbtc_desc, stable_flow, dom)
+
+    # Data Quality
+    dq_emoji, dq_label, dq_note = _sent_data_quality(out["dati_mancanti"], ethbtc_stale, fg_val, rot_state)
+    out["data_quality_emoji"] = dq_emoji
+    out["data_quality_label"] = dq_label
+    out["data_quality_note"] = dq_note
+
     return out
 
 def _fmt_sentiment_context(sc):
-    """Formatta il quadro Sentiment & Market Context (con upgrade + Scenario Attivo + nomi display)."""
+    """Formatta il quadro Sentiment & Market Context (con fix Signal Strength,
+    Data Quality, Driver principali, Setup Quality). Sempre con nota."""
     from datetime import datetime as _dt, timezone as _tz
     ts = _dt.now(_tz.utc).strftime("%d/%m/%Y %H:%M UTC")
     fg_txt = str(sc.get("fg")) if sc.get("fg") is not None else "n/d"
-    # Rotation con nome display + confidence compatta
     rot_state = sc.get("rot_state")
     rot_conf = sc.get("rot_conf")
     rot_disp = _ROT_DISPLAY.get(rot_state, rot_state) if rot_state else None
@@ -2626,36 +2739,49 @@ def _fmt_sentiment_context(sc):
         rot_txt = rot_disp
     else:
         rot_txt = "n/d"
-    # Scenario Attivo (nome display)
     scenario = sc.get("scenario", "NEUTRO")
     scenario_disp = _SCENARIO_DISPLAY.get(scenario, scenario)
-    # Signal Strength con etichetta
     ss = sc.get("signal_strength")
-    lbl = sc.get("signal_label")
-    if ss is not None:
-        ss_txt = f"{ss}/5 ({lbl})"
-    else:
-        ss_txt = f"n/d ({lbl})" if lbl else "n/d"
-    # Stablecoin Flow
+    ss_txt = f"{ss}/5" if ss is not None else "n/d"
+    setup_q = sc.get("setup_quality")
     flow = sc.get("stable_flow")
     flow_txt = flow if flow else "n/d"
     dom_txt = f"{sc['dom']:.1f}%" if sc.get("dom") is not None else "n/d"
     ethbtc_txt = f"{sc['ethbtc']:.5f}" if sc.get("ethbtc") is not None else "n/d"
+
     righe = [
         "\U0001f4ca ALERT SENTIMENT & MARKET CONTEXT",
         "",
-        f"\U0001f552 Data e ora: {ts}",
+        f"\U0001f552 {ts}",
         f"Fear & Greed: {fg_txt}",
         f"Rotation Engine: {rot_txt}",
         f"Scenario Attivo: {scenario_disp}",
         f"Signal Strength: {ss_txt}",
+    ]
+    if setup_q:
+        righe.append(f"Setup Quality: {setup_q}")
+    righe += [
         f"BTC Dominance: {dom_txt}",
         f"ETH/BTC: {ethbtc_txt}",
         f"Stablecoin Flow: {flow_txt}",
     ]
-    # nota di confidenza, se presente
-    if sc.get("confidence_note"):
-        righe.append(f"Confidenza: {sc['confidence_note']}")
+
+    # Data Quality
+    dq_emoji = sc.get("data_quality_emoji")
+    dq_label = sc.get("data_quality_label")
+    dq_note = sc.get("data_quality_note") or []
+    if dq_emoji and dq_label:
+        righe.append(f"Data Quality: {dq_emoji} {dq_label}")
+        for n in dq_note:
+            righe.append(f"\u2022 {n}")
+
+    # Driver principali
+    driver = sc.get("driver_principali") or []
+    if driver:
+        righe.append("Driver principali:")
+        for d in driver:
+            righe.append(f"\u2022 {d}")
+
     righe += [
         "",
         "Interpretazione:",
