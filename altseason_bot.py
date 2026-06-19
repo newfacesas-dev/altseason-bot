@@ -3343,11 +3343,13 @@ def start_web():
 # ============================================================
 # MAIN
 # ============================================================
-from alerts import start_alert_system, alert_loop
+# alerts.py (sistema alert operativo legacy) DISATTIVATO: sostituito da
+# State Change Alert + Sentiment & Market Context + Rotation Engine + Portfolio Context.
+# from alerts import start_alert_system, alert_loop
 
 
 async def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).post_init(start_alert_system).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
     cmds = [
         ("start", cmd_start), ("help", cmd_help), ("status", cmd_status),
         ("phase", cmd_phase), ("feargreed", cmd_feargreed), ("rsimacd", cmd_rsimacd),
@@ -3398,8 +3400,8 @@ async def main():
             await app.updater.start_polling()
             log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
-        asyncio.create_task(alert_loop(app))
-        log.info("Sistema alert avviato (alert_loop in background)")
+        # alert_loop (sistema alert operativo legacy) DISATTIVATO - vedi nota import sopra
+        log.info("Sistema alert legacy disattivato (alerts.py non avviato)")
         while True:
             await asyncio.sleep(3600)
 
