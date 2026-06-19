@@ -1082,14 +1082,14 @@ def compute_rotation_state(g=None, trend=None, stable=None):
         "BTC_LED": "HOLD",
         "ETH_ROTATION": "MONITORA",
         "LARGE_CAP_ROTATION": "MONITORA",
-        "MID_CAP_ROTATION": "RUOTA_PARZIALE",
+        "MID_CAP_ROTATION": "MONITORA",
         "MEME_EUPHORIA": "PREPARA_DISTRIBUZIONE",
         "DISTRIBUTION_WARNING": "PREPARA_DISTRIBUZIONE",
         "RISK_OFF": "ESCI_USDC",
     }
     suggested_action = action_map.get(state, "MONITORA")
     # Se confidence LOW, l'azione e' sempre piu' prudente (non spingere oltre MONITORA)
-    if confidence == "LOW" and suggested_action in ("RUOTA_PARZIALE", "PREPARA_DISTRIBUZIONE", "ESCI_USDC"):
+    if confidence == "LOW" and suggested_action in ("PREPARA_DISTRIBUZIONE", "ESCI_USDC"):
         dettagli["note"].append("confidence LOW: azione declassata a MONITORA per prudenza")
         suggested_action = "MONITORA"
 
@@ -1767,6 +1767,11 @@ ALERT LOGIC (classifica sempre il segnale):
 MONITORA = condizione interessante ma non ancora operativa
 AZIONE = condizione che richiede intervento: specifica coin, percentuale, motivo, finestra
 ALERT CRITICO = condizione che richiede attenzione immediata
+
+REGOLE LINGUAGGIO OUTPUT (vincolanti):
+- Non mostrare mai codici interni come RUOTA_PARZIALE all'utente finale. Se emerge un codice interno, rendilo come MONITORA.
+- Usa sempre la formula 'Interpretazione del contesto' per descrivere il quadro di mercato.
+- Mantieni il linguaggio descrittivo e prudente: nessun ordine automatico.
 
 REGOLE DECISIONALI (vincolanti):
 Le azioni numeriche precise (percentuali tipo 'riduci BONK 20-25%', oppure 'compra XRP', 'vendi DOGE') sono ammesse SOLO se Confidenza Analisi e' ALTA.
