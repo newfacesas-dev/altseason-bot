@@ -2419,14 +2419,15 @@ def _sanitize_ai_analysis_v3(report_text):
 
         # FIX 1: rimuovi Bias Attuale generato dall'AI (teniamo solo quello finale del bot)
         righe = txt.split("\n")
-        nuove = []
-        bias_count = 0
-        for r in righe:
-            if "Bias Attuale:" in r:
-                bias_count += 1
-                if bias_count == 1:
-                    continue
-            nuove.append(r)
+        bias_lines = [r for r in righe if "Bias Attuale:" in r]
+        bias_finale = bias_lines[-1] if bias_lines else None
+
+        nuove = [r for r in righe if "Bias Attuale:" not in r]
+
+        if bias_finale:
+            nuove.append("")
+            nuove.append(bias_finale)
+
         txt = "\n".join(nuove)
 
         # FIX 2: Stablecoin NEUTRALE => trigger non puo' essere mancante
