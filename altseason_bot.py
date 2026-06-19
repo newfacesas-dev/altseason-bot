@@ -1731,6 +1731,12 @@ CONFIDENZA ANALISI:
 Riporta la Confidenza Analisi (ALTA / MEDIA / BASSA) fornita nei dati, che indica quanti dati reali sono disponibili. NON inventare un punteggio numerico /100: mostra solo i dati reali e la confidenza.
 DATI DISPONIBILI PER FATTORE: per ogni fattore (BTC Dominance, ETH/BTC, TOTAL2, TOTAL3, Sentiment, Altcoin Strength, Stablecoin) indica il valore reale se presente, oppure DATO NON DISPONIBILE. Non assegnare punteggi o pesi.
 
+REGOLA COERENZA TRIGGER CHECKLIST (CRITICA): ogni voce della checklist qui sotto deve rispecchiare ESATTAMENTE
+lo stato indicato sopra in DATI DISPONIBILI PER FATTORE. Se un fattore risulta DATO NON DISPONIBILE,
+il trigger corrispondente DEVE essere segnato 'mancante/non disponibile', MAI 'attivo' ne' 'parziale'.
+Questa regola vale anche per la sezione INTERPRETAZIONE finale: non menzionare come dato positivo o in
+espansione un fattore che risultava DATO NON DISPONIBILE.
+
 TRIGGER CHECKLIST (segna ogni voce come attivo, parziale, o mancante/non disponibile):
 - BTC Dominance sotto area critica
 - ETH/BTC in breakout o recupero
@@ -2488,6 +2494,185 @@ def _mid_cap_contesto_forte(fg_val, stable_flow):
     fear_ok = (fg_val is not None and fg_val > 20)
     stable_ok = (stable_flow == "POSITIVE")
     return fear_ok and stable_ok
+
+import re
+
+def _data_availability_da_score_text(score_text, rot=None):
+    """Deriva la disponibilita' dei fattori critici dal testo GIA' generato da
+    compute_altseason_score (sezione 'DATI DISPONIBILI PER FATTORE'). Non ricalcola
+    nulla: legge la stessa fonte di verita' che il prompt riceve, garantendo
+    allineamento automatico (zero rischio di disallineamento tra le due).
+    Aggiunge Rotation Engine separatamente (non incluso nello score)."""
+    avail = {
+        "TOTAL2/TOTAL3": "disponibile",
+        "ETH/BTC": "disponibile",
+        "Stablecoin": "disponibile",
+        "Volumi": "mancante",  # non tracciato come fattore separato nel bot
+        "Fear & Greed": "disponibile",
+        "Rotation Engine": "disponibile",
+    }
+    testo = score_text or ""
+
+    def _riga_mancante(nome_pattern):
+        for riga in testo.split("\n"):
+            if re.search(nome_pattern, riga, re.IGNORECASE):
+                return "DATO NON DISPONIBILE" in riga
+        return False  # se la riga non c'e' proprio, non possiamo dire nulla -> assume disponibile (conservativo)
+
+    # TOTAL2/TOTAL3: mancante se ALMENO UNO dei due e' mancante nel testo
+    total2_mancante = _riga_mancante(r"^- TOTAL2:")
+    total3_mancante = _riga_mancante(r"^- TOTAL3:")
+    avail["TOTAL2/TOTAL3"] = "mancante" if (total2_mancante or total3_mancante) else "disponibile"
+
+    if _riga_mancante(r"^- ETH/BTC:"):
+        avail["ETH/BTC"] = "mancante"
+
+    if _riga_mancante(r"^- Stablecoin"):
+        avail["Stablecoin"] = "mancante"
+
+    if _riga_mancante(r"^- Sentiment"):
+        avail["Fear & Greed"] = "mancante"
+
+    rot_ok = False
+    try:
+        if rot and isinstance(rot, dict):
+            rot_ok = bool(rot.get("state"))
+    except Exception:
+        pass
+    avail["Rotation Engine"] = "disponibile" if rot_ok else "mancante"
+
+    return avail
+
+# ============================================================
+# COHERENCE VALIDATOR (solo logging, MAI modifica il report)
+# ============================================================
+# Misura contraddizioni interne tra sezioni dello stesso report.
+# Priorita': HIGH (Trigger/Interpretazione vs Data Availability),
+# MEDIUM (Strategia Portafoglio vs Scenario), LOW (Bias vs report).
+
+# Nomi/varianti testuali per ogni fattore critico, usati per il matching nel testo del report.
+_COH_FATTORI_PATTERN = {
+    "TOTAL2/TOTAL3": [r"TOTAL2", r"TOTAL3", r"TOTAL2/TOTAL3"],
+    "ETH/BTC": [r"ETH/BTC", r"ETH\s*BTC"],
+    "Stablecoin": [r"[Ss]tablecoin"],
+    "Volumi": [r"[Vv]olum[ei]"],
+    "Fear & Greed": [r"Fear\s*&?\s*Greed", r"Sentiment\s*\(F&G\)", r"F&G"],
+    "Rotation Engine": [r"Rotation Engine", r"ROTATION ENGINE"],
+}
+
+# Parole che indicano "il fattore e' presente/attivo" in una riga di testo.
+_COH_PAROLE_ATTIVO = [r"\bAttivo\b", r"\bParziale\b", r"in espansione", r"in crescita",
+                      r"in calo\b", r"in recupero", r"in rialzo", r"confermat[oa]"]
+# Parole che indicano correttamente "mancante" (queste NON devono generare warning)
+_COH_PAROLE_MANCANTE = [r"DATO NON DISPONIBILE", r"non disponibile", r"mancante", r"n/d"]
+
+def _estrai_sezione(report_text, nome_sezione, max_righe=15):
+    """Estrae un blocco di testo a partire dalla riga che contiene nome_sezione,
+    fino a max_righe righe dopo (o fino alla prossima intestazione numerata/##)."""
+    if not report_text:
+        return None
+    righe = report_text.split("\n")
+    start = None
+    for i, r in enumerate(righe):
+        if nome_sezione.lower() in r.lower():
+            start = i
+            break
+    if start is None:
+        return None
+    blocco = righe[start:start + max_righe]
+    return "\n".join(blocco)
+
+def _fattore_marcato_attivo(sezione_text, fattore):
+    """True se, nella sezione, il fattore compare con linguaggio 'attivo/disponibile'
+    e NON e' accompagnato da linguaggio 'mancante' sulla stessa riga."""
+    if not sezione_text:
+        return False
+    patterns = _COH_FATTORI_PATTERN.get(fattore, [])
+    for riga in sezione_text.split("\n"):
+        for pat in patterns:
+            if re.search(pat, riga, re.IGNORECASE):
+                # il fattore e' menzionato in questa riga
+                ha_mancante = any(re.search(p, riga, re.IGNORECASE) for p in _COH_PAROLE_MANCANTE)
+                if ha_mancante:
+                    continue  # correttamente marcato mancante, nessun problema
+                ha_attivo = any(re.search(p, riga, re.IGNORECASE) for p in _COH_PAROLE_ATTIVO)
+                if ha_attivo:
+                    return True
+    return False
+
+def log_coherence_warning(field, section_a, section_b, severity, ts):
+    msg = f"COHERENCE WARNING field={field} section_a={section_a} section_b={section_b} severity={severity} timestamp={ts}"
+    log.warning(msg)
+    return msg  # ritorno il testo per i test, non altera nulla nel report
+
+def _strategia_incoerente_con_scenario(sezione_strategia, scenario_attivo):
+    """Euristica MEDIUM: scenario difensivo (PANIC_RISK) ma strategia con linguaggio
+    di accumulo diffuso, o scenario di euforia/accumulo ma strategia con linguaggio
+    difensivo diffuso su piu' categorie. Approssimativa per natura (solo logging)."""
+    if not sezione_strategia or not scenario_attivo:
+        return False
+    testo = sezione_strategia.lower()
+    n_accumula = len(re.findall(r"\bhold\b|\baccumula\b|\bmonitora\b.*hold", testo))
+    n_riduci = len(re.findall(r"riduci|esci|distribuzione", testo))
+    if scenario_attivo == "PANIC_RISK" and n_accumula >= 3 and n_riduci == 0:
+        return True
+    if scenario_attivo in ("EUFORIA",) and n_riduci == 0 and "monitora" not in testo and n_accumula >= 3:
+        return True
+    return False
+
+def _bias_incoerente_con_report(report_text, bias_label):
+    """Euristica LOW: bias bullish ma il report menziona ripetutamente parole
+    negative diffuse (o viceversa). Molto approssimativa, solo logging."""
+    if not report_text or not bias_label:
+        return False
+    testo = report_text.lower()
+    n_neg = len(re.findall(r"\bfragile\b|\bdebole\b|\brischio\b|\bcrollo\b|\bnegativ[oi]\b", testo))
+    n_pos = len(re.findall(r"\bforte\b|\bsolido\b|\bpositiv[oi]\b|\bespansione\b", testo))
+    if bias_label in ("Bullish", "Leggermente Bullish") and n_neg >= 5 and n_pos == 0:
+        return True
+    if bias_label in ("Bearish",) and n_pos >= 5 and n_neg == 0:
+        return True
+    return False
+
+def _coherence_check(report_text, availability, scenario_attivo=None, bias_label=None, now_iso_func=None):
+    """Validator a posteriori. SOLO logging, NON modifica mai report_text.
+    Ritorna la lista dei warning generati (per test/osservabilita'), il report_text
+    restituito a chi chiama resta SEMPRE invariato (la funzione non lo tocca)."""
+    warnings_emessi = []
+    if now_iso_func:
+        ts = now_iso_func()
+    else:
+        from datetime import datetime as _dt, timezone as _tz
+        ts = _dt.now(_tz.utc).isoformat()
+
+    if not report_text or not availability:
+        return warnings_emessi
+
+    sezione_trigger = _estrai_sezione(report_text, "TRIGGER CHECKLIST")
+    sezione_interpretazione = (_estrai_sezione(report_text, "INTERPRETAZIONE")
+                                or _estrai_sezione(report_text, "FASE MERCATO"))
+    sezione_strategia = _estrai_sezione(report_text, "STRATEGIA PORTAFOGLIO")
+
+    for fattore, stato in availability.items():
+        if stato != "mancante":
+            continue
+        if sezione_trigger and _fattore_marcato_attivo(sezione_trigger, fattore):
+            msg = log_coherence_warning(fattore, "TRIGGER_CHECKLIST", "DATA_AVAILABILITY", "HIGH", ts)
+            warnings_emessi.append(msg)
+        if sezione_interpretazione and _fattore_marcato_attivo(sezione_interpretazione, fattore):
+            msg = log_coherence_warning(fattore, "INTERPRETAZIONE", "DATA_AVAILABILITY", "HIGH", ts)
+            warnings_emessi.append(msg)
+
+    if scenario_attivo and sezione_strategia:
+        if _strategia_incoerente_con_scenario(sezione_strategia, scenario_attivo):
+            msg = log_coherence_warning("Strategia/Scenario", "STRATEGIA_PORTAFOGLIO", "SCENARIO_ATTIVO", "MEDIUM", ts)
+            warnings_emessi.append(msg)
+
+    if bias_label and _bias_incoerente_con_report(report_text, bias_label):
+        msg = log_coherence_warning("Bias/Report", "BIAS_FINALE", "REPORT_COMPLESSIVO", "LOW", ts)
+        warnings_emessi.append(msg)
+
+    return warnings_emessi
 
 def compute_bias(scenario, signal_strength, rot_state, fg_val, stable_flow):
     """Bias Engine deterministico. Ritorna (emoji, etichetta).
@@ -3258,6 +3443,12 @@ async def handle_text(u, c):
             response = response + chr(10) + chr(10) + f"Bias Attuale: {_b_emoji} {_b_label}"
         except Exception as _e_bias:
             log.warning(f"Bias Engine error (non bloccante): {_e_bias}")
+        try:
+            _score_text = compute_altseason_score(g, p, fg, _stable)
+            _avail = _data_availability_da_score_text(_score_text, rot=_rot_bias)
+            _coherence_check(response, _avail, scenario_attivo=_sc_bias.get("scenario"), bias_label=_b_label)
+        except Exception as _e_coh:
+            log.warning(f"Coherence check error (non bloccante): {_e_coh}")
         # Add follow-up suggestions based on language
         lang = load_user(uid).get("lang", "it")
         followups = {
