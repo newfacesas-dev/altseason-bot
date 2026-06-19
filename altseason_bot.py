@@ -2107,39 +2107,103 @@ async def cmd_news(u, c):
         log.error(f"News command error: {e}")
         await u.message.reply_text(empty, reply_markup=kb(uid))
 
+# ============================================================
+# TIMELINE - FASE ATTUALE (descrittivo, non previsione)
+# ============================================================
+# Refactor del vecchio cmd_timeline (che faceva previsioni/target/date).
+# Ora legge lo stato ATTUALE del Rotation Engine e spiega la fase corrente.
+# Frasi pre-approvate. Nessuna previsione, nessun target, nessuna data futura.
+
+# Frasi di spiegazione APPROVATE (esatte). Una per stato del Rotation Engine.
+_TIMELINE_FASI = {
+    "BTC_LED": "Fase in cui Bitcoin mantiene la leadership e il capitale non si sposta ancora con decisione verso le altcoin. Da osservare: la BTC Dominance e la tenuta di ETH/BTC. Conferma da verificare nel tempo.",
+    "ETH_ROTATION": "Fase in cui Ethereum mostra forza relativa rispetto a Bitcoin, spesso primo segnale di spostamento del capitale verso asset a maggior rischio. Da osservare: ETH/BTC e il comportamento delle large cap. Conferma da verificare.",
+    "LARGE_CAP_ROTATION": "Fase in cui le large cap (oltre a ETH) mostrano forza relativa rispetto a Bitcoin ed Ethereum. Da osservare: se la forza si estende ad altri segmenti o resta circoscritta. Conferma da verificare.",
+    "MID_CAP_ROTATION": "Fase in cui le mid cap mostrano forza relativa crescente rispetto alle large cap. Storicamente associata a una rotazione piu avanzata del capitale. Da osservare: ampiezza del movimento e sentiment. Conferma da verificare.",
+    "MEME_EUPHORIA": "Fase in cui il comparto meme mostra forza marcata, storicamente associata a momenti avanzati e speculativi del ciclo. Da osservare con particolare attenzione: sentiment e sostenibilita del movimento. Conferma da verificare.",
+    "DISTRIBUTION_WARNING": "Fase che combina euforia sui meme con debolezza relativa nelle aree guida: un quadro che storicamente segnala possibile distribuzione. Da osservare con attenzione: ETH/BTC e BTC Dominance. Conferma da verificare.",
+    "RISK_OFF": "Fase in cui il capitale sembra muoversi verso la prudenza: debolezza diffusa e leadership difensiva. Da osservare: stabilizzazione del sentiment e tenuta dei livelli. Conferma da verificare. Nessuna azione automatica.",
+}
+
+def _fmt_timeline_fase(rot=None, fg=None, g=None, trend=None):
+    """Compone il pannello TIMELINE - FASE ATTUALE (lettura del presente).
+    Se lo stato del Rotation Engine non e' determinabile, lo dichiara invece di inventare.
+    Tollerante a dati mancanti."""
+    from datetime import datetime as _dt, timezone as _tz
+    ts = _dt.now(_tz.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+    # Estrazione tollerante
+    state = None
+    conf = None
+    try:
+        if rot and isinstance(rot, dict):
+            state = rot.get("state")
+            conf = rot.get("confidence")
+    except Exception:
+        pass
+
+    fg_val = None
+    try:
+        if fg and isinstance(fg, dict):
+            fg_val = fg.get("v")
+    except Exception:
+        pass
+
+    dom = None
+    try:
+        if g and isinstance(g, dict):
+            dom = g.get("dom")
+    except Exception:
+        pass
+
+    ethbtc = None
+    try:
+        if trend and isinstance(trend, dict) and "ethbtc" in trend:
+            ethbtc = trend["ethbtc"].get("oggi")
+    except Exception:
+        pass
+
+    fg_txt = str(fg_val) if fg_val is not None else "n/d"
+    conf_txt = conf if conf else "n/d"
+    dom_txt = f"{dom:.1f}%" if dom is not None else "n/d"
+    ethbtc_txt = f"{ethbtc:.5f}" if ethbtc is not None else "n/d"
+
+    # Spiegazione della fase, oppure "non determinabile"
+    if state and state in _TIMELINE_FASI:
+        state_txt = state
+        spiegazione = _TIMELINE_FASI[state]
+    else:
+        state_txt = "non determinabile"
+        spiegazione = "Fase non determinabile al momento, riprova tra qualche minuto."
+
+    righe = [
+        "\U0001f4c5 TIMELINE \u2014 FASE ATTUALE",
+        "",
+        f"\U0001f552 {ts}",
+        f"Rotation Engine: {state_txt}",
+        f"Confidence: {conf_txt}",
+        f"Fear & Greed: {fg_txt}",
+        f"BTC Dominance: {dom_txt}",
+        f"ETH/BTC: {ethbtc_txt}",
+        "",
+        "Fase attuale:",
+        spiegazione,
+        "",
+        "Nota: Lettura descrittiva del presente, non previsione ne ordine operativo.",
+    ]
+    return chr(10).join(righe)
+
 async def cmd_timeline(u, c):
-    msg = """📅 *TIMELINE ALTSEASON 2026*
-
-🌱 *GIUGNO-LUGLIO — ACCUMULO*
-BTC Dom: 55-52% — Fear&Greed <40
-→ TIENI tutto, non vendere nulla
-→ ETH e SOL iniziano a salire
-
-⚡ *AGOSTO-SETTEMBRE — ROTAZIONE*
-BTC Dom <52% — Altcoin +300%
-→ Vendi 25% al T1
-→ Target: XRP $3, SOL $200, ETH $4k
-
-🚀 *OTTOBRE-NOVEMBRE — EUFORIA*
-Fear&Greed >80 — XRP pump tardivo
-→ ESCI dal 50-75% di tutto
-→ DOGE e BONK escono PRIMI
-
-📉 *DICEMBRE — TOP CICLO*
-Crollo -60/-80%
-→ Chi è uscito accumula BTC
-
-🎯 *TARGET FINALI*
-XRP: $3→$5→$8→$12
-SOL: $200→$350→$500→$800
-ETH: $4k→$6k→$9k→$14k
-BNB: $900→$1.2k→$1.5k→$2k
-
-🚨 *SEGNALI DI TOP*
-XRP +15% tardivo → ESCI 50%
-Fear&Greed >85 tre giorni → ESCI
-BTC Dom <48% → ESCI tutto"""
-    await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+    """Pannello FASE ATTUALE (descrittivo): legge lo stato del Rotation Engine e spiega la fase corrente."""
+    try:
+        g = get_global(); fg = get_fg()
+        _stable = get_stablecoins()
+        _trend = get_trend_7d()
+        _rot = compute_rotation_state(g, _trend, _stable)
+        msg = _fmt_timeline_fase(rot=_rot, fg=fg, g=g, trend=_trend)
+        await u.message.reply_text(msg, reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
 def _fmt_qty(q):
     """Formatta la quantita in modo compatto: 161.8M, 22.6K, 10.45."""
