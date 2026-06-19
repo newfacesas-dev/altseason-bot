@@ -1737,6 +1737,84 @@ il trigger corrispondente DEVE essere segnato 'mancante/non disponibile', MAI 'a
 Questa regola vale anche per la sezione INTERPRETAZIONE finale: non menzionare come dato positivo o in
 espansione un fattore che risultava DATO NON DISPONIBILE.
 
+
+AI ANALYSIS V3 — HARD TEMPLATE DEFINITIVO:
+Obiettivo: report stabile, sintetico, coerente. Non generare testo libero fuori dallo schema.
+
+REGOLE GLOBALI:
+- Usa solo label leggibili per il Rotation Engine: BTC GUIDA, ROTAZIONE ETH, ROTAZIONE LARGE CAP, ROTAZIONE MID CAP, EUFORIA MEME, WARNING DISTRIBUZIONE, RISK OFF.
+- Non mostrare codici interni: BTC_LED, ETH_ROTATION, LARGE_CAP_ROTATION, MID_CAP_ROTATION, MIDCAPROTATION, RUOTA_PARZIALE.
+- Non usare: “Lettura operativa”, “Focus operativo”, “Azione operativa”, “Azione suggerita”.
+- Usa solo: “Interpretazione del contesto”, “Focus di monitoraggio”, “Sintesi finale”.
+- Non usare linguaggio esecutivo: compra, vendi, entra, esci, long, short, incremento aggressivo, ordine.
+- Se un trigger è PARZIALE, non descriverlo come pienamente confermato.
+- Se un trigger è MANCANTE/NON DISPONIBILE, non citarlo come supporto positivo.
+- Per TOTAL2/TOTAL3: se disponibili ma senza conferma forte, scrivi “presenti ma non confermano da soli espansione strutturale”.
+- Per ampiezza alt 24h: scrivi “ampiezza positiva sulle alt nelle 24h”, e specifica che non è conferma strutturale.
+- Per EMERGENTI: se stablecoin è NEUTRALE/OUTFLOW oppure Bias è Neutral/Cautela/Bearish, usa MONITORA/HOLD, mai ACCUMULA.
+- Se il quadro è costruttivo ma incompleto, la sintesi finale deve essere 👀 MONITORA.
+
+FORMATO OBBLIGATORIO DEL REPORT:
+
+### 1. STATO MERCATO
+Stato ciclo: [valore]
+Confidenza Analisi: [ALTA/MEDIA/BASSA]
+Rotation Engine: [label leggibile] ([confidence])
+Bias Attuale: [bias]
+
+Scenario principale: [una riga, massimo 18 parole]
+Scenario alternativo: [una riga, massimo 18 parole]
+Scenario avverso: [una riga, massimo 18 parole]
+
+### 2. TRIGGER CHECKLIST
+- BTC Dominance sotto area critica: [attivo/parziale/mancante]
+- ETH/BTC in breakout o recupero: [attivo/parziale/mancante]
+- TOTAL2/TOTAL3 in espansione: [attivo/parziale/mancante]
+- Altcoin principali che sovraperformano BTC: [attivo/parziale/mancante]
+- Volumi reali sulle altcoin: [attivo/parziale/mancante]
+- Stablecoin inflow positivo: [attivo/parziale/mancante]
+- Sentiment da fear verso neutral o greed: [attivo/parziale/mancante]
+- Meme o microcap in accelerazione controllata: [attivo/parziale/mancante]
+
+### 3. INTERPRETAZIONE DEL CONTESTO
+Supporta il quadro:
+- [massimo 3 punti brevi]
+
+Limita il quadro:
+- [massimo 3 punti brevi]
+
+Elementi da osservare:
+- [massimo 3 punti brevi]
+
+### 4. STRATEGIA PORTAFOGLIO
+Blue chip: [HOLD/MONITORA]
+Quasi blue chip: [HOLD/MONITORA]
+Emergenti: [HOLD/MONITORA]
+Meme/microcap: [HOLD/MONITORA]
+Note concentrazione: [massimo 1 riga]
+
+### 5. FINESTRA DI MONITORAGGIO
+Prossimo controllo critico: [12h/24h/48h/72h]
+Urgenza: [BASSA/MEDIA/ALTA]
+
+### 6. SINTESI FINALE
+👀 MONITORA
+Focus di monitoraggio:
+- [massimo 3 punti brevi]
+
+Bias Attuale: [bias]
+
+VIETATO:
+- paragrafi lunghi nella sezione 1
+- ripetere gli stessi dati in più sezioni
+- aggiungere target price
+- aggiungere percentuali operative
+- usare “probabilità” numeriche
+- usare “azione operativa”
+- usare “lettura operativa”
+- usare “focus operativo”
+
+
 TRIGGER CHECKLIST (segna ogni voce come attivo, parziale, o mancante/non disponibile):
 - BTC Dominance sotto area critica
 - ETH/BTC in breakout o recupero
@@ -2230,6 +2308,117 @@ def _fmt_timeline_fase(rot=None, fg=None, g=None, trend=None):
         "Nota: Lettura descrittiva del presente, non previsione ne ordine operativo.",
     ]
     return chr(10).join(righe)
+
+
+# ============================================================
+# AI ANALYSIS V3 — OUTPUT HARDENING / DISPLAY SANITIZER
+# ============================================================
+
+_ROTATION_DISPLAY_LABELS_V3 = {
+    "BTC_LED": "BTC GUIDA",
+    "ETH_ROTATION": "ROTAZIONE ETH",
+    "LARGE_CAP_ROTATION": "ROTAZIONE LARGE CAP",
+    "MID_CAP_ROTATION": "ROTAZIONE MID CAP",
+    "MEME_EUPHORIA": "EUFORIA MEME",
+    "DISTRIBUTION_WARNING": "WARNING DISTRIBUZIONE",
+    "RISK_OFF": "RISK OFF",
+    "MIDCAPROTATION": "ROTAZIONE MID CAP",
+    "MID CAP ROTATION": "ROTAZIONE MID CAP",
+    "ETHROTATION": "ROTAZIONE ETH",
+    "ETH ROTATION": "ROTAZIONE ETH",
+    "LARGECAPROTATION": "ROTAZIONE LARGE CAP",
+    "LARGE CAP ROTATION": "ROTAZIONE LARGE CAP",
+}
+
+def _rotation_display_v3(value):
+    try:
+        if value is None:
+            return "n/d"
+        raw = str(value).strip()
+        key = raw.upper().replace(" ", "_").replace("-", "_")
+        compact = raw.upper().replace("_", "").replace(" ", "").replace("-", "")
+        if key in _ROTATION_DISPLAY_LABELS_V3:
+            return _ROTATION_DISPLAY_LABELS_V3[key]
+        if compact in _ROTATION_DISPLAY_LABELS_V3:
+            return _ROTATION_DISPLAY_LABELS_V3[compact]
+        return raw
+    except Exception:
+        return str(value)
+
+def _sanitize_ai_analysis_v3(report_text):
+    """Pulizia finale deterministica del report AI Analysis.
+    Non cambia i dati di mercato: normalizza solo codici interni, wording operativo
+    e casi evidenti di incoerenza testuale.
+    """
+    try:
+        txt = report_text or ""
+
+        replacements = {
+            "BTC_LED": "BTC GUIDA",
+            "ETH_ROTATION": "ROTAZIONE ETH",
+            "LARGE_CAP_ROTATION": "ROTAZIONE LARGE CAP",
+            "MID_CAP_ROTATION": "ROTAZIONE MID CAP",
+            "MIDCAPROTATION": "ROTAZIONE MID CAP",
+            "ETHROTATION": "ROTAZIONE ETH",
+            "LARGECAPROTATION": "ROTAZIONE LARGE CAP",
+            "MEME_EUPHORIA": "EUFORIA MEME",
+            "DISTRIBUTION_WARNING": "WARNING DISTRIBUZIONE",
+            "RISK_OFF": "RISK OFF",
+            "RUOTA_PARZIALE": "MONITORA",
+        }
+        for old, new in replacements.items():
+            txt = txt.replace(old, new)
+
+        wording = {
+            "### 6. AZIONE OPERATIVA": "### 6. SINTESI FINALE",
+            "**6. AZIONE OPERATIVA**": "**6. SINTESI FINALE**",
+            "AZIONE OPERATIVA": "SINTESI FINALE",
+            "Azione operativa": "Sintesi finale",
+            "Lettura operativa:": "Interpretazione del contesto:",
+            "**Lettura operativa:**": "**Interpretazione del contesto:**",
+            "lettura operativa:": "interpretazione del contesto:",
+            "Focus operativo:": "Focus di monitoraggio:",
+            "**Focus operativo:**": "**Focus di monitoraggio:**",
+            "focus operativo:": "focus di monitoraggio:",
+            "short": "da osservare",
+            "long": "da osservare",
+            "azione operativa": "sintesi finale",
+            "Azione Operativa": "Sintesi Finale",
+            "azione suggerita": "indicazione descrittiva",
+            "Azione suggerita": "Indicazione descrittiva",
+            "incremento aggressivo": "espansione aggressiva",
+            "Incremento aggressivo": "Espansione aggressiva",
+            "evitare incremento aggressivo": "evitare espansione aggressiva",
+            "Evitare incremento aggressivo": "Evitare espansione aggressiva",
+            "breadth alt positiva": "ampiezza positiva sulle alt",
+            "Breadth alt positiva": "Ampiezza positiva sulle alt",
+        }
+        for old, new in wording.items():
+            txt = txt.replace(old, new)
+
+        txt = txt.replace(
+            "TOTAL2/TOTAL3 sono presenti",
+            "TOTAL2/TOTAL3 sono presenti ma non confermano da soli espansione strutturale"
+        )
+        txt = txt.replace(
+            "TOTAL2/TOTAL3 elevati e breadth positiva supportano accumulo selettivo",
+            "TOTAL2/TOTAL3 presenti e ampiezza positiva sulle alt suggeriscono miglioramento interno, ma non confermano ancora espansione strutturale"
+        )
+
+        txt = re.sub(
+            r"(?im)^(\s*[-•]?\s*\*{0,2}Emergenti[^:\n]*:\*{0,2}.*?)(ACCUMULA(?:\s+SELETTIVAMENTE)?)(.*)$",
+            lambda m: m.group(1) + "MONITORA" + m.group(3),
+            txt
+        )
+
+        txt = txt.replace("posizioni long", "posizioni da osservare")
+        txt = txt.replace("Posizioni long", "Posizioni da osservare")
+        txt = txt.replace("ordine secco", "indicazione secca")
+        txt = txt.replace("ordine automatico", "segnale automatico")
+
+        return txt
+    except Exception:
+        return report_text
 
 async def cmd_timeline(u, c):
     """Pannello FASE ATTUALE (descrittivo): legge lo stato del Rotation Engine e spiega la fase corrente."""
@@ -3486,6 +3675,7 @@ async def handle_text(u, c):
             "pt": "\n\n\U0001f4ac _Mais perguntas? Pode me perguntar!_",
         }
         followup = ""
+        response = _sanitize_ai_analysis_v3(response)
         _full_msg = "\U0001f916 *AI Analysis*\n\n" + response + followup
         try:
             await u.message.reply_text(_full_msg, parse_mode="Markdown", reply_markup=kb(uid))
