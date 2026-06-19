@@ -247,7 +247,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("📰 News"), KeyboardButton("📅 Timeline")],
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
-    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
+    [KeyboardButton("📤 Piano Uscita"), KeyboardButton("📊 Sentiment & Contesto")],
     [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
     [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
     [KeyboardButton("📢 Condividi"), KeyboardButton("🔧 Admin")],
@@ -266,7 +266,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("📰 News"), KeyboardButton("📅 Timeline")],
             [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Add Coin")],
             [KeyboardButton("🔔 My Alerts"), KeyboardButton("⚙️ Setup Alerts")],
-            [KeyboardButton("📤 Exit Plan"), KeyboardButton("🚨 Check Exit")],
+            [KeyboardButton("📤 Exit Plan"), KeyboardButton("📊 Sentiment & Context")],
             [KeyboardButton("🤖 Ask AI"), KeyboardButton("📊 My Plan")],
             [KeyboardButton("💳 Subscribe"), KeyboardButton("🔗 Referral")],
             [KeyboardButton("📢 Share"), KeyboardButton("🔧 Admin")],
@@ -280,7 +280,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("📰 Noticias"), KeyboardButton("📅 Timeline")],
             [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Adicionar Moeda")],
             [KeyboardButton("🔔 Meus Alertas"), KeyboardButton("⚙️ Config Alertas")],
-            [KeyboardButton("📤 Plano de Saida"), KeyboardButton("🚨 Verificar Saida")],
+            [KeyboardButton("📤 Plano de Saida"), KeyboardButton("📊 Sentimento & Contexto")],
             [KeyboardButton("🤖 Perguntar AI"), KeyboardButton("📊 Meu Plano")],
             [KeyboardButton("💳 Assinar"), KeyboardButton("🔗 Referral")],
             [KeyboardButton("📢 Compartilhar"), KeyboardButton("🔧 Admin")],
@@ -294,7 +294,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("📰 News"), KeyboardButton("📅 Timeline")],
             [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
             [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
-            [KeyboardButton("📤 Piano Uscita"), KeyboardButton("🚨 Check Uscita")],
+            [KeyboardButton("📤 Piano Uscita"), KeyboardButton("📊 Sentiment & Contesto")],
             [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
             [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
             [KeyboardButton("📢 Condividi"), KeyboardButton("🔧 Admin")],
@@ -2351,27 +2351,146 @@ Azione: Esci dal 50% IMMEDIATAMENTE
 - Bear market: accumula BTC gradualmente"""
     await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
 
-async def cmd_stoploss(u, c):
+# ============================================================
+# SENTIMENT & MARKET CONTEXT (descrittivo, non operativo)
+# ============================================================
+# Refactor del vecchio Fear&Greed alert: invece di consigli di vendita operativi,
+# legge il sentiment NEL contesto (Rotation Engine + dominance + ETH/BTC) e produce
+# una lettura descrittiva. Frasi pre-approvate, zero linguaggio operativo.
+
+# Frasi di interpretazione APPROVATE (esatte). Testo fisso, non passa dall'AI.
+_SENT_FRASI = {
+    "ACCUMULO": "Sentiment estremamente depresso, ma il contesto mostra primi segnali di rotazione verso asset di qualita. Questa combinazione (paura diffusa insieme a forza relativa nascente) descrive una possibile fase di accumulo selettivo, storicamente osservata in zone di minimo emotivo. Fase da osservare, conferma da verificare. Nessuna azione automatica.",
+    "PANIC_RISK": "Sentiment estremamente negativo in un contesto ancora fragile: il capitale sembra muoversi verso la prudenza e la leadership resta difensiva. Il mercato appare in fase difensiva, senza segnali di rotazione confermati. Quadro descrittivo da monitorare con calma, conferma da verificare. Nessuna azione automatica.",
+    "EUFORIA": "Sentiment in area di euforia accompagnato da segnali avanzati di ciclo nel contesto di mercato. Questa combinazione e storicamente associata a fasi mature, dove conviene mantenere lucidita. Fase da osservare con particolare attenzione, conferma da verificare. Nessuna azione automatica.",
+    "NEUTRO": "Sentiment e contesto di mercato non mostrano combinazioni particolari al momento: nessuno scenario rilevante e attivo. Quadro descrittivo nella norma, fase da monitorare. Nessuna azione automatica.",
+}
+
+def compute_sentiment_context(fg=None, rot=None, g=None, trend=None, stable=None):
+    """Valuta il sentiment NEL contesto di mercato. Restituisce dict descrittivo.
+    Deterministico, tollerante a dati mancanti. Nessun linguaggio operativo.
+
+    Scenari (condizioni dichiarate):
+    - ACCUMULO: F&G<=20 + Rotation ETH_ROTATION/LARGE_CAP_ROTATION + dom stabile/giu + ETH/BTC su
+    - PANIC_RISK: F&G<=15 + Rotation RISK_OFF/BTC_LED + dom su + ETH/BTC debole
+    - EUFORIA: F&G>=80 + Rotation MEME_EUPHORIA/DISTRIBUTION_WARNING
+    - NEUTRO: nessuno dei precedenti
+    """
+    out = {
+        "scenario": "NEUTRO",
+        "interpretazione": _SENT_FRASI["NEUTRO"],
+        "fg": None,
+        "rot_state": None,
+        "dom": None,
+        "ethbtc": None,
+        "dati_mancanti": [],
+    }
+
+    # Estrazione dati (tollerante)
+    fg_val = None
     try:
-        p = get_prices(); g = get_global(); fg = get_fg()
-        warnings = []
-        if fg["v"] > 80:
-            warnings.append(f"🔴 *BLOCCO 2 ATTIVO*\nFear&Greed `{fg['v']}` — Vendi 20-30% progressivamente")
-        elif fg["v"] > 75:
-            warnings.append(f"🟡 *BLOCCO 1 ATTIVO*\nFear&Greed `{fg['v']}` — Inizia a vendere 10-15%")
-        if g["dom"] < 48:
-            warnings.append(f"🔴 *BTC DOM CRITICA* `{g['dom']:.1f}%`\nZona storica top ciclo — accelera uscite!")
-        memes = [(s, p[s]["ch"]) for s in ["DOGE","BONK","PEPE"] if p.get(s, {}).get("ch", 0) > 15]
-        if memes:
-            meme_str = ", ".join([f"{s} +{ch:.0f}%" for s,ch in memes])
-            warnings.append(f"🎰 *MEME MANIA AVANZATA*\n{meme_str}\nSegnale top ciclo — ESCI dai meme!")
-        if p.get("XRP", {}).get("ch", 0) > 15 and g["dom"] < 52:
-            warnings.append(f"⚠️ *XRP PUMP TARDIVO* +{p['XRP']['ch']:.1f}%\nStoricamente indica TOP CICLO — Esci dal 50%!")
-        if warnings:
-            msg = "🚨 *ALERT PIANO DI USCITA*\n\n" + "\n\n".join(warnings)
+        if fg and isinstance(fg, dict):
+            fg_val = fg.get("v")
+    except Exception:
+        pass
+    if fg_val is None:
+        out["dati_mancanti"].append("Fear & Greed")
+
+    rot_state = None
+    try:
+        if rot and isinstance(rot, dict):
+            rot_state = rot.get("state")
+    except Exception:
+        pass
+    if rot_state is None:
+        out["dati_mancanti"].append("Rotation Engine")
+
+    dom = None
+    try:
+        if g and isinstance(g, dict):
+            dom = g.get("dom")
+    except Exception:
+        pass
+    if dom is None:
+        out["dati_mancanti"].append("BTC Dominance")
+
+    ethbtc_desc = None
+    ethbtc_val = None
+    try:
+        if trend and isinstance(trend, dict) and "ethbtc" in trend:
+            ethbtc_desc = trend["ethbtc"].get("desc")
+            ethbtc_val = trend["ethbtc"].get("oggi")
+    except Exception:
+        pass
+
+    out["fg"] = fg_val
+    out["rot_state"] = rot_state
+    out["dom"] = dom
+    out["ethbtc"] = ethbtc_val
+
+    # Condizioni di contesto
+    dom_giu_o_stabile = (ethbtc_desc != "in calo")  # proxy: se ETH/BTC non scende, dom non sale forte
+    ethbtc_su = (ethbtc_desc in ("in recupero", "in rialzo"))
+    ethbtc_debole = (ethbtc_desc == "in calo")
+    # dominance trend: usiamo ETH/BTC come proxy (la dom storica non e' disponibile gratis)
+    dom_su = ethbtc_debole
+
+    # --- Valutazione scenari (solo se F&G e Rotation disponibili) ---
+    scenario = "NEUTRO"
+    if fg_val is not None and rot_state is not None:
+        # SCENARIO 3 - EUFORIA (controllo per primo: segnale di fase avanzata)
+        if fg_val >= 80 and rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"):
+            scenario = "EUFORIA"
+        # SCENARIO 2 - PANIC RISK
+        elif fg_val <= 15 and rot_state in ("RISK_OFF", "BTC_LED") and (dom_su or ethbtc_debole):
+            scenario = "PANIC_RISK"
+        # SCENARIO 1 - ACCUMULO
+        elif fg_val <= 20 and rot_state in ("ETH_ROTATION", "LARGE_CAP_ROTATION") and dom_giu_o_stabile:
+            scenario = "ACCUMULO"
         else:
-            msg = f"✅ *Nessun segnale di uscita urgente*\n\nFear&Greed: `{fg['v']}` sotto soglia\nBTC Dom: `{g['dom']:.1f}%` nella norma\nNessuna meme mania in corso"
-        await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
+            scenario = "NEUTRO"
+
+    out["scenario"] = scenario
+    out["interpretazione"] = _SENT_FRASI[scenario]
+    return out
+
+def _fmt_sentiment_context(sc):
+    """Formatta il quadro Sentiment & Market Context. Formato approvato. Sempre con nota."""
+    from datetime import datetime as _dt, timezone as _tz
+    ts = _dt.now(_tz.utc).strftime("%d/%m/%Y %H:%M UTC")
+    fg_txt = str(sc.get("fg")) if sc.get("fg") is not None else "n/d"
+    rot_txt = sc.get("rot_state") if sc.get("rot_state") else "n/d"
+    dom_txt = f"{sc['dom']:.1f}%" if sc.get("dom") is not None else "n/d"
+    ethbtc_txt = f"{sc['ethbtc']:.5f}" if sc.get("ethbtc") is not None else "n/d"
+    righe = [
+        "\U0001f4ca ALERT SENTIMENT & MARKET CONTEXT",
+        "",
+        f"\U0001f552 Data e ora: {ts}",
+        f"Fear & Greed: {fg_txt}",
+        f"Rotation Engine: {rot_txt}",
+        f"BTC Dominance: {dom_txt}",
+        f"ETH/BTC: {ethbtc_txt}",
+        "",
+        "Interpretazione:",
+        sc.get("interpretazione", ""),
+        "",
+        "Nota: Segnale descrittivo, non ordine operativo.",
+    ]
+    if sc.get("dati_mancanti"):
+        righe.insert(-2, "")
+        righe.insert(-2, "Dati non disponibili: " + ", ".join(sc["dati_mancanti"]))
+    return chr(10).join(righe)
+
+async def cmd_stoploss(u, c):
+    """Sentiment & Market Context (descrittivo, non operativo)."""
+    try:
+        g = get_global(); fg = get_fg()
+        _stable = get_stablecoins()
+        _trend = get_trend_7d()
+        _rot = compute_rotation_state(g, _trend, _stable)
+        sc = compute_sentiment_context(fg=fg, rot=_rot, g=g, trend=_trend, stable=_stable)
+        msg = _fmt_sentiment_context(sc)
+        await u.message.reply_text(msg, reply_markup=KEYBOARD)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
@@ -2694,7 +2813,7 @@ async def handle_text(u, c):
         "📰 News": cmd_news, "📅 Timeline": cmd_timeline,
         "💼 Portfolio": cmd_portfolio, "💹 Aggiungi Coin": cmd_addwizard,
         "🔔 I miei Alert": cmd_alerts, "⚙️ Setup Alert": cmd_setup,
-        "📤 Piano Uscita": cmd_exit_plan, "🚨 Check Uscita": cmd_stoploss,
+        "📤 Piano Uscita": cmd_exit_plan, "📊 Sentiment & Contesto": cmd_stoploss,
         "🤖 Chiedi AI": cmd_ai, "📊 Il mio piano": cmd_myplan,
         "💳 Abbonati": cmd_pay, "🔗 Referral": cmd_referral,
         "📢 Condividi": cmd_share, "❓ Aiuto": cmd_help,
@@ -2703,14 +2822,14 @@ async def handle_text(u, c):
         "🎯 Phase": cmd_phase, "🏆 Top Performers": cmd_top,
         "💱 Forex & Indices": cmd_forex, "💹 Add Coin": cmd_addwizard,
         "🔔 My Alerts": cmd_alerts, "⚙️ Setup Alerts": cmd_setup,
-        "📤 Exit Plan": cmd_exit_plan, "🚨 Check Exit": cmd_stoploss,
+        "📤 Exit Plan": cmd_exit_plan, "📊 Sentiment & Context": cmd_stoploss,
         "🤖 Ask AI": cmd_ai, "📊 My Plan": cmd_myplan,
         "💳 Subscribe": cmd_pay, "📢 Share": cmd_share,
         "🔧 Admin": cmd_admin, "❓ Help": cmd_help,
         # PT
         "📰 Noticias": cmd_news, "💹 Adicionar Moeda": cmd_addwizard,
         "🔔 Meus Alertas": cmd_alerts, "⚙️ Config Alertas": cmd_setup,
-        "📤 Plano de Saida": cmd_exit_plan, "🚨 Verificar Saida": cmd_stoploss,
+        "📤 Plano de Saida": cmd_exit_plan, "📊 Sentimento & Contexto": cmd_stoploss,
         "🤖 Perguntar AI": cmd_ai, "📊 Meu Plano": cmd_myplan,
         "💳 Assinar": cmd_pay, "📢 Compartilhar": cmd_share,
         "🔧 Admin": cmd_admin, "❓ Ajuda": cmd_help,
