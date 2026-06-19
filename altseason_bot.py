@@ -1753,8 +1753,15 @@ QUASI BLUE CHIP: AVAX, DOT, NEAR, LINK, ATOM
 EMERGENTI: SUI, APT, TIA, AR, RNDR, RENDER, FET, HBAR, SEI, GRT, INJ, ALGO, FXS
 MEME / MICROCAP: DOGE, SHIB, PEPE, BONK, FLOKI, WIF, BOME, BUZZ, WEPE
 (Se una coin non rientra, assegnala alla categoria piu vicina per market cap e rischio.)
-Per ogni categoria presente nel portafoglio indica una azione tra: HOLD, ACCUMULA, MONITORA, RIDUCI PARZIALMENTE, ESCI, NESSUNA AZIONE.
+Per ogni categoria presente nel portafoglio indica una azione tra: HOLD, MONITORA, ACCUMULA SELETTIVAMENTE, RIDUCI PARZIALMENTE, NESSUNA AZIONE.
 Usa ESCLUSIVAMENTE gli asset realmente presenti nel portafoglio utente indicato sotto. Non elencare coin generiche o di esempio se non sono nel portafoglio. Se una categoria non ha asset nel portafoglio, scrivi: nessun asset in questa categoria.
+
+REGOLE COERENZA PORTAFOGLIO:
+- Se Rotation Engine e' BTC_LED, gli EMERGENTI devono essere MONITORA / HOLD, mai ACCUMULA.
+- Se Bias Attuale e' Neutral, Cautela o Bearish, gli EMERGENTI devono essere MONITORA / HOLD.
+- Se Stablecoin e' NEUTRALE o OUTFLOW, non usare accumulo aggressivo sugli EMERGENTI.
+- Usa ACCUMULA SELETTIVAMENTE sugli EMERGENTI solo se la rotazione e' almeno ETH_ROTATION o LARGE_CAP_ROTATION, il Bias Attuale e' almeno Leggermente Bullish, e la liquidita' non e' negativa.
+- Non usare ESCI come azione di portafoglio salvo DISTRIBUTION_WARNING o RISK_OFF con confidenza alta.
 
 ALERT LOGIC (classifica sempre il segnale):
 MONITORA = condizione interessante ma non ancora operativa
@@ -2599,6 +2606,24 @@ def _fattore_marcato_attivo(sezione_text, fattore):
                 if ha_attivo:
                     return True
     return False
+
+
+def _coherence_check_portfolio_strategy(report_text):
+    """Logging-only: segnala incoerenze evidenti tra strategia portafoglio e quadro mercato."""
+    try:
+        txt = report_text or ""
+        upper = txt.upper()
+        bad_emergenti_accumula = ("EMERGENTI" in upper and "ACCUMULA" in upper)
+        neutral_bias = ("BIAS ATTUALE: 🟡 NEUTRAL" in txt.upper()) or ("BIAS ATTUALE: NEUTRAL" in upper)
+        btc_led = ("BTC_LED" in upper) or ("BTC GUIDA" in upper)
+        if bad_emergenti_accumula and (neutral_bias or btc_led):
+            log.warning(
+                "COHERENCE WARNING field=Emergenti section_a=STRATEGIA_PORTAFOGLIO "
+                "section_b=BIAS_ROTATION severity=MEDIUM timestamp=%s",
+                datetime.now().isoformat()
+            )
+    except Exception as e:
+        log.warning("COHERENCE WARNING validator portfolio failed: %s", e)
 
 def log_coherence_warning(field, section_a, section_b, severity, ts):
     msg = f"COHERENCE WARNING field={field} section_a={section_a} section_b={section_b} severity={severity} timestamp={ts}"
