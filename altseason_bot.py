@@ -3083,6 +3083,7 @@ def _ms_delta_total23_7d(leggi_snapshot_func):
 
 def _ms_stato_total23(g, leggi_snapshot_func=None):
     """NUOVA logica: misura la vera espansione (delta 7d), non la disponibilita'.
+    DEBUG TEMPORANEO (diagnosi): ritorna (stato, debug_text) invece del solo stato.
     ATTIVO: TOTAL2 e TOTAL3 7d entrambi positivi.
     PARZIALE: segnali misti (almeno uno positivo, l'altro no).
     NON ATTIVO: nessuno dei due positivo.
@@ -3093,20 +3094,21 @@ def _ms_stato_total23(g, leggi_snapshot_func=None):
     except Exception:
         t2_now = t3_now = None
     if not t2_now or not t3_now:
-        return "MANCANTE"  # dato attuale assente/0, come prima
+        return "MANCANTE", f"DEBUG: t2_now={t2_now} t3_now={t3_now}"
 
     var_t2, var_t3 = _ms_delta_total23_7d(leggi_snapshot_func)
     if var_t2 is None or var_t3 is None:
-        return "MANCANTE"  # storico insufficiente: onesto, non inventiamo un delta
+        return "MANCANTE", "DEBUG: delta=None (storico insufficiente o snapshot senza total2/3)"
 
     t2_pos = var_t2 > 0
     t3_pos = var_t3 > 0
+    debug_txt = f"DEBUG: T2 7d={var_t2:+.2f}% T3 7d={var_t3:+.2f}%"
 
     if t2_pos and t3_pos:
-        return "ATTIVO"
+        return "ATTIVO", debug_txt
     if not t2_pos and not t3_pos:
-        return "NON ATTIVO"
-    return "PARZIALE"  # segnali misti: uno positivo, l'altro no
+        return "NON ATTIVO", debug_txt
+    return "PARZIALE", debug_txt
 
 def _ms_stato_alt_strength(p):
     try:
@@ -3199,12 +3201,17 @@ _TC_ETICHETTE = [
 def _fmt_trigger_checklist_deterministica(ms):
     """Costruisce il testo della Trigger Checklist usando ESATTAMENTE gli stati
     gia' calcolati da compute_market_score (ms['stati']). Deterministica al 100%,
-    nessun testo generato dall'AI per questa sezione."""
+    nessun testo generato dall'AI per questa sezione.
+    DEBUG TEMPORANEO: mostra il delta reale di TOTAL2/TOTAL3 per diagnosi."""
     righe = ["2. TRIGGER CHECKLIST"]
     stati = (ms or {}).get("stati") or {}
+    debug_t23 = (ms or {}).get("debug_total23")
     for chiave, etichetta in _TC_ETICHETTE:
         stato = stati.get(chiave, "MANCANTE")
-        righe.append(f"- {etichetta}: {stato.lower()}")
+        riga = f"- {etichetta}: {stato.lower()}"
+        if chiave == "TOTAL2/TOTAL3" and debug_t23:
+            riga += f" [{debug_t23}]"
+        righe.append(riga)
     return chr(10).join(righe)
 
 def _sostituisci_sezione_trigger_checklist(response, checklist_text):
@@ -3271,10 +3278,11 @@ def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None, leggi
     """Market Score deterministico 0-100, calcolato SOLO da dati grezzi (non dal testo AI).
     Fattori MANCANTI esclusi dal denominatore (score ricalibrato sui disponibili).
     Pesi e soglie dichiarati, NON validati statisticamente."""
+    _t23_stato, _t23_debug = _ms_stato_total23(g, leggi_snapshot_func)
     stati = {
         "BTC Dominance": _ms_stato_dominance(g),
         "ETH/BTC": _ms_stato_ethbtc(trend),
-        "TOTAL2/TOTAL3": _ms_stato_total23(g, leggi_snapshot_func),
+        "TOTAL2/TOTAL3": _t23_stato,
         "Alt Strength": _ms_stato_alt_strength(p),
         "Volumi Alt": _ms_stato_volumi_alt(),
         "Stablecoin Flow": _ms_stato_stablecoin(stable),
@@ -3294,7 +3302,7 @@ def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None, leggi
     if punti_disponibili == 0:
         return {
             "score": None, "fase": None, "confidenza": None,
-            "punti_disponibili": 0, "stati": stati,
+            "punti_disponibili": 0, "stati": stati, "debug_total23": _t23_debug,
         }
 
     score = round(punti_ottenuti / punti_disponibili * 100)
@@ -3315,7 +3323,7 @@ def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None, leggi
 
     return {
         "score": score, "fase": fase, "confidenza": confidenza,
-        "punti_disponibili": punti_disponibili, "stati": stati,
+        "punti_disponibili": punti_disponibili, "stati": stati, "debug_total23": _t23_debug,
     }
 
 def _fmt_market_score(ms):
