@@ -1815,6 +1815,16 @@ VIETATO:
 - usare “focus operativo”
 
 
+TRIGGER CHECKLIST — STATI CONSENTITI:
+- ATTIVO = dato disponibile e trigger soddisfatto
+- PARZIALE = dato disponibile ma conferma incompleta
+- NON ATTIVO = dato presente ma trigger non soddisfatto
+- MANCANTE/NON DISPONIBILE = dato assente
+
+IMPORTANTE:
+Usa MANCANTE solo quando il dato non esiste davvero.
+Se il dato esiste ma il trigger è spento, usa NON ATTIVO.
+
 TRIGGER CHECKLIST (segna ogni voce come attivo, parziale, o mancante/non disponibile):
 - BTC Dominance sotto area critica
 - ETH/BTC in breakout o recupero
@@ -2349,6 +2359,9 @@ def _sanitize_ai_analysis_v3(report_text):
     """Pulizia finale deterministica del report AI Analysis.
     Non cambia i dati di mercato: normalizza solo codici interni, wording operativo
     e casi evidenti di incoerenza testuale.
+    v4: fix regex \\1 mancante (Sentiment + Stablecoin), dedup Bias robusto
+    (case-insensitive, tollerante a markdown/spazi/emoji), blocco Stablecoin
+    unificato (no piu' ridondanza), wording extra (target price, long/short, compra/vendi).
     """
     try:
         txt = report_text or ""
@@ -2380,8 +2393,6 @@ def _sanitize_ai_analysis_v3(report_text):
             "Focus operativo:": "Focus di monitoraggio:",
             "**Focus operativo:**": "**Focus di monitoraggio:**",
             "focus operativo:": "focus di monitoraggio:",
-            "short": "da osservare",
-            "long": "da osservare",
             "azione operativa": "sintesi finale",
             "Azione Operativa": "Sintesi Finale",
             "azione suggerita": "indicazione descrittiva",
@@ -2414,29 +2425,61 @@ def _sanitize_ai_analysis_v3(report_text):
         txt = txt.replace("posizioni long", "posizioni da osservare")
         txt = txt.replace("Posizioni long", "Posizioni da osservare")
         txt = txt.replace("ordine secco", "indicazione secca")
-        
         txt = txt.replace("ordine automatico", "segnale automatico")
 
-        # FIX 1: rimuovi Bias Attuale generato dall'AI (teniamo solo quello finale del bot)
-        righe = txt.split("\n")
-        bias_lines = [r for r in righe if "Bias Attuale:" in r]
-        bias_finale = bias_lines[-1] if bias_lines else None
+        # --- FIX A (v4): regex con \1 corretto (prima perdevano il prefisso catturato) ---
+        try:
+            if re.search(r"(Fear\s*&\s*Greed|Sentiment)[^\d]{0,25}\d{1,3}", txt, re.I):
+                txt = re.sub(
+                    r"(Sentiment da fear verso neutral o greed:\s*)mancante",
+                    r"\1non attivo",
+                    txt,
+                    flags=re.I
+                )
+        except Exception:
+            pass
 
-        nuove = [r for r in righe if "Bias Attuale:" not in r]
+        # --- FIX C (v4): blocco Stablecoin UNIFICATO (sostituisce sia il vecchio blocco regex
+        # sia il vecchio blocco "FIX 2" duplicato - una sola logica, piu' robusta, copre piu' varianti) ---
+        try:
+            if re.search(r"Stablecoin\s*:?\s*(NEUTRALE|NEUTRAL)\b", txt, re.I):
+                txt = re.sub(
+                    r"(Stablecoin\s+inflow\s+positivo\s*:\s*)mancante",
+                    r"\1parziale",
+                    txt,
+                    flags=re.I
+                )
+        except Exception:
+            pass
 
-        if bias_finale:
-            nuove.append("")
-            nuove.append(bias_finale)
+        # --- FIX B (v4): dedup Bias Attuale ROBUSTO (case-insensitive, tollerante a
+        # markdown/spazi/emoji iniziali). Tiene solo l'ULTIMA occorrenza, la riappende in fondo. ---
+        try:
+            _bias_pat = re.compile(r'^\s*[*_🔴🟢🟡🟠🟣\s]*bias\s+attuale\s*:', re.I)
+            righe = txt.split("\n")
+            bias_lines = [r for r in righe if _bias_pat.match(r)]
+            bias_finale = bias_lines[-1].strip() if bias_lines else None
+            nuove = [r for r in righe if not _bias_pat.match(r)]
+            # rimuovo eventuali righe vuote finali multiple lasciate dalla rimozione
+            while nuove and nuove[-1].strip() == "":
+                nuove.pop()
+            if bias_finale:
+                nuove.append("")
+                nuove.append(bias_finale)
+            txt = "\n".join(nuove)
+        except Exception:
+            pass
 
-        txt = "\n".join(nuove)
-
-        # FIX 2: Stablecoin NEUTRALE => trigger non puo' essere mancante
-        if "Stablecoin NEUTRALE" in txt or "Stablecoin: NEUTRALE" in txt:
-            txt = txt.replace(
-                "Stablecoin inflow positivo: mancante",
-                "Stablecoin inflow positivo: parziale"
-            )
-
+        # --- FIX D (v4): wording extra (target price, long/short, compra/vendi) ---
+        try:
+            txt = re.sub(r"\btarget\s+prices\b", "obiettivi prezzo", txt, flags=re.I)
+            txt = re.sub(r"\btarget\s+price\b", "obiettivo prezzo", txt, flags=re.I)
+            txt = re.sub(r"\blong\b", "da osservare", txt, flags=re.I)
+            txt = re.sub(r"\bshort\b", "da osservare", txt, flags=re.I)
+            txt = re.sub(r"\bcompra\b", "monitora", txt, flags=re.I)
+            txt = re.sub(r"\bvendi\b", "monitora", txt, flags=re.I)
+        except Exception:
+            pass
 
         return txt
     except Exception:
