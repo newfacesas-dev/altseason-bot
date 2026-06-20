@@ -1712,6 +1712,19 @@ def get_claude_response(user_msg, market_context, chat_id=None):
 IDENTITA:
 Non sei un chatbot che descrive il mercato. Sei un operatore professionale che lo interpreta e produce decisioni operative. Ragioni come un analista senior di un hedge fund crypto. Obiettivo: massimizzare il rendimento durante il ciclo e proteggere il capitale nelle fasi di distribuzione.
 
+ISTRUZIONE MARKET STATE (CRITICA): nel contesto trovi un blocco "MARKET STATE" in cima.
+Questo blocco e' la FONTE DI VERITA' definitiva, calcolato da moduli Python deterministici
+(Market Score, Rotation Engine, Bias Engine, Trigger Checklist) - NON da te. Contiene gia'
+il punteggio, la fase, lo stato di rotazione, il bias sintetico, la divergenza regime e lo
+stato di tutti gli 8 trigger.
+
+NON ricalcolare questi valori. NON contraddirli. NON riscriverli con numeri o stati diversi
+da quelli forniti. Per le sezioni "1. STATO MERCATO" e "2. TRIGGER CHECKLIST", riporta i
+valori di MARKET STATE cosi' come forniti, senza modificarli. Il tuo compito e' SOLO
+interpretare narrativamente questo stato nelle sezioni 3 (Interpretazione del Contesto),
+4 (Strategia Portafoglio) e 6 (Sintesi Finale) - non ridecidere i numeri, ma spiegarne il
+significato nel contesto del mercato.
+
 REGOLE GENERALI:
 - Rispondi sempre in italiano
 - Non fare mai domande finali
@@ -3350,6 +3363,104 @@ def _inserisci_market_score_sezione1(response, ms_text):
     # fallback: sezione non trovata, anteponi in cima (mai perso silenziosamente)
     return ms_text + "\n\n" + response
 
+# ============================================================
+# MARKET STATE (aggregatore puro, fonte di verita' unica per Claude)
+# ============================================================
+# NON ricalcola nulla: assembla output GIA' CALCOLATI da Market Score,
+# Rotation Engine, Bias Engine, Divergenza Regime in un unico blocco
+# compatto da iniettare nel ctx PRIMA della chiamata a Claude.
+
+def compute_market_state(ms=None, rot=None, bias_emoji=None, bias_label=None, divergenza_text=None):
+    """Aggrega gli output gia' calcolati a monte. Tollerante a input parziali/None.
+    Ritorna un dizionario, mai un'eccezione."""
+    stati = {}
+    try:
+        stati = (ms or {}).get("stati") or {}
+    except Exception:
+        stati = {}
+
+    conteggio = {"ATTIVO": 0, "PARZIALE": 0, "NON ATTIVO": 0, "MANCANTE": 0}
+    for stato in stati.values():
+        if stato in conteggio:
+            conteggio[stato] += 1
+
+    market_score = None
+    market_fase = None
+    market_confidenza = None
+    try:
+        market_score = (ms or {}).get("score")
+        market_fase = (ms or {}).get("fase")
+        market_confidenza = (ms or {}).get("confidenza")
+    except Exception:
+        pass
+
+    rotation_state = None
+    rotation_confidence = None
+    try:
+        rotation_state = (rot or {}).get("state")
+        rotation_confidence = (rot or {}).get("confidence")
+    except Exception:
+        pass
+
+    return {
+        "market_score": market_score,
+        "market_fase": market_fase,
+        "market_confidenza": market_confidenza,
+        "rotation_state": rotation_state,
+        "rotation_confidence": rotation_confidence,
+        "bias_emoji": bias_emoji,
+        "bias_label": bias_label,
+        "divergenza_attiva": divergenza_text is not None,
+        "divergenza_testo": divergenza_text,
+        "trigger_summary": conteggio,
+        "trigger_breakdown": dict(stati),
+    }
+
+def _fmt_market_state(market_state):
+    """Formatta il blocco MARKET STATE da iniettare nel ctx per Claude.
+    Deterministico, tollerante a dati mancanti (mostra 'n/d' invece di crashare)."""
+    if not market_state:
+        return "MARKET STATE: non disponibile (calcolo fallito, Claude procede con i dati grezzi)."
+
+    ms_score = market_state.get("market_score")
+    ms_fase = market_state.get("market_fase")
+    score_txt = f"{ms_score} ({ms_fase})" if ms_score is not None and ms_fase else "n/d"
+
+    rot_state = market_state.get("rotation_state")
+    rot_conf = market_state.get("rotation_confidence")
+    rot_disp = _ROT_DISPLAY.get(rot_state, rot_state) if rot_state else None
+    rot_txt = f"{rot_disp} ({rot_conf})" if rot_disp and rot_conf else (rot_disp or "n/d")
+
+    bias_emoji = market_state.get("bias_emoji")
+    bias_label = market_state.get("bias_label")
+    bias_txt = f"{bias_emoji} {bias_label}" if bias_label else "n/d"
+
+    divergenza_txt = "TRUE" if market_state.get("divergenza_attiva") else "FALSE"
+
+    summary = market_state.get("trigger_summary") or {}
+    breakdown = market_state.get("trigger_breakdown") or {}
+
+    righe = [
+        "MARKET STATE",
+        f"- Market Score: {score_txt}",
+        f"- Rotation Engine: {rot_txt}",
+        f"- Bias: {bias_txt}",
+        f"- Divergenza regime: {divergenza_txt}",
+        "- Trigger Summary:",
+        f"  Attivi: {summary.get('ATTIVO', 0)}",
+        f"  Parziali: {summary.get('PARZIALE', 0)}",
+        f"  Non Attivi: {summary.get('NON ATTIVO', 0)}",
+        f"  Mancanti: {summary.get('MANCANTE', 0)}",
+        "Trigger Breakdown:",
+    ]
+    # Ordine fisso degli 8 fattori (stesso ordine della Trigger Checklist, per coerenza visiva)
+    ordine_fattori = ["BTC Dominance", "ETH/BTC", "TOTAL2/TOTAL3", "Alt Strength",
+                       "Volumi Alt", "Stablecoin Flow", "Sentiment", "Meme/Microcap"]
+    for chiave in ordine_fattori:
+        stato = breakdown.get(chiave, "MANCANTE")
+        righe.append(f"- {chiave}: {stato}")
+    return chr(10).join(righe)
+
 def compute_bias(scenario, signal_strength, rot_state, fg_val, stable_flow):
     """Bias Engine deterministico. Ritorna (emoji, etichetta).
     Vincoli rispettati: MEME_EUPHORIA e DISTRIBUTION_WARNING non risultano MAI bullish.
@@ -4111,6 +4222,20 @@ async def handle_text(u, c):
             ctx = ctx + chr(10) + chr(10) + chr(128204) + " " + _fmt_portfolio_context(_pctx)
         except Exception as _e_pctx:
             log.warning(f"Portfolio context error (non bloccante): {_e_pctx}")
+        # --- MARKET STATE (Fase 1): calcolo anticipato, fonte di verita per Claude ---
+        # Riusa gli stessi moduli deterministici gia esistenti, calcolati PRIMA della
+        # chiamata AI. Se fallisce, MARKET STATE non viene iniettato (fallback sicuro:
+        # il bot continua con il comportamento attuale, nessun crash).
+        try:
+            _rot_pre = compute_rotation_state(g, get_trend_7d(), _stable)
+            _sc_pre = compute_sentiment_context(fg=fg, rot=_rot_pre, g=g, trend=get_trend_7d(), stable=_stable)
+            _bias_emoji_pre, _bias_label_pre = compute_bias(_sc_pre.get("scenario"), _sc_pre.get("signal_strength"), _sc_pre.get("rot_state"), _sc_pre.get("fg"), _sc_pre.get("stable_flow"))
+            _ms_pre = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+            _div_text_pre = _fmt_divergenza_regime(_ms_pre, _rot_pre.get("state") if _rot_pre else None)
+            _market_state_pre = compute_market_state(ms=_ms_pre, rot=_rot_pre, bias_emoji=_bias_emoji_pre, bias_label=_bias_label_pre, divergenza_text=_div_text_pre)
+            ctx = _fmt_market_state(_market_state_pre) + chr(10) + chr(10) + ctx
+        except Exception as _e_mkstate:
+            log.warning(f"MARKET STATE error (non bloccante, fallback a comportamento attuale): {_e_mkstate}")
         response = get_claude_response(t, ctx, uid)
         try:
             _rot_bias = compute_rotation_state(g, get_trend_7d(), _stable)
