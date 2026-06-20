@@ -3016,16 +3016,97 @@ def _ms_stato_ethbtc(trend):
         return "NON ATTIVO"
     return "MANCANTE"
 
-def _ms_stato_total23(g):
+# ============================================================
+# TOTAL2/TOTAL3 - delta 7 giorni (vera espansione, non disponibilita')
+# ============================================================
+# Sostituisce la vecchia logica "esiste il dato? -> ATTIVO" con una misura reale
+# di direzione: variazione percentuale a 7 giorni di calendario, letta dagli
+# snapshot gia' salvati (/data/snapshots.jsonl). Se lo storico e' insufficiente,
+# il fattore risulta onestamente MANCANTE (mai un delta finto).
+
+_MS_T23_SOGLIA_DEBOLE = -2.0  # soglia dichiarata, non validata: sotto questo = chiaramente negativo
+
+def _ms_delta_total23_7d(leggi_snapshot_func):
+    """Calcola la variazione % a 7 giorni di calendario di TOTAL2 e TOTAL3,
+    leggendo gli snapshot storici gia' salvati. Ritorna (var_total2, var_total3)
+    oppure (None, None) se lo storico e' insufficiente (mai un delta finto)."""
+    if not leggi_snapshot_func:
+        return None, None
     try:
-        t2 = g.get("total2") if g else None
-        t3 = g.get("total3") if g else None
+        snaps = leggi_snapshot_func(200)
     except Exception:
-        t2 = t3 = None
-    # coerente col fix gia' applicato nel Coherence Validator: 0 = fallback errore, non valore reale
-    if t2 and t3:
+        return None, None
+    if not snaps:
+        return None, None
+
+    from datetime import datetime as _dt
+    per_giorno = {}  # giorno (date) -> (total2, total3), tiene l'ultimo snapshot del giorno
+    for snap in snaps:
+        try:
+            ts = snap.get("timestamp_utc", "")
+            t2 = snap.get("total2")
+            t3 = snap.get("total3")
+            if not ts or t2 is None or t3 is None:
+                continue
+            giorno = _dt.fromisoformat(ts).date()
+            per_giorno[giorno] = (t2, t3)
+        except Exception:
+            continue
+
+    if len(per_giorno) < 5:  # storico insufficiente per un delta 7d affidabile
+        return None, None
+
+    giorni_ordinati = sorted(per_giorno.keys())
+    oggi_giorno = giorni_ordinati[-1]
+    t2_oggi, t3_oggi = per_giorno[oggi_giorno]
+
+    # cerco il giorno con delta_giorni PIU' VICINO a 7 (tollerando un range 5-10
+    # giorni per coprire eventuali buchi nello storico). Tra i candidati nel range,
+    # scelgo quello con distanza minima da 7 (il piu' preciso disponibile).
+    candidati = []
+    for g in giorni_ordinati:
+        delta_giorni = (oggi_giorno - g).days
+        if 5 <= delta_giorni <= 10:
+            candidati.append((abs(delta_giorni - 7), g))
+    if not candidati:
+        return None, None
+    candidati.sort(key=lambda x: x[0])
+    target = candidati[0][1]
+
+    t2_old, t3_old = per_giorno[target]
+    if not t2_old or not t3_old or not t2_oggi or not t3_oggi:
+        return None, None
+
+    var_t2 = (t2_oggi - t2_old) / t2_old * 100
+    var_t3 = (t3_oggi - t3_old) / t3_old * 100
+    return var_t2, var_t3
+
+def _ms_stato_total23(g, leggi_snapshot_func=None):
+    """NUOVA logica: misura la vera espansione (delta 7d), non la disponibilita'.
+    ATTIVO: TOTAL2 e TOTAL3 7d entrambi positivi.
+    PARZIALE: segnali misti (almeno uno positivo, l'altro no).
+    NON ATTIVO: nessuno dei due positivo.
+    MANCANTE: storico insufficiente, o valori attuali assenti/0."""
+    try:
+        t2_now = g.get("total2") if g else None
+        t3_now = g.get("total3") if g else None
+    except Exception:
+        t2_now = t3_now = None
+    if not t2_now or not t3_now:
+        return "MANCANTE"  # dato attuale assente/0, come prima
+
+    var_t2, var_t3 = _ms_delta_total23_7d(leggi_snapshot_func)
+    if var_t2 is None or var_t3 is None:
+        return "MANCANTE"  # storico insufficiente: onesto, non inventiamo un delta
+
+    t2_pos = var_t2 > 0
+    t3_pos = var_t3 > 0
+
+    if t2_pos and t3_pos:
         return "ATTIVO"
-    return "MANCANTE"  # niente PARZIALE per questo fattore, per scelta dichiarata
+    if not t2_pos and not t3_pos:
+        return "NON ATTIVO"
+    return "PARZIALE"  # segnali misti: uno positivo, l'altro no
 
 def _ms_stato_alt_strength(p):
     try:
@@ -3186,14 +3267,14 @@ def _inserisci_divergenza_sezione1(response, divergenza_text):
         fine_riga = len(response)
     return response[:fine_riga] + "\n" + divergenza_text + response[fine_riga:]
 
-def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None):
+def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None, leggi_snapshot_func=None):
     """Market Score deterministico 0-100, calcolato SOLO da dati grezzi (non dal testo AI).
     Fattori MANCANTI esclusi dal denominatore (score ricalibrato sui disponibili).
     Pesi e soglie dichiarati, NON validati statisticamente."""
     stati = {
         "BTC Dominance": _ms_stato_dominance(g),
         "ETH/BTC": _ms_stato_ethbtc(trend),
-        "TOTAL2/TOTAL3": _ms_stato_total23(g),
+        "TOTAL2/TOTAL3": _ms_stato_total23(g, leggi_snapshot_func),
         "Alt Strength": _ms_stato_alt_strength(p),
         "Volumi Alt": _ms_stato_volumi_alt(),
         "Stablecoin Flow": _ms_stato_stablecoin(stable),
@@ -4045,7 +4126,7 @@ async def handle_text(u, c):
         followup = ""
         response = _sanitize_ai_analysis_v3(response)
         try:
-            _ms = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p)
+            _ms = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
             _ms_text = _fmt_market_score(_ms)
             response = _inserisci_market_score_sezione1(response, _ms_text)
         except Exception as _e_ms:
