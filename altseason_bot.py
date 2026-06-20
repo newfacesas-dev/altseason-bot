@@ -3096,6 +3096,96 @@ def _ms_stato_meme(p):
         return "PARZIALE"
     return "NON ATTIVO"
 
+# ============================================================
+# TRIGGER CHECKLIST DETERMINISTICA + DIVERGENZA REGIME
+# ============================================================
+# Sostituisce la sezione 2 (scritta dall'AI) con gli STESSI stati gia'
+# calcolati da compute_market_score. Nessun margine per l'AI di riscrivere
+# questi stati. Principio: Python = numeri/stati/checklist/divergenze,
+# AI = solo interpretazione narrativa.
+
+_TC_ETICHETTE = [
+    ("BTC Dominance", "BTC Dominance sotto area critica"),
+    ("ETH/BTC", "ETH/BTC in breakout o recupero"),
+    ("TOTAL2/TOTAL3", "TOTAL2/TOTAL3 in espansione"),
+    ("Alt Strength", "Altcoin principali che sovraperformano BTC"),
+    ("Volumi Alt", "Volumi reali sulle altcoin"),
+    ("Stablecoin Flow", "Stablecoin inflow positivo"),
+    ("Sentiment", "Sentiment da fear verso neutral o greed"),
+    ("Meme/Microcap", "Forza comparto meme/microcap"),
+]
+
+def _fmt_trigger_checklist_deterministica(ms):
+    """Costruisce il testo della Trigger Checklist usando ESATTAMENTE gli stati
+    gia' calcolati da compute_market_score (ms['stati']). Deterministica al 100%,
+    nessun testo generato dall'AI per questa sezione."""
+    righe = ["2. TRIGGER CHECKLIST"]
+    stati = (ms or {}).get("stati") or {}
+    for chiave, etichetta in _TC_ETICHETTE:
+        stato = stati.get(chiave, "MANCANTE")
+        righe.append(f"- {etichetta}: {stato.lower()}")
+    return chr(10).join(righe)
+
+def _sostituisci_sezione_trigger_checklist(response, checklist_text):
+    """Sostituisce l'INTERA sezione '2. TRIGGER CHECKLIST' (scritta dall'AI) con
+    checklist_text (deterministica). Trova l'inizio della sezione 2 e la prossima
+    intestazione numerata (3. ...) come fine. Tollerante a markdown/numerazione.
+    Fallback: se la sezione 2 non si trova, la inserisce comunque (mai persa)."""
+    if not response:
+        return response
+    pat_start = re.compile(r"^.*\b2\.\s*TRIGGER CHECKLIST\b.*$", re.IGNORECASE | re.MULTILINE)
+    m_start = pat_start.search(response)
+    if not m_start:
+        # fallback: sezione non trovata, la appendo con un marcatore esplicito
+        return response + "\n\n" + checklist_text
+    pat_next = re.compile(r"^.*\b3\.\s*\S", re.IGNORECASE | re.MULTILINE)
+    m_next = pat_next.search(response, m_start.end())
+    fine = m_next.start() if m_next else len(response)
+    return response[:m_start.start()] + checklist_text + "\n\n" + response[fine:]
+
+# --- Divergenza regime (Market Score vs Rotation Engine, entrambi deterministici) ---
+
+_TC_GRUPPI_COERENTI = {
+    "BEARISH": ("RISK_OFF", "BTC_LED"),
+    "CAUTELA": ("RISK_OFF", "BTC_LED"),
+    "ACCUMULO": ("BTC_LED", "ETH_ROTATION", "LARGE_CAP_ROTATION"),
+    "ROTAZIONE ALT": ("ETH_ROTATION", "LARGE_CAP_ROTATION", "MID_CAP_ROTATION"),
+    "ALTSEASON": ("LARGE_CAP_ROTATION", "MID_CAP_ROTATION", "MEME_EUPHORIA"),
+}
+
+def _fmt_divergenza_regime(ms, rot_state):
+    """Se la fase del Market Score e lo stato del Rotation Engine non sono
+    in un gruppo coerente, genera una frase di divergenza da TEMPLATE FISSO
+    (mai testo libero). Ritorna None se non c'e' divergenza o dati insufficienti."""
+    fase = (ms or {}).get("fase")
+    if not fase or not rot_state:
+        return None
+    gruppo = _TC_GRUPPI_COERENTI.get(fase, ())
+    if rot_state in gruppo:
+        return None  # coerente, nessuna divergenza
+    rot_display = _ROT_DISPLAY.get(rot_state, rot_state) if "_ROT_DISPLAY" in globals() else rot_state
+    return (
+        f"Divergenza regime: il Market Score mostra pressione da {fase}, "
+        f"ma il Rotation Engine resta in {rot_display} finche\u0027 BTC Dominance "
+        f"e liquidita\u0027 non confermano."
+    )
+
+def _inserisci_divergenza_sezione1(response, divergenza_text):
+    """Inserisce la frase di divergenza subito sotto l'intestazione '1. STATO MERCATO'
+    (dopo l'eventuale Market Score gia' inserito li'). None-safe: se divergenza_text
+    e' None, non fa nulla."""
+    if not response or not divergenza_text:
+        return response
+    pattern = re.compile(r"^(.*\b1\.\s*STATO MERCATO\b.*)$", re.IGNORECASE | re.MULTILINE)
+    match = pattern.search(response)
+    if not match:
+        return divergenza_text + "\n\n" + response
+    # inserisco dopo la riga di intestazione (prima riga del match), non dopo l'intero blocco Market Score
+    fine_riga = response.find("\n", match.start())
+    if fine_riga == -1:
+        fine_riga = len(response)
+    return response[:fine_riga] + "\n" + divergenza_text + response[fine_riga:]
+
 def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None):
     """Market Score deterministico 0-100, calcolato SOLO da dati grezzi (non dal testo AI).
     Fattori MANCANTI esclusi dal denominatore (score ricalibrato sui disponibili).
@@ -3960,6 +4050,18 @@ async def handle_text(u, c):
             response = _inserisci_market_score_sezione1(response, _ms_text)
         except Exception as _e_ms:
             log.warning(f"Market Score error (non bloccante): {_e_ms}")
+            _ms = None
+        try:
+            _checklist_det = _fmt_trigger_checklist_deterministica(_ms)
+            response = _sostituisci_sezione_trigger_checklist(response, _checklist_det)
+        except Exception as _e_tc:
+            log.warning(f"Trigger Checklist deterministica error (non bloccante): {_e_tc}")
+        try:
+            _rot_div = compute_rotation_state(g, get_trend_7d(), _stable)
+            _div_text = _fmt_divergenza_regime(_ms, _rot_div.get("state") if _rot_div else None)
+            response = _inserisci_divergenza_sezione1(response, _div_text)
+        except Exception as _e_div:
+            log.warning(f"Divergenza regime error (non bloccante): {_e_div}")
         _full_msg = "\U0001f916 *AI Analysis*\n\n" + response + followup
         try:
             await u.message.reply_text(_full_msg, parse_mode="Markdown", reply_markup=kb(uid))
