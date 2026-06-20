@@ -1803,7 +1803,7 @@ Urgenza: [BASSA/MEDIA/ALTA]
 Focus di monitoraggio:
 - [massimo 3 punti brevi]
 
-Bias Attuale: [bias]
+NON scrivere "Bias Attuale" qui: e gia presente nella Sezione 1 (Python), fornita sopra.
 
 VIETATO:
 - paragrafi lunghi nella sezione 1
@@ -4319,12 +4319,15 @@ async def handle_text(u, c):
             response = _sostituisci_sezione_trigger_checklist(response, _checklist_det)
         except Exception as _e_tc:
             log.warning(f"Trigger Checklist deterministica error (non bloccante): {_e_tc}")
-        try:
-            _rot_div = compute_rotation_state(g, get_trend_7d(), _stable)
-            _div_text = _fmt_divergenza_regime(_ms, _rot_div.get("state") if _rot_div else None)
-            response = _inserisci_divergenza_sezione1(response, _div_text)
-        except Exception as _e_div:
-            log.warning(f"Divergenza regime error (non bloccante): {_e_div}")
+        # FIX cleanup Fase 2 (round 2): NON re-inserire piu la Divergenza Regime qui.
+        # La Sezione 1 (gia Python-generated da _fmt_sezione1_stato_mercato) la include gia
+        # tramite _div_text_pre. Questo blocco duplicava la frase nel report.
+        # try:
+        #     _rot_div = compute_rotation_state(g, get_trend_7d(), _stable)
+        #     _div_text = _fmt_divergenza_regime(_ms, _rot_div.get("state") if _rot_div else None)
+        #     response = _inserisci_divergenza_sezione1(response, _div_text)
+        # except Exception as _e_div:
+        #     log.warning(f"Divergenza regime error (non bloccante): {_e_div}")  # disattivato (duplicava)
         _full_msg = "\U0001f916 *AI Analysis*\n\n" + response + followup
         try:
             await u.message.reply_text(_full_msg, parse_mode="Markdown", reply_markup=kb(uid))
