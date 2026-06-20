@@ -1769,24 +1769,13 @@ REGOLE GLOBALI:
 
 FORMATO OBBLIGATORIO DEL REPORT:
 
-### 1. STATO MERCATO
-Stato ciclo: [valore]
-Confidenza Analisi: [ALTA/MEDIA/BASSA]
-Rotation Engine: [label leggibile] ([confidence])
-Bias Attuale: [bias]
+Le Sezioni 1 (STATO MERCATO) e 2 (TRIGGER CHECKLIST) sono GIA' FORNITE sopra nel
+contesto, calcolate da moduli Python deterministici. NON scriverle, NON riscriverle,
+NON inventarne una tua versione. Il tuo report INIZIA DIRETTAMENTE dalla Sezione 3.
 
-Scenario principale: [una riga, massimo 18 parole]
-Scenario alternativo: [una riga, massimo 18 parole]
-Scenario avverso: [una riga, massimo 18 parole]
-
-### 2. TRIGGER CHECKLIST
-- BTC Dominance sotto area critica: [attivo/parziale/mancante]
-- ETH/BTC in breakout o recupero: [attivo/parziale/mancante]
-- TOTAL2/TOTAL3 in espansione: [attivo/parziale/mancante]
-- Altcoin principali che sovraperformano BTC: [attivo/parziale/mancante]
-- Volumi reali sulle altcoin: [attivo/parziale/mancante]
-- Stablecoin inflow positivo: [attivo/parziale/mancante]
-- Sentiment da fear verso neutral o greed: [attivo/parziale/mancante]
+### 3. INTERPRETAZIONE DEL CONTESTO
+In questa sezione puoi includere una lettura degli scenari possibili (principale,
+alternativo, avverso) in forma narrativa, dato il quadro fornito sopra.
 - Meme o microcap in accelerazione controllata: [attivo/parziale/mancante]
 
 ### 3. INTERPRETAZIONE DEL CONTESTO
@@ -1875,8 +1864,7 @@ REGOLE LINGUAGGIO OUTPUT (vincolanti):
 - Mantieni il linguaggio descrittivo e prudente: nessun ordine automatico.
 
 REGOLE DECISIONALI (vincolanti):
-Le azioni numeriche precise (percentuali tipo 'riduci BONK 20-25%', oppure 'compra XRP', 'vendi DOGE') sono ammesse SOLO se Confidenza Analisi e' ALTA.
-Se Confidenza Analisi e' MEDIA o BASSA, oppure se mancano dati critici (Open Interest, Funding Rate, Stablecoin Inflow, Volumi reali): NON dare percentuali ne' ordini secchi di acquisto/vendita. Usa invece 👀 MONITORA oppure ⚠️ VALUTARE RIDUZIONE, con una breve spiegazione del perche' i dati non bastano per un'azione precisa.
+Il bot NON deve MAI dare istruzioni operative dirette: niente 'compra', 'vendi', 'aumenta del X%', 'riduci del X%', indipendentemente dalla Confidenza Analisi. Usa SOLO queste indicazioni descrittive: HOLD, MONITORA, PREPARA PIANO, ATTENDI CONFERMA, RISCHIO ELEVATO, CONFERMA NON PRESENTE. Mai percentuali operative, mai ordini di acquisto/vendita, qualunque sia il livello di Confidenza Analisi.
 
 FINESTRA OPERATIVA:
 Indica il prossimo controllo critico (12h, 24h, 48h o 72h) e il livello di urgenza (BASSA, MEDIA, ALTA o CRITICA).
@@ -3453,6 +3441,85 @@ def _fmt_market_state(market_state):
         righe.append(f"- {chiave}: {stato}")
     return chr(10).join(righe)
 
+# ============================================================
+# SEZIONE 1 (STATO MERCATO) - interamente deterministica
+# ============================================================
+# Stato ciclo DERIVATO dalla fase del Market Score (stessa fonte, mai disallineato).
+# Nessuno scenario narrativo: si sposta in Sezione 3 (Claude).
+
+_FASE_EMOJI = {
+    "BEARISH": "\U0001f534",       # rosso
+    "CAUTELA": "\U0001f7e0",       # arancio
+    "ACCUMULO": "\U0001f440",      # occhi (monitora)
+    "ROTAZIONE ALT": "\U0001f504", # rotazione
+    "ALTSEASON": "\U0001f680",     # razzo
+}
+
+def _fmt_sezione1_stato_mercato(ms, rot, bias_emoji, bias_label, divergenza_text, confidenza_analisi_text):
+    """Costruisce l'intera Sezione 1 in modo deterministico. Stato ciclo = fase del
+    Market Score (coerenza assoluta, stessa fonte). Nessuno scenario narrativo.
+    Tollerante a dati mancanti, non crasha mai."""
+    righe = ["### 1. STATO MERCATO"]
+
+    righe.append(_fmt_market_score(ms))
+
+    fase = (ms or {}).get("fase")
+    emoji_fase = _FASE_EMOJI.get(fase, "\U0001f4ca")
+    righe.append(f"Stato ciclo: {emoji_fase} {fase if fase else 'non determinabile'}")
+
+    righe.append(f"Confidenza Analisi: {confidenza_analisi_text or 'n/d'}")
+
+    rot_state = (rot or {}).get("state")
+    rot_conf = (rot or {}).get("confidence")
+    rot_disp = _ROT_DISPLAY.get(rot_state, rot_state) if rot_state else None
+    if rot_disp and rot_conf:
+        righe.append(f"Rotation Engine: {rot_disp} ({rot_conf})")
+    else:
+        righe.append("Rotation Engine: n/d")
+
+    if bias_label:
+        righe.append(f"Bias Attuale: {bias_emoji} {bias_label}")
+    else:
+        righe.append("Bias Attuale: n/d")
+
+    if divergenza_text:
+        righe.append(divergenza_text)
+
+    return chr(10).join(righe)
+
+def _estrai_confidenza_analisi(score_text):
+    """Estrae 'ALTA/MEDIA/BASSA' dal testo gia' prodotto da compute_altseason_score
+    (che inizia con 'Confidenza Analisi: ALTA (basata su X/7 dati disponibili)').
+    Non ricalcola nulla: legge la prima riga del testo gia' esistente."""
+    if not score_text:
+        return "n/d"
+    try:
+        prima_riga = score_text.split(chr(10))[0]
+        if "ALTA" in prima_riga:
+            return "ALTA"
+        if "MEDIA" in prima_riga:
+            return "MEDIA"
+        if "BASSA" in prima_riga:
+            return "BASSA"
+    except Exception:
+        pass
+    return "n/d"
+
+def _costruisci_report_finale(sezione1_py, sezione2_py, claude_response):
+    """Concatena Sezione 1 (Python) + Sezione 2 (Python) + risposta di Claude
+    (che dovrebbe contenere solo Sezioni 3-6). Rete di sicurezza: rimuove
+    eventuali intestazioni residue '### 1.' o '### 2.' che Claude generasse
+    comunque, per tagliare qualunque duplicazione prima della concatenazione."""
+    testo_claude = claude_response or ""
+    # Rete di sicurezza: se Claude scrivesse comunque "### 1." o "### 2." in testa,
+    # tagliamo tutto cio' che precede "### 3." (la prima sezione di sua competenza)
+    idx_sezione3 = testo_claude.find("### 3.")
+    if idx_sezione3 == -1:
+        idx_sezione3 = testo_claude.find("3. INTERPRETAZIONE")
+    if idx_sezione3 > 0:
+        testo_claude = testo_claude[idx_sezione3:]
+    return sezione1_py + chr(10) + chr(10) + sezione2_py + chr(10) + chr(10) + testo_claude
+
 def compute_bias(scenario, signal_strength, rot_state, fg_val, stable_flow):
     """Bias Engine deterministico. Ritorna (emoji, etichetta).
     Vincoli rispettati: MEME_EUPHORIA e DISTRIBUTION_WARNING non risultano MAI bullish.
@@ -4229,6 +4296,14 @@ async def handle_text(u, c):
         except Exception as _e_mkstate:
             log.warning(f"MARKET STATE error (non bloccante, fallback a comportamento attuale): {_e_mkstate}")
         response = get_claude_response(t, ctx, uid)
+        try:
+            _score_text_pre = compute_altseason_score(g, p, fg, _stable)
+            _conf_analisi_pre = _estrai_confidenza_analisi(_score_text_pre)
+            _sez1_pre = _fmt_sezione1_stato_mercato(_ms_pre, _rot_pre, _bias_emoji_pre, _bias_label_pre, _div_text_pre, _conf_analisi_pre)
+            _sez2_pre = _fmt_trigger_checklist_deterministica(_ms_pre)
+            response = _costruisci_report_finale(_sez1_pre, _sez2_pre, response)
+        except Exception as _e_sez12:
+            log.warning(f"Sezione 1/2 deterministica error (fallback a Fase 1): {_e_sez12}")
         try:
             _rot_bias = compute_rotation_state(g, get_trend_7d(), _stable)
             _sc_bias = compute_sentiment_context(fg=fg, rot=_rot_bias, g=g, trend=get_trend_7d(), stable=_stable)
