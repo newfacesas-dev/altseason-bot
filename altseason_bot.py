@@ -1776,7 +1776,6 @@ NON inventarne una tua versione. Il tuo report INIZIA DIRETTAMENTE dalla Sezione
 ### 3. INTERPRETAZIONE DEL CONTESTO
 In questa sezione puoi includere una lettura degli scenari possibili (principale,
 alternativo, avverso) in forma narrativa, dato il quadro fornito sopra.
-- Meme o microcap in accelerazione controllata: [attivo/parziale/mancante]
 
 ### 3. INTERPRETAZIONE DEL CONTESTO
 Supporta il quadro:
@@ -1815,27 +1814,6 @@ VIETATO:
 - usare “azione operativa”
 - usare “lettura operativa”
 - usare “focus operativo”
-
-
-TRIGGER CHECKLIST — STATI CONSENTITI:
-- ATTIVO = dato disponibile e trigger soddisfatto
-- PARZIALE = dato disponibile ma conferma incompleta
-- NON ATTIVO = dato presente ma trigger non soddisfatto
-- MANCANTE/NON DISPONIBILE = dato assente
-
-IMPORTANTE:
-Usa MANCANTE solo quando il dato non esiste davvero.
-Se il dato esiste ma il trigger è spento, usa NON ATTIVO.
-
-TRIGGER CHECKLIST (segna ogni voce come attivo, parziale, o mancante/non disponibile):
-- BTC Dominance sotto area critica
-- ETH/BTC in breakout o recupero
-- TOTAL2/TOTAL3 in espansione
-- Altcoin principali che sovraperformano BTC
-- Volumi reali sulle altcoin
-- Stablecoin inflow positivo
-- Sentiment da fear verso neutral o greed
-- Meme o microcap in accelerazione controllata
 
 CLASSIFICAZIONE PORTAFOGLIO:
 BLUE CHIP: ETH, SOL, XRP, ADA, DOGE, BNB, BTC
@@ -4308,7 +4286,9 @@ async def handle_text(u, c):
             _rot_bias = compute_rotation_state(g, get_trend_7d(), _stable)
             _sc_bias = compute_sentiment_context(fg=fg, rot=_rot_bias, g=g, trend=get_trend_7d(), stable=_stable)
             _b_emoji, _b_label = compute_bias(_sc_bias.get("scenario"), _sc_bias.get("signal_strength"), _sc_bias.get("rot_state"), _sc_bias.get("fg"), _sc_bias.get("stable_flow"))
-            response = response + chr(10) + chr(10) + f"Bias Attuale: {_b_emoji} {_b_label}"
+            # FIX cleanup Fase 2: NON appendere piu il Bias in fondo qui.
+            # La Sezione 1 (gia Python-generated) lo include gia. Evita duplicazione/conflitto col dedup.
+            # response = response + chr(10) + chr(10) + f"Bias Attuale: {_b_emoji} {_b_label}"  # disattivato (duplicava)
         except Exception as _e_bias:
             log.warning(f"Bias Engine error (non bloccante): {_e_bias}")
         try:
@@ -4328,7 +4308,9 @@ async def handle_text(u, c):
         try:
             _ms = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
             _ms_text = _fmt_market_score(_ms)
-            response = _inserisci_market_score_sezione1(response, _ms_text)
+            # FIX cleanup Fase 2: NON re-inserire il Market Score qui.
+            # La Sezione 1 (gia Python-generated da _fmt_sezione1_stato_mercato) lo include gia.
+            # response = _inserisci_market_score_sezione1(response, _ms_text)  # disattivato (duplicava)
         except Exception as _e_ms:
             log.warning(f"Market Score error (non bloccante): {_e_ms}")
             _ms = None
