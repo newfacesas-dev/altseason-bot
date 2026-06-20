@@ -248,6 +248,7 @@ KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
     [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
     [KeyboardButton("📤 Piano Uscita"), KeyboardButton("📊 Sentiment & Contesto")],
+    [KeyboardButton("🧭 Rotation & Risk")],
     [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
     [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
     [KeyboardButton("📢 Condividi"), KeyboardButton("🔧 Admin")],
@@ -267,6 +268,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Add Coin")],
             [KeyboardButton("🔔 My Alerts"), KeyboardButton("⚙️ Setup Alerts")],
             [KeyboardButton("📤 Exit Plan"), KeyboardButton("📊 Sentiment & Context")],
+            [KeyboardButton("🧭 Rotation & Risk")],
             [KeyboardButton("🤖 Ask AI"), KeyboardButton("📊 My Plan")],
             [KeyboardButton("💳 Subscribe"), KeyboardButton("🔗 Referral")],
             [KeyboardButton("📢 Share"), KeyboardButton("🔧 Admin")],
@@ -281,6 +283,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Adicionar Moeda")],
             [KeyboardButton("🔔 Meus Alertas"), KeyboardButton("⚙️ Config Alertas")],
             [KeyboardButton("📤 Plano de Saida"), KeyboardButton("📊 Sentimento & Contexto")],
+            [KeyboardButton("🧭 Rotation & Risk")],
             [KeyboardButton("🤖 Perguntar AI"), KeyboardButton("📊 Meu Plano")],
             [KeyboardButton("💳 Assinar"), KeyboardButton("🔗 Referral")],
             [KeyboardButton("📢 Compartilhar"), KeyboardButton("🔧 Admin")],
@@ -3501,6 +3504,282 @@ def _costruisci_report_finale(sezione1_py, sezione2_py, claude_response):
         testo_claude = testo_claude[idx_sezione3:]
     return sezione1_py + chr(10) + chr(10) + sezione2_py + chr(10) + chr(10) + testo_claude
 
+# ============================================================
+# ROTATION INTELLIGENCE (categoriale, descrittivo)
+# ============================================================
+# Riusa compute_rotation_state esistente. Confronta la categoria piu' forte
+# con BTC (baseline). Nessun confronto asset-specifico, nessuna size, nessuna
+# execution window - solo finestra di OSSERVAZIONE.
+
+_RI_CATEGORIE = ["ETH", "LARGE", "MID", "AI", "MEME"]  # BTC e' la baseline, non in gara
+
+_RI_LETTURE = {
+    "ETH": "ETH mostra forza relativa superiore a BTC negli ultimi 7 giorni.",
+    "LARGE": "Le large cap mostrano forza relativa superiore a BTC negli ultimi 7 giorni.",
+    "MID": "Le mid cap mostrano forza relativa superiore a BTC negli ultimi 7 giorni.",
+    "AI": "Il comparto AI mostra forza relativa superiore a BTC negli ultimi 7 giorni.",
+    "MEME": "Il comparto meme mostra forza relativa marcata, tipicamente associata a fasi avanzate di ciclo.",
+    "BTC": "Nessuna categoria mostra forza relativa significativa su BTC al momento.",
+}
+
+_RI_NOMI_DISPLAY = {
+    "ETH": "ETH", "LARGE": "LARGE CAP", "MID": "MID CAP", "AI": "AI", "MEME": "MEME", "BTC": "BTC",
+}
+
+def compute_rotation_intelligence(rot):
+    """Calcola il Rotation Score categoriale (0-100), confrontando la categoria
+    piu' forte con BTC (baseline). Deterministico, nessun asset-specifico.
+    Soglia di normalizzazione dichiarata: ogni 2 punti percentuali di differenza
+    di forza_7d = ~10 punti di score, cap a 100. Non validata statisticamente."""
+    out = {
+        "categoria": None, "score": None, "lettura": None, "stato": None,
+        "dati_mancanti": [],
+    }
+    forza = {}
+    try:
+        forza = (rot or {}).get("dettagli", {}).get("forza_7d", {}) or {}
+    except Exception:
+        forza = {}
+
+    if not forza or "BTC" not in forza:
+        out["dati_mancanti"].append("Rotation Engine forza_7d")
+        out["stato"] = "CONFERMA NON PRESENTE"
+        out["lettura"] = _RI_LETTURE["BTC"]
+        return out
+
+    forza_btc = forza.get("BTC", 0)
+    migliore_categoria = "BTC"
+    migliore_diff = 0
+    for cat in _RI_CATEGORIE:
+        if cat in forza:
+            diff = forza[cat] - forza_btc
+            if diff > migliore_diff:
+                migliore_diff = diff
+                migliore_categoria = cat
+
+    # normalizzazione: ogni 2 punti percentuali di differenza = ~10 punti di score
+    score = round(migliore_diff / 2 * 10)
+    score = max(0, min(100, score))
+
+    if score > 65:
+        stato = "ROTAZIONE DA VALUTARE"
+    elif score >= 40:
+        stato = "CONFERMA PARZIALE"
+    else:
+        stato = "CONFERMA NON PRESENTE"
+
+    out["categoria"] = migliore_categoria
+    out["score"] = score
+    out["lettura"] = _RI_LETTURE.get(migliore_categoria, _RI_LETTURE["BTC"])
+    out["stato"] = stato
+    return out
+
+def _fmt_rotation_intelligence(ri):
+    """Formatta il blocco Rotation Intelligence. Mai size, mai execution window."""
+    if not ri:
+        return "ROTATION INTELLIGENCE\nDati non disponibili."
+    cat_disp = _RI_NOMI_DISPLAY.get(ri.get("categoria"), "n/d")
+    score_txt = f"{ri['score']}/100" if ri.get("score") is not None else "n/d"
+    righe = [
+        "ROTATION INTELLIGENCE",
+        f"Categoria in evidenza: {cat_disp}",
+        f"Rotation Score: {score_txt}",
+        f"Lettura: {ri.get('lettura', 'n/d')}",
+        f"Stato: {ri.get('stato', 'n/d')}",
+        "Finestra di osservazione: 3-7 giorni",
+    ]
+    return chr(10).join(righe)
+
+# ============================================================
+# EXIT RISK ENGINE (descrittivo)
+# ============================================================
+# Sintetizza "quanto il quadro assomiglia a una fase avanzata di ciclo".
+# 4 fattori pesati (100 totali). Mai "exit", mai "vendi", solo lettura di rischio.
+
+_ER_PESI = {
+    "fear_estremo": 30,
+    "rotation_euforica": 30,
+    "ampiezza_estrema": 20,
+    "ethbtc_forte_rialzo": 20,
+}
+
+_ER_FASCE = [
+    (0, 30, "ACCUMULO"),
+    (31, 50, "ESPANSIONE"),
+    (51, 70, "BULL AVANZATA"),
+    (71, 85, "EUFORIA"),
+    (86, 100, "EXIT ZONE"),
+]
+
+_ER_LETTURE = {
+    "ACCUMULO": "Il quadro non mostra segnali di rischio ciclo elevato.",
+    "ESPANSIONE": "Il quadro mostra espansione moderata, senza segnali di rischio elevato.",
+    "BULL AVANZATA": "Il quadro mostra una fase avanzata con segnali misti, da osservare con attenzione crescente.",
+    "EUFORIA": "Il quadro mostra segnali tipici di euforia di ciclo: attenzione consigliata.",
+    "EXIT ZONE": "Il quadro mostra una combinazione di segnali storicamente associata a fasi finali di ciclo.",
+}
+
+_ER_STATI = {
+    "EUFORIA": "RISCHIO IN AUMENTO",
+    "EXIT ZONE": "PREPARAZIONE STRATEGICA",
+}
+
+def compute_exit_risk(fg=None, rot=None, p=None, trend=None):
+    """Calcola l'Exit Risk Score 0-100. 4 fattori pesati, dichiarati e non validati.
+    Mai una soglia di vendita: solo lettura del livello di rischio ciclo."""
+    punti = 0
+
+    fg_val = None
+    try:
+        fg_val = (fg or {}).get("v")
+    except Exception:
+        pass
+    if fg_val is not None and fg_val >= 80:
+        punti += _ER_PESI["fear_estremo"]
+
+    rot_state = None
+    try:
+        rot_state = (rot or {}).get("state")
+    except Exception:
+        pass
+    if rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"):
+        punti += _ER_PESI["rotation_euforica"]
+
+    # ampiezza 24h: % alt positive, riusa la stessa logica del Market Score (>60% = forte)
+    ampiezza_estrema = False
+    try:
+        if p:
+            alts = [s for s in p if s != "BTC"]
+            valid = [s for s in alts if p[s].get("price", 0) > 0]
+            if valid:
+                pos = sum(1 for s in valid if p[s].get("ch", 0) > 0)
+                pct = pos / len(valid) * 100
+                ampiezza_estrema = pct > 80
+    except Exception:
+        pass
+    if ampiezza_estrema:
+        punti += _ER_PESI["ampiezza_estrema"]
+
+    ethbtc_forte = False
+    try:
+        eth = (trend or {}).get("ethbtc")
+        if eth and eth.get("var7d", 0) > 8:  # forte rialzo, soglia dichiarata
+            ethbtc_forte = True
+    except Exception:
+        pass
+    if ethbtc_forte:
+        punti += _ER_PESI["ethbtc_forte_rialzo"]
+
+    score = max(0, min(100, punti))
+    fascia = None
+    for lo, hi, nome in _ER_FASCE:
+        if lo <= score <= hi:
+            fascia = nome
+            break
+
+    return {
+        "score": score,
+        "fascia": fascia,
+        "lettura": _ER_LETTURE.get(fascia, "n/d"),
+        "stato": _ER_STATI.get(fascia),  # None per fasce basse, e' corretto
+    }
+
+def _fmt_exit_risk(er):
+    """Formatta il blocco Exit Risk. Mai 'vendi', mai size."""
+    if not er:
+        return "EXIT RISK\nDati non disponibili."
+    righe = [
+        "EXIT RISK",
+        f"Exit Risk Score: {er.get('score', 'n/d')}/100",
+        f"Fase: {er.get('fascia', 'n/d')}",
+        f"Lettura: {er.get('lettura', 'n/d')}",
+    ]
+    if er.get("stato"):
+        righe.append(f"Stato: {er['stato']}")
+    return chr(10).join(righe)
+
+# ============================================================
+# ASSET SPEED CONTEXT (tabella statica dichiarata, puramente informativa)
+# ============================================================
+# Classificazione fissa, non calcolata in tempo reale. XRP marcata "PARTICOLARE"
+# per il suo comportamento storico anomalo (resta indietro, poi si muove tardi
+# in modo violento). Coin non mappate: NON CLASSIFICATA esplicita, mai un default.
+
+_AS_CLASSI = {
+    "BTC": "LENTA", "ETH": "LENTA",
+    "SOL": "MEDIA", "BNB": "MEDIA", "ADA": "MEDIA", "NEAR": "MEDIA",
+    "XRP": "MEDIA / PARTICOLARE",
+    "HBAR": "VELOCE", "SEI": "VELOCE", "FET": "VELOCE", "GRT": "VELOCE",
+    "AGIX": "VELOCE", "ALGO": "VELOCE", "POL": "VELOCE", "TRX": "VELOCE",
+    "XLM": "VELOCE", "MANA": "VELOCE",
+    "DOGE": "ESPLOSIVA", "BONK": "ESPLOSIVA",
+}
+
+_AS_ORDINE_DISPLAY = ["LENTA", "MEDIA", "MEDIA / PARTICOLARE", "VELOCE", "ESPLOSIVA"]
+
+def compute_asset_speed_context(portfolio_coins):
+    """Classifica le coin del portafoglio secondo la tabella statica dichiarata.
+    Coin non presenti in _AS_CLASSI -> 'NON CLASSIFICATA' esplicita, mai un default
+    automatico. Tollerante a input vuoto/None."""
+    if not portfolio_coins:
+        return {}
+    risultato = {}
+    for sym in portfolio_coins:
+        risultato[sym] = _AS_CLASSI.get(sym, "NON CLASSIFICATA")
+    return risultato
+
+def _fmt_asset_speed_context(classificazione):
+    """Formatta la tabella Asset Speed, raggruppata per classe, nell'ordine fisso."""
+    if not classificazione:
+        return "ASSET SPEED CONTEXT\nNessun asset da classificare."
+    gruppi = {}
+    non_classificate = []
+    for sym, classe in classificazione.items():
+        if classe == "NON CLASSIFICATA":
+            non_classificate.append(sym)
+        else:
+            gruppi.setdefault(classe, []).append(sym)
+
+    righe = ["ASSET SPEED CONTEXT"]
+    for classe in _AS_ORDINE_DISPLAY:
+        if classe in gruppi:
+            coins_ord = sorted(gruppi[classe])
+            righe.append(f"{classe}: {', '.join(coins_ord)}")
+    if non_classificate:
+        righe.append(f"NON CLASSIFICATA: {', '.join(sorted(non_classificate))}")
+    return chr(10).join(righe)
+
+async def cmd_rotation_risk(u, c):
+    """Pannello ROTATION & RISK (descrittivo): Rotation Intelligence + Exit Risk + Asset Speed.
+    Completamente isolato dall'AI Analysis. Nessuna istruzione operativa, nessuna size,
+    nessuna execution window."""
+    try:
+        g = get_global(); fg = get_fg()
+        _stable = get_stablecoins()
+        _trend = get_trend_7d()
+        _rot = compute_rotation_state(g, _trend, _stable)
+        uid = get_uid(u)
+        portfolio = load_user(uid).get("portfolio", {})
+        portfolio_coins = list(portfolio.keys())
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        _ri = compute_rotation_intelligence(_rot)
+        _er = compute_exit_risk(fg=fg, rot=_rot, p=None, trend=_trend)
+        _asc = compute_asset_speed_context(portfolio_coins)
+        righe = [
+            "\U0001f9ed ROTATION & RISK", "",
+            f"\U0001f552 {ts}", "",
+            _fmt_rotation_intelligence(_ri), "",
+            _fmt_exit_risk(_er), "",
+            _fmt_asset_speed_context(_asc), "",
+            "Nota: Pannello descrittivo. Pesi e soglie dichiarati, non validati statisticamente.",
+            "Nessuna istruzione operativa. Le decisioni sul portafoglio restano tue.",
+        ]
+        msg = chr(10).join(righe)
+        await u.message.reply_text(msg, reply_markup=KEYBOARD)
+    except Exception as e:
+        await u.message.reply_text(f"\u274c {e}", reply_markup=KEYBOARD)
+
 def compute_bias(scenario, signal_strength, rot_state, fg_val, stable_flow):
     """Bias Engine deterministico. Ritorna (emoji, etichetta).
     Vincoli rispettati: MEME_EUPHORIA e DISTRIBUTION_WARNING non risultano MAI bullish.
@@ -4194,7 +4473,7 @@ async def handle_text(u, c):
         "📰 News": cmd_news, "📅 Timeline": cmd_timeline,
         "💼 Portfolio": cmd_portfolio, "💹 Aggiungi Coin": cmd_addwizard,
         "🔔 I miei Alert": cmd_alerts, "⚙️ Setup Alert": cmd_setup,
-        "📤 Piano Uscita": cmd_exit_plan, "📊 Sentiment & Contesto": cmd_stoploss,
+        "📤 Piano Uscita": cmd_exit_plan, "📊 Sentiment & Contesto": cmd_stoploss, "🧭 Rotation & Risk": cmd_rotation_risk,
         "🤖 Chiedi AI": cmd_ai, "📊 Il mio piano": cmd_myplan,
         "💳 Abbonati": cmd_pay, "🔗 Referral": cmd_referral,
         "📢 Condividi": cmd_share, "❓ Aiuto": cmd_help,
@@ -4203,14 +4482,14 @@ async def handle_text(u, c):
         "🎯 Phase": cmd_phase, "🏆 Top Performers": cmd_top,
         "💱 Forex & Indices": cmd_forex, "💹 Add Coin": cmd_addwizard,
         "🔔 My Alerts": cmd_alerts, "⚙️ Setup Alerts": cmd_setup,
-        "📤 Exit Plan": cmd_exit_plan, "📊 Sentiment & Context": cmd_stoploss,
+        "📤 Exit Plan": cmd_exit_plan, "📊 Sentiment & Context": cmd_stoploss, "🧭 Rotation & Risk": cmd_rotation_risk,
         "🤖 Ask AI": cmd_ai, "📊 My Plan": cmd_myplan,
         "💳 Subscribe": cmd_pay, "📢 Share": cmd_share,
         "🔧 Admin": cmd_admin, "❓ Help": cmd_help,
         # PT
         "📰 Noticias": cmd_news, "💹 Adicionar Moeda": cmd_addwizard,
         "🔔 Meus Alertas": cmd_alerts, "⚙️ Config Alertas": cmd_setup,
-        "📤 Plano de Saida": cmd_exit_plan, "📊 Sentimento & Contexto": cmd_stoploss,
+        "📤 Plano de Saida": cmd_exit_plan, "📊 Sentimento & Contexto": cmd_stoploss, "🧭 Rotation & Risk": cmd_rotation_risk,
         "🤖 Perguntar AI": cmd_ai, "📊 Meu Plano": cmd_myplan,
         "💳 Assinar": cmd_pay, "📢 Compartilhar": cmd_share,
         "🔧 Admin": cmd_admin, "❓ Ajuda": cmd_help,
