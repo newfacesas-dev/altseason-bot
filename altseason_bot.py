@@ -2431,20 +2431,23 @@ def _sanitize_ai_analysis_v3(report_text):
         except Exception:
             pass
 
-        # --- FIX B (v4): dedup Bias Attuale ROBUSTO (case-insensitive, tollerante a
-        # markdown/spazi/emoji iniziali). Tiene solo l'ULTIMA occorrenza, la riappende in fondo. ---
+        # --- FIX B (v5): dedup Bias Attuale ROBUSTO. Tiene la PRIMA occorrenza
+        # ESATTAMENTE dove si trova (Sezione 1 Python-generated), scarta tutte le
+        # altre (es. se Claude la riscrive comunque in Sezione 6 nonostante il
+        # prompt). v4 teneva l'ultima e la spostava in fondo: sbagliato ora che il
+        # Bias deve restare nella sua posizione naturale in Sezione 1. ---
         try:
             _bias_pat = re.compile(r'^\s*[*_🔴🟢🟡🟠🟣\s]*bias\s+attuale\s*:', re.I)
             righe = txt.split("\n")
-            bias_lines = [r for r in righe if _bias_pat.match(r)]
-            bias_finale = bias_lines[-1].strip() if bias_lines else None
-            nuove = [r for r in righe if not _bias_pat.match(r)]
-            # rimuovo eventuali righe vuote finali multiple lasciate dalla rimozione
-            while nuove and nuove[-1].strip() == "":
-                nuove.pop()
-            if bias_finale:
-                nuove.append("")
-                nuove.append(bias_finale)
+            _trovata_prima = False
+            nuove = []
+            for r in righe:
+                if _bias_pat.match(r):
+                    if not _trovata_prima:
+                        nuove.append(r)
+                        _trovata_prima = True
+                else:
+                    nuove.append(r)
             txt = "\n".join(nuove)
         except Exception:
             pass
