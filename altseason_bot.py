@@ -2431,7 +2431,7 @@ def _sanitize_ai_analysis_v3(report_text):
         try:
             if re.search(r"(Fear\s*&\s*Greed|Sentiment)[^\d]{0,25}\d{1,3}", txt, re.I):
                 txt = re.sub(
-                    r"(Sentiment da fear verso neutral o greed:\s*)mancante",
+                    r"(Sentiment in zona di interesse contrarian:\s*)mancante",
                     r"\1non attivo",
                     txt,
                     flags=re.I
@@ -3111,7 +3111,7 @@ _TC_ETICHETTE = [
     ("Alt Strength", "Altcoin principali che sovraperformano BTC"),
     ("Volumi Alt", "Volumi reali sulle altcoin"),
     ("Stablecoin Flow", "Stablecoin inflow positivo"),
-    ("Sentiment", "Sentiment da fear verso neutral o greed"),
+    ("Sentiment", "Sentiment in zona di interesse contrarian"),
     ("Meme/Microcap", "Forza comparto meme/microcap"),
 ]
 
