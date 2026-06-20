@@ -2958,6 +2958,219 @@ def _coherence_check(report_text, availability, scenario_attivo=None, bias_label
 
     return warnings_emessi
 
+# ============================================================
+# MARKET SCORE (deterministico, da dati grezzi - NON dal testo AI)
+# ============================================================
+# 8 fattori pesati. Coerente con le soglie gia' usate altrove nel bot
+# (Sentiment Context, Rotation Engine) dove applicabile. Pesi/soglie
+# dichiarati, NON validati statisticamente - indicatore interno, non segnale.
+
+_MS_PESI = {
+    "BTC Dominance": 20,
+    "ETH/BTC": 20,
+    "TOTAL2/TOTAL3": 15,
+    "Alt Strength": 15,
+    "Volumi Alt": 10,
+    "Stablecoin Flow": 10,
+    "Sentiment": 5,
+    "Meme/Microcap": 5,
+}
+assert sum(_MS_PESI.values()) == 100
+
+_MS_FASI = [
+    (0, 30, "BEARISH"),
+    (31, 45, "CAUTELA"),
+    (46, 60, "ACCUMULO"),
+    (61, 75, "ROTAZIONE ALT"),
+    (76, 100, "ALTSEASON"),
+]
+
+_MS_MOLTIPLICATORE = {"ATTIVO": 1.0, "PARZIALE": 0.5, "NON ATTIVO": 0.0}
+
+def _ms_stato_dominance(g):
+    try:
+        dom = g.get("dom") if g else None
+    except Exception:
+        dom = None
+    if not dom:
+        return "MANCANTE"
+    if dom < 52:
+        return "ATTIVO"
+    if dom <= 55:
+        return "PARZIALE"
+    return "NON ATTIVO"
+
+def _ms_stato_ethbtc(trend):
+    try:
+        eth = trend.get("ethbtc") if trend else None
+        desc = eth.get("desc") if eth else None
+    except Exception:
+        desc = None
+    if desc is None:
+        return "MANCANTE"
+    if desc in ("in recupero", "in rialzo"):
+        return "ATTIVO"
+    if desc == "stabile":
+        return "PARZIALE"
+    if desc == "in calo":
+        return "NON ATTIVO"
+    return "MANCANTE"
+
+def _ms_stato_total23(g):
+    try:
+        t2 = g.get("total2") if g else None
+        t3 = g.get("total3") if g else None
+    except Exception:
+        t2 = t3 = None
+    # coerente col fix gia' applicato nel Coherence Validator: 0 = fallback errore, non valore reale
+    if t2 and t3:
+        return "ATTIVO"
+    return "MANCANTE"  # niente PARZIALE per questo fattore, per scelta dichiarata
+
+def _ms_stato_alt_strength(p):
+    try:
+        if not p:
+            return "MANCANTE"
+        alts = [s for s in p if s != "BTC"]
+        valid = [s for s in alts if p[s].get("price", 0) > 0]
+        if not valid:
+            return "MANCANTE"
+        pos = sum(1 for s in valid if p[s].get("ch", 0) > 0)
+        pct = pos / len(valid) * 100
+    except Exception:
+        return "MANCANTE"
+    if pct > 60:
+        return "ATTIVO"
+    if pct >= 40:
+        return "PARZIALE"
+    return "NON ATTIVO"
+
+def _ms_stato_volumi_alt():
+    # Il bot non traccia un aggregato di volumi alt come fattore isolato e affidabile.
+    # Dichiarato MANCANTE sempre, in attesa di una fonte dati dedicata.
+    return "MANCANTE"
+
+def _ms_stato_stablecoin(stable):
+    try:
+        seg = stable.get("segnale") if stable else None
+    except Exception:
+        seg = None
+    if not seg or seg == "DATO NON DISPONIBILE":
+        return "MANCANTE"
+    if seg == "INFLOW":
+        return "ATTIVO"
+    if seg == "NEUTRALE":
+        return "PARZIALE"
+    if seg == "OUTFLOW":
+        return "NON ATTIVO"
+    return "MANCANTE"
+
+def _ms_stato_sentiment(fg):
+    try:
+        v = fg.get("v") if fg else None
+    except Exception:
+        v = None
+    if v is None:
+        return "MANCANTE"
+    if v <= 25:
+        return "ATTIVO"
+    if v <= 50:
+        return "PARZIALE"
+    return "NON ATTIVO"
+
+def _ms_stato_meme(p):
+    # Stessa soglia (8%) gia' usata altrove nel bot per "meme mania" (DOGE/BONK/PEPE/SHIB).
+    try:
+        if not p:
+            return "MANCANTE"
+        memes = ["DOGE", "BONK", "PEPE", "SHIB"]
+        valori = [p[s]["ch"] for s in memes if s in p and p[s].get("ch") is not None]
+        if not valori:
+            return "MANCANTE"
+        media = sum(valori) / len(valori)
+    except Exception:
+        return "MANCANTE"
+    if media > 8:
+        return "ATTIVO"
+    if media > 3:
+        return "PARZIALE"
+    return "NON ATTIVO"
+
+def compute_market_score(g=None, fg=None, trend=None, stable=None, p=None):
+    """Market Score deterministico 0-100, calcolato SOLO da dati grezzi (non dal testo AI).
+    Fattori MANCANTI esclusi dal denominatore (score ricalibrato sui disponibili).
+    Pesi e soglie dichiarati, NON validati statisticamente."""
+    stati = {
+        "BTC Dominance": _ms_stato_dominance(g),
+        "ETH/BTC": _ms_stato_ethbtc(trend),
+        "TOTAL2/TOTAL3": _ms_stato_total23(g),
+        "Alt Strength": _ms_stato_alt_strength(p),
+        "Volumi Alt": _ms_stato_volumi_alt(),
+        "Stablecoin Flow": _ms_stato_stablecoin(stable),
+        "Sentiment": _ms_stato_sentiment(fg),
+        "Meme/Microcap": _ms_stato_meme(p),
+    }
+
+    punti_ottenuti = 0.0
+    punti_disponibili = 0
+    for fattore, stato in stati.items():
+        peso = _MS_PESI[fattore]
+        if stato == "MANCANTE":
+            continue
+        punti_disponibili += peso
+        punti_ottenuti += peso * _MS_MOLTIPLICATORE.get(stato, 0.0)
+
+    if punti_disponibili == 0:
+        return {
+            "score": None, "fase": None, "confidenza": None,
+            "punti_disponibili": 0, "stati": stati,
+        }
+
+    score = round(punti_ottenuti / punti_disponibili * 100)
+    score = max(0, min(100, score))  # clamp di sicurezza
+
+    fase = None
+    for lo, hi, nome in _MS_FASI:
+        if lo <= score <= hi:
+            fase = nome
+            break
+
+    if punti_disponibili >= 80:
+        confidenza = "ALTA"
+    elif punti_disponibili >= 50:
+        confidenza = "MEDIA"
+    else:
+        confidenza = "BASSA"
+
+    return {
+        "score": score, "fase": fase, "confidenza": confidenza,
+        "punti_disponibili": punti_disponibili, "stati": stati,
+    }
+
+def _fmt_market_score(ms):
+    """Formatta la riga Market Score con disclaimer sempre visibile."""
+    if not ms or ms.get("score") is None:
+        return "Market Score: non calcolabile (dati insufficienti)\nPesi e soglie dichiarati, non validati statisticamente."
+    return (
+        f"Market Score: {ms['score']}/100 \u2192 {ms['fase']} (Confidenza: {ms['confidenza']})\n"
+        f"Pesi e soglie dichiarati, non validati statisticamente."
+    )
+
+def _inserisci_market_score_sezione1(response, ms_text):
+    """Inserisce il blocco Market Score subito sotto l'intestazione '1. STATO MERCATO'.
+    Tollera varianti di markdown/numerazione. Fallback: lo antepone in cima al messaggio
+    con un marcatore, mai perso silenziosamente."""
+    if not response:
+        return response
+    pattern = re.compile(r"^(.*\b1\.\s*STATO MERCATO\b.*)$", re.IGNORECASE | re.MULTILINE)
+    match = pattern.search(response)
+    if match:
+        riga_intestazione = match.group(1)
+        inserimento = riga_intestazione + "\n" + ms_text
+        return response[:match.start()] + inserimento + response[match.end():]
+    # fallback: sezione non trovata, anteponi in cima (mai perso silenziosamente)
+    return ms_text + "\n\n" + response
+
 def compute_bias(scenario, signal_strength, rot_state, fg_val, stable_flow):
     """Bias Engine deterministico. Ritorna (emoji, etichetta).
     Vincoli rispettati: MEME_EUPHORIA e DISTRIBUTION_WARNING non risultano MAI bullish.
@@ -3741,6 +3954,12 @@ async def handle_text(u, c):
         }
         followup = ""
         response = _sanitize_ai_analysis_v3(response)
+        try:
+            _ms = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p)
+            _ms_text = _fmt_market_score(_ms)
+            response = _inserisci_market_score_sezione1(response, _ms_text)
+        except Exception as _e_ms:
+            log.warning(f"Market Score error (non bloccante): {_e_ms}")
         _full_msg = "\U0001f916 *AI Analysis*\n\n" + response + followup
         try:
             await u.message.reply_text(_full_msg, parse_mode="Markdown", reply_markup=kb(uid))
