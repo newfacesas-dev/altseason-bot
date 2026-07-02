@@ -1173,8 +1173,11 @@ def _pctx_pesi(portfolio, prices):
     return valori, totale
 
 def _pctx_rotazione_persistente(stato_attuale, leggi_snapshot_func=None):
-    """Verifica se lo stato del Rotation Engine e' confermato per piu' giorni (snapshot).
-    Ritorna (confermato_bool, n_giorni_concordi, n_snapshot_disponibili, nota).
+    """Verifica se lo stato del Rotation Engine e' confermato per piu' RILEVAZIONI
+    consecutive (ultimi N snapshot salvati, non N giorni di calendario: se in una
+    giornata vengono salvati piu' snapshot, es. un'analisi manuale + quella
+    automatica, contano comunque come rilevazioni distinte).
+    Ritorna (confermato_bool, n_rilevazioni_concordi, n_snapshot_disponibili, nota).
     Se snapshot insufficienti -> confermato=False + nota che abbassa confidence."""
     if not leggi_snapshot_func:
         return False, 0, 0, "persistenza non verificabile (storico non disponibile)"
@@ -1194,13 +1197,18 @@ def _pctx_rotazione_persistente(stato_attuale, leggi_snapshot_func=None):
             continue
     n_disp = len(stati)
     if n_disp < _PCTX_GIORNI_PERSISTENZA:
-        return False, 0, n_disp, f"snapshot insufficienti per confermare ({n_disp}/{_PCTX_GIORNI_PERSISTENZA} giorni)"
-    concordi = sum(1 for s in stati[-_PCTX_GIORNI_PERSISTENZA:] if s == stato_attuale)
+        return False, 0, n_disp, f"snapshot insufficienti per confermare ({n_disp}/{_PCTX_GIORNI_PERSISTENZA} rilevazioni consecutive)"
+    concordi = 0
+    for s in reversed(stati[-_PCTX_GIORNI_PERSISTENZA:]):
+        if s == stato_attuale:
+            concordi += 1
+        else:
+            break
     confermato = (concordi >= _PCTX_GIORNI_PERSISTENZA)
     if confermato:
-        nota = f"rotazione {stato_attuale} confermata per {concordi} giorni"
+        nota = f"Persistenza rotazione: {concordi}/{_PCTX_GIORNI_PERSISTENZA} snapshot concordi (rotazione {stato_attuale} confermata)"
     else:
-        nota = f"rotazione non ancora confermata ({concordi}/{_PCTX_GIORNI_PERSISTENZA} giorni concordi)"
+        nota = f"Persistenza rotazione: {concordi}/{_PCTX_GIORNI_PERSISTENZA} snapshot concordi (non ancora confermata)"
     return confermato, concordi, n_disp, nota
 
 def compute_portfolio_context(portfolio, rot=None, g=None, trend=None, stable=None, fg=None, prices=None, leggi_snapshot_func=None):
@@ -1553,6 +1561,207 @@ def _fmt_state_change_alert(stato_prec, stato_nuovo, conf, giorni, motivo):
     ]
     return chr(10).join(righe)
 
+_RELIABILITY_SCHEMA_VERSION = "1.0"
+
+
+def _genera_signal_id(snap):
+    """ID univoco e leggibile per uno snapshot, derivato dal suo stesso
+    timestamp_utc/tipo_evento (nessuna dipendenza da parametri esterni).
+    Formato: sig_{YYYYMMDDTHHMMSSZ}_{tipo breve}_{suffisso random 6 hex}.
+    Mai bloccante: in caso di problemi ritorna None (il chiamante gestisce)."""
+    try:
+        import secrets as _secrets
+        from datetime import datetime as _dt, timezone as _tz
+        ts_raw = snap.get("timestamp_utc")
+        try:
+            dt_utc = _dt.fromisoformat(ts_raw) if ts_raw else _dt.now(_tz.utc)
+        except Exception:
+            dt_utc = _dt.now(_tz.utc)
+        tipo_breve = "man" if snap.get("tipo_evento") == "analisi_manuale" else "auto"
+        return f"sig_{dt_utc.strftime('%Y%m%dT%H%M%SZ')}_{tipo_breve}_{_secrets.token_hex(3)}"
+    except Exception:
+        return None
+
+
+def _calcola_persistenza_snapshot_corrente(stato_corrente, leggi_snapshot_func=None):
+    """Calcola la persistenza della rotazione INCLUDENDO lo snapshot corrente,
+    che a questo punto non e' ancora stato scritto su /data/snapshots.jsonl
+    (la scrittura avviene dopo, in salva_snapshot/salva_snapshot_auto).
+
+    Diversa da _pctx_rotazione_persistente() (lasciata INVARIATA: continua a
+    leggere solo lo storico gia' salvato ed e' usata cosi' altrove, es. dal
+    Portfolio Context Engine). Questa funzione serve specificamente a chi deve
+    contare la rilevazione corrente come parte della sequenza:
+      1. legge gli ultimi N-1 snapshot GIA' salvati (N = _PCTX_GIORNI_PERSISTENZA);
+      2. aggiunge virtualmente lo stato corrente in coda alla sequenza (solo
+         in memoria: non scrive nulla su file, non duplica alcuna riga);
+      3. conta quanti degli ultimi N stati della sequenza risultante
+         coincidono con stato_corrente.
+
+    Esempio: 2 snapshot precedenti gia' salvati con state=LARGE_CAP_ROTATION
+    + stato_corrente=LARGE_CAP_ROTATION -> persistence_count=3 (non 2).
+    Il conteggio e' CONSECUTIVO a ritroso dallo snapshot corrente e si ferma
+    al primo stato diverso: es. BTC_LED, LARGE_CAP_ROTATION, BTC_LED(corrente)
+    -> persistence_count=1 (non 2: la sequenza si interrompe subito prima).
+
+    Ritorna sempre una tupla (persistence_count, persistence_required,
+    persistence_basis), mai un'eccezione. Se stato_corrente e' vuoto/None,
+    persistence_count=0. Se leggi_snapshot_func non e' disponibile o fallisce,
+    la sequenza si riduce al solo stato corrente (persistence_count=1),
+    mai un crash."""
+    n_richieste = _PCTX_GIORNI_PERSISTENZA
+    basis = "rilevazioni_consecutive"
+    if not stato_corrente:
+        return 0, n_richieste, basis
+
+    stati_precedenti = []
+    try:
+        if leggi_snapshot_func:
+            n_precedenti_da_leggere = max(0, n_richieste - 1)
+            if n_precedenti_da_leggere:
+                recenti = leggi_snapshot_func(n_precedenti_da_leggere) or []
+                for snap in recenti:
+                    try:
+                        rs = snap.get("rotation_state")
+                        if isinstance(rs, dict):
+                            stati_precedenti.append(rs.get("state"))
+                    except Exception:
+                        continue
+    except Exception:
+        stati_precedenti = []
+
+    # aggiungo virtualmente lo stato corrente in coda (solo in memoria)
+    try:
+        sequenza = stati_precedenti[-(max(0, n_richieste - 1)):] + [stato_corrente]
+        ultimi_n = sequenza[-n_richieste:]
+        # conteggio CONSECUTIVO a ritroso dallo snapshot corrente: mi fermo al
+        # primo stato diverso, non conto semplicemente quante occorrenze totali
+        # coincidono (che darebbe un falso "persistente" anche con sequenze
+        # interrotte, es. BTC_LED, LARGE_CAP_ROTATION, BTC_LED -> deve dare 1, non 2)
+        concordi = 0
+        for s in reversed(ultimi_n):
+            if s == stato_corrente:
+                concordi += 1
+            else:
+                break
+    except Exception:
+        concordi = 1  # lo snapshot corrente conta comunque per se stesso
+
+    return concordi, n_richieste, basis
+
+
+def _arricchisci_snapshot_reliability(snapshot, market_state=None, rotation_state=None):
+    """Arricchisce IN MODO ADDITIVO uno snapshot gia' costruito, aggiungendo
+    SOLO i campi richiesti da performance_tracker.py / reliability_engine.py:
+    signal_id, market_score, market_phase, market_confidence,
+    rotation_state_code, rotation_confidence, suggested_action,
+    persistence_count, persistence_required, persistence_basis,
+    trigger_summary, reliability_schema_version.
+
+    Parametri:
+      snapshot: dict dello snapshot gia' popolato con i campi storici
+        (timestamp_utc, tipo_evento, prezzi, rotation_state, ...) — NESSUNO
+        di questi campi esistenti viene toccato, rinominato o ricalcolato qui.
+      market_state: il dict gia' ritornato da compute_market_score(...) per
+        QUESTO snapshot (score/fase/confidenza/...), calcolato dal chiamante.
+        Puo' essere None se non disponibile.
+      rotation_state: il dict gia' ritornato da compute_rotation_state(...)
+        per QUESTO snapshot (state/confidence/suggested_action/dettagli).
+        Puo' essere None se non disponibile.
+
+    Questa funzione NON chiama e NON modifica compute_market_score() o
+    compute_rotation_state(): li riceve gia' calcolati dal chiamante.
+
+    Contratto difensivo:
+      - ogni campo e' assegnato in un try/except isolato: un dato mancante
+        diventa None (mai un valore inventato);
+      - un try/except esterno avvolge l'intera funzione: se qualcosa va
+        storto in modo imprevisto, ritorna lo SNAPSHOT ORIGINALE invariato,
+        mai None, mai un'eccezione propagata al chiamante;
+      - non richiede alcuna migrazione sugli snapshot vecchi: quelli restano
+        esattamente come sono, questa funzione tocca solo i nuovi snapshot
+        salvati da questo momento in poi."""
+    if snapshot is None:
+        return snapshot
+    try:
+        snap = snapshot
+
+        try:
+            snap["signal_id"] = _genera_signal_id(snap)
+        except Exception:
+            snap["signal_id"] = None
+
+        try:
+            snap["market_score"] = (market_state or {}).get("score")
+        except Exception:
+            snap["market_score"] = None
+        try:
+            snap["market_phase"] = (market_state or {}).get("fase")
+        except Exception:
+            snap["market_phase"] = None
+        try:
+            snap["market_confidence"] = (market_state or {}).get("confidenza")
+        except Exception:
+            snap["market_confidence"] = None
+
+        try:
+            snap["rotation_state_code"] = (rotation_state or {}).get("state")
+        except Exception:
+            snap["rotation_state_code"] = None
+        try:
+            snap["rotation_confidence"] = (rotation_state or {}).get("confidence")
+        except Exception:
+            snap["rotation_confidence"] = None
+        try:
+            snap["suggested_action"] = (rotation_state or {}).get("suggested_action")
+        except Exception:
+            snap["suggested_action"] = None
+
+        # Persistenza: quante delle ultime N RILEVAZIONI (non giorni di calendario)
+        # concordano con lo stato attuale, INCLUDENDO lo snapshot corrente (che a
+        # questo punto non e' ancora scritto su file). Vedi _calcola_persistenza_snapshot_corrente.
+        try:
+            _concordi, _richieste, _basis = _calcola_persistenza_snapshot_corrente(
+                (rotation_state or {}).get("state"), _leggi_ultimi_snapshot
+            )
+            snap["persistence_count"] = _concordi
+            snap["persistence_required"] = _richieste
+            snap["persistence_basis"] = _basis
+        except Exception:
+            snap["persistence_count"] = None
+            try:
+                snap["persistence_required"] = _PCTX_GIORNI_PERSISTENZA
+            except Exception:
+                snap["persistence_required"] = None
+            snap["persistence_basis"] = "rilevazioni_consecutive"
+
+        # Trigger summary: solo se market_state e' gia' disponibile (nessun ricalcolo forzato)
+        try:
+            if market_state is not None or rotation_state is not None:
+                _mstate = compute_market_state(ms=market_state, rot=rotation_state)
+                snap["trigger_summary"] = {
+                    "counts": _mstate.get("trigger_summary"),
+                    "breakdown": _mstate.get("trigger_breakdown"),
+                }
+            else:
+                snap["trigger_summary"] = None
+        except Exception:
+            snap["trigger_summary"] = None
+
+        try:
+            snap["reliability_schema_version"] = _RELIABILITY_SCHEMA_VERSION
+        except Exception:
+            pass
+
+        return snap
+    except Exception as e:
+        try:
+            log.warning(f"_arricchisci_snapshot_reliability fallita, ritorno snapshot originale invariato: {e}")
+        except Exception:
+            pass
+        return snapshot
+
+
 def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_ai):
     """Variante automatica di salva_snapshot: tipo_evento='automatico', nessun chat_id.
     Stessa logica crash-safe e append-only su /data/snapshots.jsonl."""
@@ -1564,6 +1773,7 @@ def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_
                 return d.get(k)
             except Exception:
                 return None
+        _rot = None  # sempre definita: se compute_rotation_state fallisce sotto, resta None (mai UnboundLocalError)
         try:
             _rot = compute_rotation_state(g, trend, stable)
         except Exception:
@@ -1612,6 +1822,14 @@ def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_
             snap["rotation_state"] = _rot
         except Exception:
             pass
+        try:
+            _ms_reliability = compute_market_score(g=g, fg=fg, trend=trend, stable=stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+        except Exception:
+            _ms_reliability = None
+        try:
+            snap = _arricchisci_snapshot_reliability(snap, market_state=_ms_reliability, rotation_state=_rot)
+        except Exception as e:
+            log.warning(f"arricchimento reliability (auto) fallito, salvo comunque lo snapshot base: {e}")
         os.makedirs("/data", exist_ok=True)
         with open("/data/snapshots.jsonl", "a", encoding="utf-8") as f:
             f.write(_json.dumps(snap, ensure_ascii=False) + chr(10))
@@ -1632,6 +1850,7 @@ def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, u
                 return d.get(k)
             except Exception:
                 return None
+        _rot = None  # sempre definita: se compute_rotation_state fallisce sotto, resta None (mai UnboundLocalError)
         try:
             _rot = compute_rotation_state(g, trend, stable)
         except Exception:
@@ -1688,6 +1907,14 @@ def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, u
             snap["rotation_state"] = _rot
         except Exception:
             pass
+        try:
+            _ms_reliability = compute_market_score(g=g, fg=fg, trend=trend, stable=stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+        except Exception:
+            _ms_reliability = None
+        try:
+            snap = _arricchisci_snapshot_reliability(snap, market_state=_ms_reliability, rotation_state=_rot)
+        except Exception as e:
+            log.warning(f"arricchimento reliability (manuale) fallito, salvo comunque lo snapshot base: {e}")
         os.makedirs("/data", exist_ok=True)
         with open("/data/snapshots.jsonl", "a", encoding="utf-8") as f:
             f.write(_json.dumps(snap, ensure_ascii=False) + chr(10))
