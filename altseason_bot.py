@@ -298,6 +298,7 @@ def get_keyboard(lang="it"):
             [KeyboardButton("💼 Portfolio"), KeyboardButton("💹 Aggiungi Coin")],
             [KeyboardButton("🔔 I miei Alert"), KeyboardButton("⚙️ Setup Alert")],
             [KeyboardButton("📤 Piano Uscita"), KeyboardButton("📊 Sentiment & Contesto")],
+            [KeyboardButton("🧭 Rotation & Risk")],
             [KeyboardButton("🤖 Chiedi AI"), KeyboardButton("📊 Il mio piano")],
             [KeyboardButton("💳 Abbonati"), KeyboardButton("🔗 Referral")],
             [KeyboardButton("📢 Condividi"), KeyboardButton("🔧 Admin")],
