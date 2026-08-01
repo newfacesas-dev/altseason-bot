@@ -2980,21 +2980,33 @@ import re
 class _TokenMaskFilter(logging.Filter):
     _pattern = re.compile(r"(bot)\d+:[A-Za-z0-9_-]+")
 
+    def _mask(self, value):
+        # httpx passa l'URL come oggetto httpx.URL (non str), quindi va
+        # convertito in stringa per essere controllato. Ma mascheriamo SOLO
+        # se il pattern è presente: se convertissimo sempre tutti gli
+        # argomenti in str, placeholder come %d (es. status code 200)
+        # romperebbero la formattazione finale del messaggio di log.
+        s = str(value)
+        if self._pattern.search(s):
+            return self._pattern.sub(r"\1***MASKED***", s)
+        return value
+
     def filter(self, record):
         try:
             if isinstance(record.msg, str):
-                record.msg = self._pattern.sub(r"\1***MASKED***", record.msg)
+                record.msg = self._mask(record.msg)
             if record.args:
-                record.args = tuple(
-                    self._pattern.sub(r"\1***MASKED***", str(a)) if isinstance(a, str) else a
-                    for a in record.args
-                )
+                if isinstance(record.args, dict):
+                    record.args = {k: self._mask(v) for k, v in record.args.items()}
+                else:
+                    record.args = tuple(self._mask(a) for a in record.args)
         except Exception:
             pass
         return True
 
 for _logger_name in ("httpx", "httpcore", "telegram", "telegram.ext", "telegram.request"):
     logging.getLogger(_logger_name).addFilter(_TokenMaskFilter())
+logging.getLogger().addFilter(_TokenMaskFilter())  # root logger, come rete di sicurezza
 # --- END TOKEN MASK FILTER ---
 
 def _data_availability_da_score_text(score_text, rot=None):
