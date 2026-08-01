@@ -2976,6 +2976,27 @@ def _mid_cap_contesto_forte(fg_val, stable_flow):
 
 import re
 
+# --- TOKEN MASK FILTER (auto-patch) ---
+class _TokenMaskFilter(logging.Filter):
+    _pattern = re.compile(r"(bot)\d+:[A-Za-z0-9_-]+")
+
+    def filter(self, record):
+        try:
+            if isinstance(record.msg, str):
+                record.msg = self._pattern.sub(r"\1***MASKED***", record.msg)
+            if record.args:
+                record.args = tuple(
+                    self._pattern.sub(r"\1***MASKED***", str(a)) if isinstance(a, str) else a
+                    for a in record.args
+                )
+        except Exception:
+            pass
+        return True
+
+for _logger_name in ("httpx", "httpcore", "telegram", "telegram.ext", "telegram.request"):
+    logging.getLogger(_logger_name).addFilter(_TokenMaskFilter())
+# --- END TOKEN MASK FILTER ---
+
 def _data_availability_da_score_text(score_text, rot=None):
     """Deriva la disponibilita' dei fattori critici dal testo GIA' generato da
     compute_altseason_score (sezione 'DATI DISPONIBILI PER FATTORE'). Non ricalcola
