@@ -3750,6 +3750,83 @@ def _estrai_confidenza_analisi(score_text):
         pass
     return "n/d"
 
+# --- XRPL M6 INTEGRATION (auto-patch) ---
+# Pipeline Raw(gia' raccolta separatamente in M1)->Feature->Score->
+# Confidence->Divergence->Decision (M2-M5), eseguita una volta al giorno
+# nello STESSO ciclo giornaliero gia' esistente (blocco 'hour == 9' in
+# auto_monitor). Nessun nuovo scheduler, nessun nuovo polling Telegram.
+# Import differiti DENTRO la funzione (non in testa al file): un eventuale
+# problema nei moduli XRPL non puo' mai impedire l'avvio del bot, viene
+# isolato al primo utilizzo, non al caricamento del modulo.
+
+_xrpl_last_result = None
+
+
+def _xrpl_run_daily_pipeline():
+    """Esegue la pipeline XRPL M1-M5 e salva il risultato in cache locale.
+    Isolamento totale: qualunque eccezione viene loggata, mai propagata
+    al chiamante (ne' un import fallito, ne' un errore di calcolo)."""
+    global _xrpl_last_result
+    try:
+        import xrpl_score_layer as _xrpl_sl
+        import xrpl_confidence_engine as _xrpl_ce
+        import xrpl_divergence_state as _xrpl_ds
+        import xrpl_decision_engine as _xrpl_de
+    except Exception as e:
+        log.warning(f"[XRPL] moduli non disponibili, pipeline saltata (non bloccante): {e}")
+        return
+    try:
+        score1 = _xrpl_sl.compute_ecosystem_growth_score(
+            rot_get_history_func=_rot_get_history, rot_perf_func=_rot_perf
+        )
+        score2 = _xrpl_sl.compute_capture_dependency_score(
+            rot_get_history_func=_rot_get_history, rot_perf_func=_rot_perf
+        )
+        conf1 = _xrpl_ce.compute_confidence(score1)
+        conf2 = _xrpl_ce.compute_confidence(score2)
+        divergence = _xrpl_ds.compute_divergence_state(score1_result=score1, score2_result=score2, record=True)
+        decision = _xrpl_de.compute_decision(
+            score1_result=score1, score2_result=score2,
+            confidence1=conf1, confidence2=conf2, divergence_result=divergence,
+            record=True,
+        )
+        _xrpl_last_result = decision
+        log.info(f"[XRPL] pipeline giornaliera completata: decision={decision.get('decision')}")
+    except Exception as e:
+        log.warning(f"[XRPL] pipeline giornaliera fallita (non bloccante): {e}")
+
+
+def _fmt_xrpl_intelligence():
+    """Sezione descrittiva 'XRPL Institutional Intelligence' per il report.
+    Isolata: in nessun caso solleva un'eccezione verso il chiamante, mai
+    un blocco che possa impedire l'invio del report all'utente."""
+    try:
+        d = _xrpl_last_result
+        if not d:
+            return (
+                chr(10) + chr(10) + "\U0001F537 *XRPL Institutional Intelligence*" + chr(10) +
+                "Stato: NON_MATURE \u2014 dati ancora in fase di raccolta iniziale, "
+                "nessuna lettura affidabile disponibile ancora."
+            )
+        righe_motivo = chr(10).join(f"\u2022 {r}" for r in d.get("reason", []) if r)
+        conf1 = d.get("confidence", {}).get("ecosystem_growth", {}) or {}
+        conf2 = d.get("confidence", {}).get("capture_dependency", {}) or {}
+        return (
+            chr(10) + chr(10) + "\U0001F537 *XRPL Institutional Intelligence*" + chr(10) +
+            f"Stato: {d.get('decision', 'WAIT')}" + chr(10) +
+            f"Livello di rischio: {d.get('risk_level', 'N/A')}" + chr(10) +
+            f"Confidence Ecosystem Growth: {conf1.get('confidence_label', 'NOT_MATURE')}" + chr(10) +
+            f"Confidence Capture & Dependency: {conf2.get('confidence_label', 'NOT_MATURE')}" +
+            (chr(10) + righe_motivo if righe_motivo else "")
+        )
+    except Exception as e:
+        log.warning(f"[XRPL] errore formattazione sezione report (non bloccante): {e}")
+        return (
+            chr(10) + chr(10) + "\U0001F537 *XRPL Institutional Intelligence*" + chr(10) +
+            "Stato: NON_MATURE \u2014 dati non disponibili."
+        )
+# --- END XRPL M6 INTEGRATION ---
+
 def _costruisci_report_finale(sezione1_py, sezione2_py, claude_response):
     """Concatena Sezione 1 (Python) + Sezione 2 (Python) + risposta di Claude
     (che dovrebbe contenere solo Sezioni 3-6). Rete di sicurezza: rimuove
@@ -3763,7 +3840,7 @@ def _costruisci_report_finale(sezione1_py, sezione2_py, claude_response):
         idx_sezione3 = testo_claude.find("3. INTERPRETAZIONE")
     if idx_sezione3 > 0:
         testo_claude = testo_claude[idx_sezione3:]
-    return sezione1_py + chr(10) + chr(10) + sezione2_py + chr(10) + chr(10) + testo_claude
+    return sezione1_py + chr(10) + chr(10) + sezione2_py + chr(10) + chr(10) + testo_claude + _fmt_xrpl_intelligence()
 
 # ============================================================
 # ROTATION INTELLIGENCE (categoriale, descrittivo)
@@ -4971,6 +5048,10 @@ async def auto_monitor(app):
             # Snapshot automatico giornaliero alle 9:00 (per validazione statistica)
             if hour == 9 and today != last_snapshot_day:
                 last_snapshot_day = today
+                try:
+                    _xrpl_run_daily_pipeline()
+                except Exception as _xrpl_e:
+                    log.warning(f"[XRPL] chiamata pipeline giornaliera fallita (non bloccante): {_xrpl_e}")
                 try:
                     sg = get_global(); sp = get_prices(); sfg = get_fg()
                     s_stable = get_stablecoins()
