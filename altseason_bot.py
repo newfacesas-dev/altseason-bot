@@ -3762,28 +3762,37 @@ def _estrai_confidenza_analisi(score_text):
 _xrpl_last_result = None
 
 
+# --- XRPL GAP1C FEATURE HISTORY WIRING (auto-patch) ---
 def _xrpl_run_daily_pipeline():
     """Esegue la pipeline XRPL M1-M5 e salva il risultato in cache locale.
     Isolamento totale: qualunque eccezione viene loggata, mai propagata
-    al chiamante (ne' un import fallito, ne' un errore di calcolo)."""
+    al chiamante (ne' un import fallito, ne' un errore di calcolo).
+
+    Gap 1C: compute_all_features() viene chiamata UNA SOLA volta (prima
+    ne venivano fatte fino a 4 — due con rotation iniettata dentro gli
+    Score, due SENZA dentro Confidence, con un'incoerenza reale tra i
+    due snapshot). Lo stesso identico dizionario 'features' gia' calcolato
+    viene passato a Score, Confidence e alla registrazione dello storico
+    (xrpl_feature_history.py) — mai ricalcolato."""
     global _xrpl_last_result
     try:
+        import xrpl_feature_engine as _xrpl_fe
         import xrpl_score_layer as _xrpl_sl
         import xrpl_confidence_engine as _xrpl_ce
         import xrpl_divergence_state as _xrpl_ds
         import xrpl_decision_engine as _xrpl_de
+        import xrpl_feature_history as _xrpl_fh
     except Exception as e:
         log.warning(f"[XRPL] moduli non disponibili, pipeline saltata (non bloccante): {e}")
         return
     try:
-        score1 = _xrpl_sl.compute_ecosystem_growth_score(
+        features = _xrpl_fe.compute_all_features(
             rot_get_history_func=_rot_get_history, rot_perf_func=_rot_perf
         )
-        score2 = _xrpl_sl.compute_capture_dependency_score(
-            rot_get_history_func=_rot_get_history, rot_perf_func=_rot_perf
-        )
-        conf1 = _xrpl_ce.compute_confidence(score1)
-        conf2 = _xrpl_ce.compute_confidence(score2)
+        score1 = _xrpl_sl.compute_ecosystem_growth_score(features=features)
+        score2 = _xrpl_sl.compute_capture_dependency_score(features=features)
+        conf1 = _xrpl_ce.compute_confidence(score1, features=features)
+        conf2 = _xrpl_ce.compute_confidence(score2, features=features)
         divergence = _xrpl_ds.compute_divergence_state(score1_result=score1, score2_result=score2, record=True)
         decision = _xrpl_de.compute_decision(
             score1_result=score1, score2_result=score2,
@@ -3794,6 +3803,17 @@ def _xrpl_run_daily_pipeline():
         log.info(f"[XRPL] pipeline giornaliera completata: decision={decision.get('decision')}")
     except Exception as e:
         log.warning(f"[XRPL] pipeline giornaliera fallita (non bloccante): {e}")
+        return
+
+    # Registrazione storico feature (Gap 1C): isolata nel proprio
+    # try/except separato, cosi' un errore SOLO di persistenza non
+    # inficia il fatto che la pipeline sopra sia comunque andata a buon
+    # fine (decision gia' calcolata e salvata in _xrpl_last_result).
+    try:
+        _xrpl_fh.record_feature_snapshot(features=features)
+    except Exception as e:
+        log.warning(f"[XRPL] registrazione storico feature fallita (non bloccante): {e}")
+# --- END XRPL GAP1C FEATURE HISTORY WIRING ---
 
 
 def _fmt_xrpl_intelligence():

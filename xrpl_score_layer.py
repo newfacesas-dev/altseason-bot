@@ -32,21 +32,24 @@ di passare per Phi(). Senza questa correzione Phi() sovrastimerebbe
 sistematicamente l'estremita' del dato (es. z_raw=1.0 letto direttamente
 darebbe l'84.1 percentile invece del 75.0 corretto).
 
-Questa trasformazione si applica SOLO alle due metriche il cui valore
-restituito da M2 e' gia', per costruzione, uno z-score robusto calcolato
-con trend_vs_ma (mediana/MAD) su una finestra storica reale:
+Questa trasformazione si applica direttamente (senza storico aggiuntivo)
+alle due metriche il cui valore restituito da M2 e' gia', per costruzione,
+uno z-score robusto calcolato con trend_vs_ma (mediana/MAD) su una finestra
+storica reale interna a M2:
   - rwa_value_trend (M2 -> trend_vs_ma sui livelli RWA)
   - rlusd_supply_trend (M2 -> trend_vs_ma sui livelli di supply RLUSD)
 
-Tutte le altre metriche del modello approvato richiederebbero un percentile
-storico calcolato sulla SERIE dei valori gia' derivati (es. serie storica
-dei tassi di crescita, non dei livelli grezzi) — dato che M2 restituisce
-solo il valore piu' recente per ogni chiamata (non una serie), e che questo
-modulo non puo' leggere i RAW direttamente per ricostruirla, quella
-normalizzazione non e' oggi eseguibile in modo corretto. Per queste
-metriche lo Score Layer non inventa un numero: le tratta come NON_MATURE
-a livello di normalizzazione, anche quando M2 stesso le riporta ACTIVE.
-Questo e' un gap dichiarato esplicitamente nel deliverable, non aggirato.
+Tutte le altre metriche del modello approvato richiedono invece un
+percentile storico calcolato sulla SERIE dei valori gia' derivati (es.
+serie storica dei tassi di crescita, non dei livelli grezzi) — dato che
+M2 restituisce solo il valore piu' recente per ogni chiamata (non una
+serie). Dalla milestone M8 (Gap 1B), questo storico viene letto da
+xrpl_feature_history.py (mai dai RAW direttamente): stessa identica
+pipeline z-score->percentile sopra descritta, applicata alla serie dei
+valori derivati invece che ai livelli grezzi. Se lo storico e' ancora
+insufficiente (meno di 2 osservazioni passate nella finestra), o se M2
+stesso riporta MISSING/NON_MATURE, lo Score Layer non inventa un numero:
+resta NON_MATURE/MISSING, mai un fallback arbitrario.
 """
 
 import math
@@ -54,6 +57,7 @@ import logging
 from datetime import datetime, timezone
 
 import xrpl_feature_engine as fe
+import xrpl_feature_history as fh
 
 log = logging.getLogger("xrpl_score_layer")
 
@@ -111,6 +115,36 @@ def _zscore_to_percentile(z_raw_mad):
 # E' la costante di consistenza standard per convertire un MAD grezzo nel
 # suo sigma equivalente sotto ipotesi di normalita' (Iglewicz & Hoaglin).
 _MAD_TO_STANDARD_Z_FACTOR = 0.6744897501960816
+
+# Gap 1 — decisione metodologica approvata esplicitamente in questa sessione
+# (non e' un riuso per analogia di finestre usate altrove nel progetto, ne'
+# una ripresa di parametri gia' esistenti: window_days=90 e
+# min_observations=30 sono NUOVI valori decisi e approvati ORA, uno per
+# uno, dopo aver verificato che il Rotation Engine reale non offre una
+# normalizzazione statistica riusabile per xrp_btc/eth_relative_strength,
+# e che amm_growth non ha mai avuto una metodologia di riferimento).
+#
+# Metodologia (identica per le tre metriche, sopra il valore grezzo gia'
+# prodotto da M2, che qui non viene mai ricalcolato ne' modificato):
+#   1. leggi la serie storica della STESSA feature da
+#      xrpl_feature_history.py (mai dai RAW, mai da un'altra feature);
+#   2. finestra: ultimi 90 giorni;
+#   3. richiedi ALMENO 30 osservazioni valide in quella finestra — questa
+#      soglia di 30 e' distinta ed esplicita, non il minimo generico di 2
+#      punti gia' richiesto internamente da trend_vs_ma; sotto 30 resta
+#      NON_MATURE anche se trend_vs_ma() sarebbe tecnicamente calcolabile
+#      con meno punti;
+#   4. mediana/MAD -> z grezzo (trend_vs_ma, gia' congelato, non
+#      modificato: gestisce gia' da solo MAD=0 senza inventare valori);
+#   5. calibrazione MAD->sigma gia' approvata (_MAD_TO_STANDARD_Z_FACTOR);
+#   6. Phi(z_std)*100 (_zscore_to_percentile, gia' congelato).
+# Nessuna soglia del Rotation Engine (confermato non compatibile
+# nell'audit metodologico), nessun fallback, nessuna interpolazione.
+_APPROVED_HISTORY_WINDOWS = {
+    "amm_growth": {"window_days": 90, "min_observations": 30},
+    "xrp_btc_relative_strength": {"window_days": 90, "min_observations": 30},
+    "xrp_eth_relative_strength": {"window_days": 90, "min_observations": 30},
+}
 
 
 # ============================================================
@@ -230,17 +264,51 @@ def _resolve_metric(metric, features):
             )
         return m2_status, sub_score, None
 
-    # NORM_UNAVAILABLE: anche con dato M2 attivo, la normalizzazione
-    # approvata per questa metrica richiede un percentile storico sulla
-    # serie dei valori derivati (non sui livelli grezzi), che M2 non
-    # espone come serie e che questo modulo non puo' ricostruire perche'
-    # non ha accesso diretto ai RAW. Dichiarato NON_MATURE, non aggirato.
-    return STATUS_NON_MATURE, None, (
-        f"dato M2 disponibile (status {m2_status}) ma la normalizzazione approvata per "
-        f"questa metrica richiede un percentile storico sulla serie dei valori derivati, "
-        f"non ancora ricostruibile: M2 espone solo il valore corrente, non una serie "
-        f"storica, e lo Score Layer non ha accesso diretto ai RAW per costruirla"
-    )
+    # NORM_UNAVAILABLE: il dato grezzo di M2 esiste (ACTIVE/PARTIAL). Il
+    # meccanismo di percentile storico (Gap 1) e' pronto — legge da
+    # xrpl_feature_history.py, mai dai RAW — ma si attiva SOLO se questa
+    # feature ha una metodologia esplicitamente approvata in
+    # _APPROVED_HISTORY_WINDOWS. Nessuna finestra riusata per analogia da
+    # altre parti del progetto: senza un'approvazione esplicita per QUESTA
+    # metrica, resta NON_MATURE, mai un numero inventato.
+    approved = _APPROVED_HISTORY_WINDOWS.get(feature_key)
+    if approved is None:
+        return STATUS_NON_MATURE, None, (
+            f"dato M2 disponibile (status {m2_status}) ma nessuna metodologia storica e' "
+            f"ancora esplicitamente approvata per il percentile storico di '{feature_key}': "
+            f"l'infrastruttura (xrpl_feature_history.py) e' pronta e sta accumulando dati "
+            f"(Gap 1C), ma l'attivazione resta in sospeso finche' non decidiamo "
+            f"esplicitamente la metodologia corretta per questa metrica"
+        )
+
+    window_days = approved["window_days"]
+    min_observations = approved["min_observations"]
+    history = fh.get_feature_series(feature_key, window_days=window_days)
+    window_values = [v for _, v in history]
+
+    if len(window_values) < min_observations:
+        return STATUS_NON_MATURE, None, (
+            f"dato M2 disponibile (status {m2_status}) ma lo storico dei valori derivati "
+            f"per questa feature ({len(window_values)} osservazioni negli ultimi "
+            f"{window_days}gg) non raggiunge ancora il minimo di {min_observations} "
+            f"osservazioni richiesto dalla metodologia approvata per il percentile storico"
+        )
+
+    z_raw = fe.trend_vs_ma(feat.get("value"), window_values)
+    if z_raw is None:
+        return STATUS_NON_MATURE, None, (
+            f"dato M2 disponibile (status {m2_status}) e storico sufficiente "
+            f"({len(window_values)} osservazioni) ma trend_vs_ma() non ha prodotto uno "
+            f"z-score valido (caso limite gia' gestito dalla funzione stessa, es. MAD=0 "
+            f"con valore corrente diverso dalla mediana: nessun valore inventato)"
+        )
+    sub_score = _zscore_to_percentile(z_raw)
+    if sub_score is None:
+        return STATUS_NON_MATURE, None, (
+            "z-score storico calcolato ma non convertibile in percentile "
+            "(valore non numerico): normalizzazione non applicabile"
+        )
+    return m2_status, sub_score, None
 
 
 def _compute_category(category_key, category_def, features):
@@ -450,12 +518,14 @@ def _compute_score(score_name, categories_def, features):
         status = SCORE_STATUS_COMPUTED
 
     reasons.insert(0, (
-        "Normalizzazione: solo z-score robusto (M2, mediana/MAD) convertito in percentile "
-        "via CDF normale per le metriche che M2 espone gia' come z-score (rwa_value_trend, "
-        "rlusd_supply_trend). Tutte le altre metriche richiederebbero un percentile storico "
-        "sulla serie dei valori derivati, non ricostruibile da questo modulo (M2 espone solo "
-        "il valore corrente, e questo modulo non legge i RAW direttamente): restano NON_MATURE "
-        "anche quando M2 le riporta ACTIVE."
+        "Normalizzazione: z-score robusto (M2, mediana/MAD) convertito in percentile via CDF "
+        "normale. Per rwa_value_trend/rlusd_supply_trend usa lo storico dei livelli grezzi "
+        "gia' interno a M2. Per amm_growth/xrp_btc_relative_strength/xrp_eth_relative_strength "
+        "usa lo storico dei valori derivati (xrpl_feature_history.py), con metodologia "
+        "esplicitamente approvata: finestra 90gg, minimo 30 osservazioni valide, sotto soglia "
+        "NON_MATURE. Le altre metriche restano NON_MATURE/MISSING finche' non decidiamo una "
+        "metodologia dedicata anche per loro: mai un valore inventato o una finestra riusata "
+        "per analogia."
     ))
 
     return {

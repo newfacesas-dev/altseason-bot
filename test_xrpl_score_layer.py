@@ -4,10 +4,15 @@ Nessuna rete, nessun accesso ai RAW: le feature sono dizionari sintetici
 passati direttamente (stesso formato prodotto da xrpl_feature_engine.py),
 usando il parametro di test 'features' esposto dalle funzioni pubbliche.
 """
+import os
+import json
+import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from unittest.mock import patch
 
 import xrpl_score_layer as sl
+import xrpl_feature_history as fh
 
 
 def _feat(status, value=None, as_of=None, reason=None):
@@ -325,5 +330,198 @@ class TestRealFeatureEngineIntegration(unittest.TestCase):
         self.assertIn(result["status"], (sl.SCORE_STATUS_COMPUTED, sl.SCORE_STATUS_NOT_COMPUTABLE))
 
 
+class TestGap1ApprovedMethodology(unittest.TestCase):
+    """M8 Gap 1 (chiusura definitiva): metodologia esplicitamente approvata
+    per amm_growth, xrp_btc_relative_strength, xrp_eth_relative_strength —
+    finestra 90gg, minimo 30 osservazioni valide, mediana/MAD -> z robusto
+    -> CDF. Nessuna soglia del Rotation Engine (confermato incompatibile
+    nell'audit), nessun fallback, nessuna interpolazione."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.history_path = os.path.join(self.tmpdir, "history.jsonl")
+        self._patcher = patch.object(fh, "_FEATURE_HISTORY_PATH", self.history_path)
+        self._patcher.start()
+
+    def tearDown(self):
+        self._patcher.stop()
+
+    def _write_history(self, feature_key, values_by_days_ago):
+        now = datetime.now(timezone.utc)
+        with open(self.history_path, "w", encoding="utf-8") as f:
+            for days_ago, value in values_by_days_ago:
+                entry = {
+                    "timestamp_utc": (now - timedelta(days=days_ago)).isoformat(),
+                    "content_hash": f"h{days_ago}",
+                    "features": {feature_key: {"value": value, "status": "ACTIVE"}},
+                }
+                f.write(json.dumps(entry) + "\n")
+
+    def _amm_features(self, current_value, status=sl.STATUS_ACTIVE):
+        feats = {}
+        for cat in sl.SCORE1_CATEGORIES.values():
+            for m in cat["metrics"]:
+                if m["feature_key"]:
+                    feats[m["feature_key"]] = {
+                        "value": None, "status": sl.STATUS_MISSING, "source": "test",
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        "history_points": 0, "history_required": 30, "reason": "test default",
+                    }
+        feats["amm_growth"] = {
+            "value": current_value, "status": status, "source": "test",
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "history_points": 5, "history_required": 30, "reason": None,
+        }
+        return feats
+
+    def test_registry_has_exactly_the_three_approved_metrics(self):
+        self.assertEqual(
+            set(sl._APPROVED_HISTORY_WINDOWS.keys()),
+            {"amm_growth", "xrp_btc_relative_strength", "xrp_eth_relative_strength"},
+        )
+        for feature_key, spec in sl._APPROVED_HISTORY_WINDOWS.items():
+            self.assertEqual(spec["window_days"], 90, feature_key)
+            self.assertEqual(spec["min_observations"], 30, feature_key)
+
+    def test_29_observations_stays_non_mature(self):
+        history = [(i, 10.0 + (i % 3)) for i in range(1, 30)]  # 29 punti, entro 90gg
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(12.0))
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["non_mature_metrics"])
+        self.assertNotIn("C.amm_liquidity", cat_c["active_metrics"])
+        joined = " ".join(cat_c["reasons"])
+        self.assertIn("30", joined)
+
+    def test_30_observations_normalization_available(self):
+        history = [(i, 10.0 + (i % 3)) for i in range(1, 31)]  # esattamente 30 punti
+        self._write_history("amm_growth", history)
+        current = 12.0
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(current))
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["active_metrics"])
+        self.assertIsNotNone(cat_c["score"])
+
+        import xrpl_feature_engine as fe
+        window_values = [v for _, v in history]
+        expected_z = fe.trend_vs_ma(current, window_values)
+        expected_pct = sl._zscore_to_percentile(expected_z)
+        self.assertAlmostEqual(cat_c["score"], expected_pct, places=6)
+
+    def test_rolling_90_days_excludes_older_points(self):
+        # 35 punti entro 90gg + 5 punti oltre 90gg (devono essere esclusi)
+        recent = [(i, 10.0 + (i % 3)) for i in range(1, 36)]
+        old = [(95, 99999.0), (100, 88888.0), (110, 77777.0), (120, 66666.0), (150, 55555.0)]
+        self._write_history("amm_growth", recent + old)
+        current = 12.0
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(current))
+        cat_c = result["category_breakdown"]["C"]
+
+        import xrpl_feature_engine as fe
+        expected_z = fe.trend_vs_ma(current, [v for _, v in recent])
+        expected_pct = sl._zscore_to_percentile(expected_z)
+        self.assertAlmostEqual(cat_c["score"], expected_pct, places=6,
+                                msg="i punti oltre 90gg devono essere esclusi dalla finestra")
+
+    def test_no_look_ahead_current_value_never_from_history(self):
+        history = [(i, 1000.0) for i in range(1, 31)]  # 30 punti tutti uguali
+        self._write_history("amm_growth", history)
+        current = 1000.0000001  # quasi identico, differenza nota e minima
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(current))
+        cat_c = result["category_breakdown"]["C"]
+        import xrpl_feature_engine as fe
+        expected_z = fe.trend_vs_ma(current, [v for _, v in history])
+        expected_pct = sl._zscore_to_percentile(expected_z)
+        self.assertAlmostEqual(cat_c["score"], expected_pct, places=6)
+
+    def test_mad_zero_current_equals_median_gives_fifty_not_invented(self):
+        history = [(i, 10.0) for i in range(1, 31)]  # 30 punti identici -> MAD=0
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(10.0))  # == mediana
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["active_metrics"])
+        self.assertAlmostEqual(cat_c["score"], 50.0, places=6)
+
+    def test_mad_zero_current_different_from_median_stays_non_mature(self):
+        history = [(i, 10.0) for i in range(1, 31)]  # 30 punti identici -> MAD=0
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(15.0))  # != mediana
+        cat_c = result["category_breakdown"]["C"]
+        # trend_vs_ma ritorna None in questo caso (gia' definito, non nuovo qui):
+        # nessuno z-score inventato quando MAD=0 e il valore corrente diverge.
+        self.assertIn("C.amm_liquidity", cat_c["non_mature_metrics"])
+        self.assertIsNone(cat_c["score"])
+
+    def test_missing_m2_status_stays_missing_regardless_of_history(self):
+        history = [(i, 10.0 + (i % 3)) for i in range(1, 31)]
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(
+            features=self._amm_features(None, status=sl.STATUS_MISSING)
+        )
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["missing_metrics"])
+
+    def test_non_mature_m2_status_stays_non_mature_regardless_of_history(self):
+        history = [(i, 10.0 + (i % 3)) for i in range(1, 31)]
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(
+            features=self._amm_features(None, status=sl.STATUS_NON_MATURE)
+        )
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["non_mature_metrics"])
+
+    def test_partial_m2_status_uses_history_when_sufficient(self):
+        history = [(i, 10.0 + (i % 3)) for i in range(1, 31)]
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(
+            features=self._amm_features(12.0, status=sl.STATUS_PARTIAL)
+        )
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["partial_metrics"])
+        self.assertIsNotNone(cat_c["score"])
+
+    def test_relative_strength_now_really_active_without_patching(self):
+        # A differenza della versione precedente, qui NON serve piu'
+        # patchare il registro: le tre metriche sono approvate per davvero.
+        feats = self._amm_features(None, status=sl.STATUS_MISSING)
+        feats["xrp_btc_relative_strength"] = {
+            "value": 5.0, "status": sl.STATUS_ACTIVE, "source": "test",
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "history_points": 30, "history_required": 90, "reason": None,
+        }
+        history = [(i, 2.0 + (i % 4)) for i in range(1, 31)]
+        self._write_history("xrp_btc_relative_strength", history)
+        result = sl.compute_capture_dependency_score(features=feats)
+        cat_e = result["category_breakdown"]["E"]
+        self.assertIn("E.xrp_btc_relative_strength", cat_e["active_metrics"])
+        self.assertIsNotNone(cat_e["score"])
+
+    def test_zero_history_stays_non_mature(self):
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(12.0))
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.amm_liquidity", cat_c["non_mature_metrics"])
+
+    def test_no_arbitrary_fallback_ever(self):
+        history = [(i, 10.0 + (i % 3)) for i in range(1, 29)]  # 28, sotto soglia
+        self._write_history("amm_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=self._amm_features(12.0))
+        cat_c = result["category_breakdown"]["C"]
+        self.assertEqual(cat_c["status"], sl.SCORE_STATUS_NOT_COMPUTABLE)
+        self.assertIsNone(cat_c["score"])
+
+
+
+class TestGap1BNeverReadsRaw(unittest.TestCase):
+    def test_score_layer_source_never_references_raw_snapshot_file(self):
+        with open(sl.__file__, encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("xrpl_raw_snapshots", src)
+        self.assertNotIn("import xrpl_raw_data_layer", src)
+        self.assertNotIn("_RAW_SNAPSHOT_PATH", src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+
