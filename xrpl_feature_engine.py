@@ -267,6 +267,23 @@ def _extract_rwa_reason(snapshot):
         return None
 
 
+def _extract_xrpl_to_dex_volume(snapshot):
+    """Volume DEX aggregato di rete da XRPL.to (M8 Gap 2A). Fonte esterna,
+    non protocollo XRPL nativo — per questo vive in un gruppo 'xrpl_to'
+    separato da 'xrpl_native' nel dizionario sources di M1."""
+    try:
+        env = snapshot["sources"]["xrpl_to"]["dex_volume"]
+    except (KeyError, TypeError):
+        return None
+    if env.get("status") != raw.STATUS_RAW_AVAILABLE:
+        return None
+    try:
+        val = env["data"]["gDexVolume"]
+        return float(val)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 # ============================================================
 # COSTRUTTORI DI FEATURE GENERICI (growth/acceleration/velocity/trend)
 # ============================================================
@@ -423,23 +440,82 @@ def rlusd_velocity():
 # nessuna sostituzione di fonte non concordata: MISSING dichiarato, non
 # un fallback inventato.
 
-_DEX_VOLUME_MISSING_REASON = (
-    "raccolta storica del volume DEX (accumulo book_changes ledger-by-ledger) "
-    "rimandata alla milestone M5, come da deliverable M1: il dato grezzo oggi "
-    "e' solo uno snapshot per singolo ledger, spesso vuoto, non una serie storica"
-)
+def dex_volume_trend(window_days=30):
+    """M8 Gap 2A: usa il volume DEX aggregato da XRPL.to (PRIMARY source),
+    stessa identica logica gia' congelata di rlusd_supply_trend (z-score
+    robusto via trend_vs_ma su una finestra di livelli grezzi) — nessuna
+    formula nuova, solo una fonte diversa per l'extractor."""
+    return _build_trend_feature(_extract_xrpl_to_dex_volume, window_days, "xrpl_to.dex_volume", "dex_volume_trend")
 
 
-def dex_volume_trend():
-    return _feature_result(None, STATUS_MISSING, "xrpl.book_changes", _latest_known_timestamp(), 0, 30, _DEX_VOLUME_MISSING_REASON)
-
-
-def dex_volume_growth():
-    return _feature_result(None, STATUS_MISSING, "xrpl.book_changes", _latest_known_timestamp(), 0, 30, _DEX_VOLUME_MISSING_REASON)
+def dex_volume_growth(window_days=30):
+    """M8 Gap 2A: stessa identica logica gia' congelata di rlusd_growth
+    (growth_pct su una finestra), nessuna formula nuova."""
+    return _build_growth_feature(_extract_xrpl_to_dex_volume, window_days, "xrpl_to.dex_volume", "dex_volume_growth")
 
 
 def dex_volume_acceleration():
-    return _feature_result(None, STATUS_MISSING, "xrpl.book_changes", _latest_known_timestamp(), 0, 60, _DEX_VOLUME_MISSING_REASON)
+    """M8 Gap 2A (Decisione 2, approvata): confronta la crescita
+    dell'ultimo periodo di 30gg con quella del periodo di 30gg precedente.
+    Riusa ESCLUSIVAMENTE growth_pct(), acceleration(), _find_base_point()
+    gia' esistenti e congelate — nessuna formula nuova, nessun fallback,
+    nessun valore artificiale.
+
+    growth_now  = growth_pct(volume_oggi, volume_30gg_fa)   [crescita 30gg-fa -> oggi]
+    growth_prev = growth_pct(volume_30gg_fa, volume_60gg_fa) [crescita 60gg-fa -> 30gg-fa]
+    dex_volume_acceleration = acceleration(growth_now, growth_prev)
+
+    Nota sull'ordine degli argomenti: growth_pct(current, base) e' la
+    convenzione gia' congelata e usata ovunque nel progetto (es.
+    _build_growth_feature: growth_pct(latest_val, base_val)) — qui
+    applicata due volte in sequenza, non invertita, per non introdurre un
+    segno errato rispetto a come growth_pct e' gia' usata altrove.
+
+    NON registrata in M3: resta una feature M2 disponibile per usi
+    futuri, come richiesto esplicitamente."""
+    as_of_fallback = _latest_known_timestamp()
+    series = _load_series(_extract_xrpl_to_dex_volume)
+    if not series:
+        return _feature_result(
+            None, STATUS_MISSING, "xrpl_to.dex_volume", as_of_fallback, 0, 60,
+            "nessun dato raccolto per dex_volume_acceleration",
+        )
+
+    latest_dt, latest_val = series[-1]
+
+    base_30, _gap_30 = _find_base_point(series, latest_dt, 30)
+    if base_30 is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl_to.dex_volume", latest_dt, len(series), 60,
+            f"storico insufficiente per la finestra dei 30gg piu' recenti: disponibili "
+            f"{(latest_dt - series[0][0]).total_seconds() / 86400.0:.2f}gg in totale",
+        )
+
+    base_60, _gap_60 = _find_base_point(series, latest_dt, 60)
+    if base_60 is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl_to.dex_volume", latest_dt, len(series), 60,
+            f"storico insufficiente per la seconda finestra dei 30gg (60gg totali "
+            f"richiesti per confrontare due periodi consecutivi): disponibili "
+            f"{(latest_dt - series[0][0]).total_seconds() / 86400.0:.2f}gg in totale",
+        )
+
+    growth_now = growth_pct(latest_val, base_30)
+    growth_prev = growth_pct(base_30, base_60)
+    if growth_now is None or growth_prev is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl_to.dex_volume", latest_dt, len(series), 60,
+            "una delle due basi di calcolo e' troppo vicina a zero per un growth_pct affidabile",
+        )
+
+    value = acceleration(growth_now, growth_prev)
+    if value is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl_to.dex_volume", latest_dt, len(series), 60,
+            "acceleration() non calcolabile nonostante growth_now/growth_prev disponibili",
+        )
+
+    return _feature_result(value, STATUS_ACTIVE, "xrpl_to.dex_volume", latest_dt, len(series), 60, None)
 
 
 def amm_growth(window_days=30):

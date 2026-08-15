@@ -142,6 +142,7 @@ _MAD_TO_STANDARD_Z_FACTOR = 0.6744897501960816
 # nell'audit metodologico), nessun fallback, nessuna interpolazione.
 _APPROVED_HISTORY_WINDOWS = {
     "amm_growth": {"window_days": 90, "min_observations": 30},
+    "dex_volume_growth": {"window_days": 90, "min_observations": 30},  # M8 Gap 2A, decisione 1 approvata
     "xrp_btc_relative_strength": {"window_days": 90, "min_observations": 30},
     "xrp_eth_relative_strength": {"window_days": 90, "min_observations": 30},
 }

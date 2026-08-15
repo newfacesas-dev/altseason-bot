@@ -18,10 +18,11 @@ def _iso(dt):
     return dt.isoformat()
 
 
-def _snap(ts, rlusd_supply=None, amm_lp_value=None, rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
+def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
     sources = {
         "xrpl_native": {},
         "defillama": {},
+        "xrpl_to": {},
         "rwa_xyz": {
             "assets_xrpl": {
                 "status": "SOURCE_UNAVAILABLE",
@@ -52,6 +53,17 @@ def _snap(ts, rlusd_supply=None, amm_lp_value=None, rwa_error="RWA_XYZ_API_KEY n
     else:
         sources["xrpl_native"]["amm_info_xrp_rlusd"] = {
             "status": "SOURCE_UNAVAILABLE", "source": "xrpl.amm_info", "data": None, "error": "test-down",
+        }
+    if dex_volume is not None:
+        sources["xrpl_to"]["dex_volume"] = {
+            "status": "RAW_AVAILABLE",
+            "source": "xrpl_to.dex_volume",
+            "data": {"gDexVolume": dex_volume},
+            "error": None,
+        }
+    else:
+        sources["xrpl_to"]["dex_volume"] = {
+            "status": "SOURCE_UNAVAILABLE", "source": "xrpl_to.dex_volume", "data": None, "error": "test-down",
         }
     return {"timestamp_utc": _iso(ts), "sources": sources}
 
@@ -317,11 +329,130 @@ class TestFeatureEngineWithFixtures(unittest.TestCase):
             self.assertEqual(result["status"], fe.STATUS_MISSING)
             self.assertIn("RWA_XYZ_API_KEY", result["reason"])
 
-    def test_dex_volume_features_always_missing_with_m5_reason(self):
-        for fn in (fe.dex_volume_trend, fe.dex_volume_growth, fe.dex_volume_acceleration):
+    def test_dex_volume_missing_without_any_raw_snapshot(self):
+        # M8 Gap 2A: senza storico raccolto, restano MISSING (non piu'
+        # incondizionatamente come prima — ora dipende dai dati reali).
+        for fn in (fe.dex_volume_trend, fe.dex_volume_growth):
             result = fn()
             self.assertEqual(result["status"], fe.STATUS_MISSING)
-            self.assertIn("M5", result["reason"])
+
+    def test_dex_volume_trend_active_with_sufficient_history(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=20), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=10), dex_volume=110000.0),
+            _snap(datetime.now(timezone.utc), dex_volume=120000.0),
+        ])
+        result = fe.dex_volume_trend()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertIsNotNone(result["value"])
+
+    def test_dex_volume_growth_non_mature_with_short_history(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=5), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc), dex_volume=110000.0),
+        ])
+        result = fe.dex_volume_growth()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+
+    def test_dex_volume_acceleration_missing_without_any_snapshot(self):
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_dex_volume_acceleration_non_mature_below_30_days(self):
+        # solo una finestra di 30gg disponibile, manca la seconda (60gg totali)
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=20), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc), dex_volume=110000.0),
+        ])
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_dex_volume_acceleration_non_mature_below_60_days(self):
+        # ~40gg di storico: sotto i ~60gg richiesti per due finestre consecutive
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc), dex_volume=120000.0),
+        ])
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_dex_volume_acceleration_correct_formula_with_known_values(self):
+        # 60gg fa=100000 (+10%->30gg fa=110000), 30gg fa=110000 (+20%->oggi=132000)
+        # growth_prev = (110000-100000)/100000*100 = 10.0
+        # growth_now  = (132000-110000)/110000*100 = 20.0
+        # acceleration = growth_now - growth_prev = 10.0
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=63), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=33), dex_volume=110000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=3), dex_volume=132000.0),
+            _snap(datetime.now(timezone.utc), dex_volume=132000.0),
+        ])
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 10.0, places=4)
+
+    def test_dex_volume_acceleration_growth_now_component_isolated(self):
+        # verifica growth_now da solo: se growth_prev=0 (nessuna variazione
+        # nel periodo precedente), acceleration deve coincidere con growth_now
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=63), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=33), dex_volume=100000.0),  # 0% nel periodo precedente
+            _snap(datetime.now(timezone.utc), dex_volume=150000.0),  # +50% nel periodo recente
+        ])
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 50.0, places=4)  # growth_prev=0, quindi accel=growth_now
+
+    def test_dex_volume_acceleration_negative_when_slowing_down(self):
+        # crescita che rallenta: growth_prev > growth_now -> accelerazione negativa
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=63), dex_volume=100000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=33), dex_volume=150000.0),  # +50%
+            _snap(datetime.now(timezone.utc), dex_volume=165000.0),  # +10% (rallentamento)
+        ])
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertLess(result["value"], 0)
+
+    def test_dex_volume_acceleration_zero_values_handled(self):
+        # gDexVolume=0 e' un valore valido (verificato in Gap 2A): la
+        # metodologia esistente (growth_pct con soglia min_abs_base) deve
+        # gestirlo senza inventare nulla, non dare un errore.
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=63), dex_volume=0.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=33), dex_volume=0.0),
+            _snap(datetime.now(timezone.utc), dex_volume=0.0),
+        ])
+        result = fe.dex_volume_acceleration()
+        # base troppo vicina a zero -> growth_pct ritorna None -> NON_MATURE,
+        # mai un valore inventato (stesso comportamento gia' congelato di growth_pct)
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_dex_volume_acceleration_missing_m2_status_propagates(self):
+        # snapshot con dex_volume esplicitamente SOURCE_UNAVAILABLE (non
+        # None): l'extractor deve saltarlo, non trattarlo come uno zero.
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=63), dex_volume=None),
+            _snap(datetime.now(timezone.utc) - timedelta(days=33), dex_volume=None),
+            _snap(datetime.now(timezone.utc), dex_volume=None),
+        ])
+        result = fe.dex_volume_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+
+    def test_dex_volume_acceleration_not_in_score1_registry(self):
+        # Requisito esplicito: NON deve essere registrata in M3.
+        import xrpl_score_layer as sl
+        all_feature_keys = {
+            m["feature_key"]
+            for cats in (sl.SCORE1_CATEGORIES, sl.SCORE2_CATEGORIES)
+            for cat in cats.values()
+            for m in cat["metrics"]
+        }
+        self.assertNotIn("dex_volume_acceleration", all_feature_keys)
 
     def test_trustline_features_always_missing_with_pagination_reason(self):
         for fn in (fe.trustline_growth, fe.trustline_acceleration):

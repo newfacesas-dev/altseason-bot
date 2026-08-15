@@ -374,10 +374,27 @@ class TestGap1ApprovedMethodology(unittest.TestCase):
         }
         return feats
 
-    def test_registry_has_exactly_the_three_approved_metrics(self):
+    def _dex_volume_features(self, current_value, status=sl.STATUS_ACTIVE):
+        feats = {}
+        for cat in sl.SCORE1_CATEGORIES.values():
+            for m in cat["metrics"]:
+                if m["feature_key"]:
+                    feats[m["feature_key"]] = {
+                        "value": None, "status": sl.STATUS_MISSING, "source": "test",
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        "history_points": 0, "history_required": 30, "reason": "test default",
+                    }
+        feats["dex_volume_growth"] = {
+            "value": current_value, "status": status, "source": "test",
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "history_points": 5, "history_required": 30, "reason": None,
+        }
+        return feats
+
+    def test_registry_has_exactly_the_four_approved_metrics(self):
         self.assertEqual(
             set(sl._APPROVED_HISTORY_WINDOWS.keys()),
-            {"amm_growth", "xrp_btc_relative_strength", "xrp_eth_relative_strength"},
+            {"amm_growth", "dex_volume_growth", "xrp_btc_relative_strength", "xrp_eth_relative_strength"},
         )
         for feature_key, spec in sl._APPROVED_HISTORY_WINDOWS.items():
             self.assertEqual(spec["window_days"], 90, feature_key)
@@ -509,6 +526,141 @@ class TestGap1ApprovedMethodology(unittest.TestCase):
         self.assertEqual(cat_c["status"], sl.SCORE_STATUS_NOT_COMPUTABLE)
         self.assertIsNone(cat_c["score"])
 
+
+
+class TestGap2ADexVolumeGrowthNormalization(unittest.TestCase):
+    """M8 Gap 2A (chiusura definitiva): dex_volume_growth aggiunta a
+    _APPROVED_HISTORY_WINDOWS (90gg/30 osservazioni), stessa metodologia
+    di amm_growth. Nessuna modifica a pesi, formula, MAD->sigma o CDF."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.history_path = os.path.join(self.tmpdir, "history.jsonl")
+        self._patcher = patch.object(fh, "_FEATURE_HISTORY_PATH", self.history_path)
+        self._patcher.start()
+
+    def tearDown(self):
+        self._patcher.stop()
+
+    def _write_history(self, feature_key, values_by_days_ago):
+        now = datetime.now(timezone.utc)
+        with open(self.history_path, "w", encoding="utf-8") as f:
+            for days_ago, value in values_by_days_ago:
+                entry = {
+                    "timestamp_utc": (now - timedelta(days=days_ago)).isoformat(),
+                    "content_hash": f"h{days_ago}",
+                    "features": {feature_key: {"value": value, "status": "ACTIVE"}},
+                }
+                f.write(json.dumps(entry) + "\n")
+
+    def _dex_volume_features(self, current_value, status=sl.STATUS_ACTIVE):
+        feats = {}
+        for cat in sl.SCORE1_CATEGORIES.values():
+            for m in cat["metrics"]:
+                if m["feature_key"]:
+                    feats[m["feature_key"]] = {
+                        "value": None, "status": sl.STATUS_MISSING, "source": "test",
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        "history_points": 0, "history_required": 30, "reason": "test default",
+                    }
+        feats["dex_volume_growth"] = {
+            "value": current_value, "status": status, "source": "test",
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "history_points": 5, "history_required": 30, "reason": None,
+        }
+        return feats
+
+    def test_29_observations_stays_non_mature(self):
+        history = [(i, 100000.0 + (i % 5) * 1000) for i in range(1, 30)]  # 29 punti
+        self._write_history("dex_volume_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=self._dex_volume_features(105000.0))
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.dex_volume", cat_c["non_mature_metrics"])
+        self.assertNotIn("C.dex_volume", cat_c["active_metrics"])
+
+    def test_30_observations_percentile_available(self):
+        history = [(i, 100000.0 + (i % 5) * 1000) for i in range(1, 31)]  # esattamente 30 punti
+        self._write_history("dex_volume_growth", history)
+        current = 105000.0
+        result = sl.compute_ecosystem_growth_score(features=self._dex_volume_features(current))
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.dex_volume", cat_c["active_metrics"])
+        self.assertIsNotNone(cat_c["score"])
+
+        import xrpl_feature_engine as fe
+        window_values = [v for _, v in history]
+        expected_z = fe.trend_vs_ma(current, window_values)
+        expected_pct = sl._zscore_to_percentile(expected_z)
+        self.assertAlmostEqual(cat_c["score"], expected_pct, places=6)
+
+    def test_rolling_90_days_excludes_older_points(self):
+        recent = [(i, 100000.0 + (i % 5) * 1000) for i in range(1, 36)]  # 35 punti entro 90gg
+        old = [(95, 9999999.0), (100, 8888888.0), (120, 7777777.0)]  # oltre 90gg, devono essere esclusi
+        self._write_history("dex_volume_growth", recent + old)
+        current = 105000.0
+        result = sl.compute_ecosystem_growth_score(features=self._dex_volume_features(current))
+        cat_c = result["category_breakdown"]["C"]
+
+        import xrpl_feature_engine as fe
+        expected_z = fe.trend_vs_ma(current, [v for _, v in recent])
+        expected_pct = sl._zscore_to_percentile(expected_z)
+        self.assertAlmostEqual(cat_c["score"], expected_pct, places=6,
+                                msg="i punti oltre 90gg devono essere esclusi dalla finestra")
+
+    def test_no_look_ahead_current_value_never_from_history(self):
+        history = [(i, 500000.0) for i in range(1, 31)]  # 30 punti identici
+        self._write_history("dex_volume_growth", history)
+        current = 500000.0000001  # differenza nota e minima
+        result = sl.compute_ecosystem_growth_score(features=self._dex_volume_features(current))
+        cat_c = result["category_breakdown"]["C"]
+        import xrpl_feature_engine as fe
+        expected_z = fe.trend_vs_ma(current, [v for _, v in history])
+        expected_pct = sl._zscore_to_percentile(expected_z)
+        self.assertAlmostEqual(cat_c["score"], expected_pct, places=6)
+
+    def test_zero_value_handled_by_existing_methodology(self):
+        history = [(i, 0.0) for i in range(1, 31)]
+        self._write_history("dex_volume_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=self._dex_volume_features(0.0))
+        cat_c = result["category_breakdown"]["C"]
+        # MAD=0, valore corrente == mediana (0.0) -> z=0 -> percentile 50 esatto
+        self.assertIn("C.dex_volume", cat_c["active_metrics"])
+        self.assertAlmostEqual(cat_c["score"], 50.0, places=6)
+
+    def test_missing_m2_status_stays_missing_regardless_of_history(self):
+        history = [(i, 100000.0) for i in range(1, 31)]
+        self._write_history("dex_volume_growth", history)
+        result = sl.compute_ecosystem_growth_score(
+            features=self._dex_volume_features(None, status=sl.STATUS_MISSING)
+        )
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.dex_volume", cat_c["missing_metrics"])
+
+    def test_non_mature_m2_status_stays_non_mature_regardless_of_history(self):
+        history = [(i, 100000.0) for i in range(1, 31)]
+        self._write_history("dex_volume_growth", history)
+        result = sl.compute_ecosystem_growth_score(
+            features=self._dex_volume_features(None, status=sl.STATUS_NON_MATURE)
+        )
+        cat_c = result["category_breakdown"]["C"]
+        self.assertIn("C.dex_volume", cat_c["non_mature_metrics"])
+
+    def test_score1_category_weights_unchanged(self):
+        # Requisito esplicito: nessuna modifica ai pesi Score1.
+        self.assertAlmostEqual(sl.SCORE1_CATEGORIES["C"]["macro_weight"], 0.25)
+        c_metrics = {m["name"]: m["weight"] for m in sl.SCORE1_CATEGORIES["C"]["metrics"]}
+        self.assertAlmostEqual(c_metrics["dex_volume"], 0.60)
+        self.assertAlmostEqual(c_metrics["amm_liquidity"], 0.40)
+
+    def test_dex_volume_acceleration_absent_from_m3_registry(self):
+        all_feature_keys = {
+            m["feature_key"]
+            for cats in (sl.SCORE1_CATEGORIES, sl.SCORE2_CATEGORIES)
+            for cat in cats.values()
+            for m in cat["metrics"]
+        }
+        self.assertNotIn("dex_volume_acceleration", all_feature_keys)
+        self.assertNotIn("dex_volume_acceleration", sl._APPROVED_HISTORY_WINDOWS)
 
 
 class TestGap1BNeverReadsRaw(unittest.TestCase):
