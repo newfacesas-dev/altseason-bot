@@ -582,26 +582,90 @@ def xrp_pool_share():
     return _feature_result(None, STATUS_MISSING, "derived", _latest_known_timestamp(), 0, None, reason)
 
 
-_XRP_RLUSD_PAIR_GROWTH_MISSING_REASON = (
-    "xrp_rlusd_pair_growth misura la crescita dell'ATTIVITA' (volume/trade) della "
-    "coppia XRP/RLUSD, che e' concettualmente diversa dalla LIQUIDITA' del pool AMM "
-    "gia' coperta da amm_growth — le due feature non vanno fuse anche se oggi "
-    "l'unico pool tracciato e' proprio XRP/RLUSD. M1 non raccoglie oggi un dato "
-    "storico di attivita'/volume specifico per questa coppia: 'amm_info' da' solo lo "
-    "stock di liquidita' (LP token), non il flusso di scambio. Per abilitare questa "
-    "feature serve una nuova raccolta RAW in M1/M5: storico accumulato di "
-    "'book_changes' filtrato sulle offerte con currency_a/currency_b che corrispondono "
-    "a XRP e RLUSD (stesso meccanismo gia' identificato come dipendenza di M5 per "
-    "dex_volume_*), oppure un endpoint DeFiLlama/altra fonte con volume per singola "
-    "coppia (non disponibile oggi tra le fonti approvate)."
-)
+def _load_rlusd_pair_volume_series():
+    """Serie storica del volume XRP/RLUSD accumulato dal collector
+    WebSocket dedicato (xrpl_rlusd_pair_collector.py, M8 Gap 2B) — fonte
+    diversa dal RAW di M1: qui il dato nasce dall'accumulo in streaming
+    di book_changes, non da un singolo snapshot puntuale."""
+    try:
+        import xrpl_rlusd_pair_collector as collector
+    except Exception as e:
+        log.warning(f"[xrpl_feature_engine] xrpl_rlusd_pair_collector non disponibile: {e}")
+        return []
+    try:
+        return collector.get_volume_period_series()
+    except Exception as e:
+        log.warning(f"[xrpl_feature_engine] lettura serie volume XRP/RLUSD fallita: {e}")
+        return []
 
 
-def xrp_rlusd_pair_growth(window_days=90):
-    return _feature_result(
-        None, STATUS_MISSING, "xrpl.book_changes (pair-filtered, non ancora raccolto)",
-        _latest_known_timestamp(), 0, window_days, _XRP_RLUSD_PAIR_GROWTH_MISSING_REASON,
+# M8 Gap 2B — metodologia approvata esplicitamente (non per analogia):
+# 84gg = 12 settimane esatte (multiplo di 7), per ridurre distorsioni da
+# stagionalita' settimanale del volume della coppia; min_observations=28
+# = 4 cicli settimanali completi, come soglia minima di maturita' prima
+# di fidarsi di un qualunque confronto growth_pct su questa serie.
+_XRP_RLUSD_PAIR_GROWTH_APPROVED_WINDOW_DAYS = 84
+_XRP_RLUSD_PAIR_GROWTH_APPROVED_MIN_OBSERVATIONS = 28
+
+
+def xrp_rlusd_pair_growth(window_days=None):
+    """M8 Gap 2B: crescita del volume REALE (AMM + order book, tramite
+    le offerte sintetiche AMM gia' incluse in book_changes, verificato
+    nell'audit) della coppia XRP/RLUSD. Riuso diretto di growth_pct() e
+    _find_base_point() gia' congelati — nessuna formula nuova. Fonte:
+    xrpl_rlusd_pair_collector.py (stream book_changes), mai i RAW di M1
+    per questa specifica feature. Usa SOLO periodi marcati 'complete':
+    True (gia' garantito da get_volume_period_series(), che esclude i
+    periodi con gap di backfill non recuperato) — nessun periodo
+    parziale, nessuna interpolazione, nessun fallback.
+
+    'window_days': se non passato esplicitamente, usa la finestra
+    approvata (84gg). Richiede inoltre almeno
+    _XRP_RLUSD_PAIR_GROWTH_APPROVED_MIN_OBSERVATIONS (28) periodi
+    completi totali prima di fidarsi di un qualunque confronto —
+    soglia di maturita' distinta dal singolo punto base cercato a 84gg."""
+    as_of_fallback = _latest_known_timestamp()
+
+    if window_days is None:
+        window_days = _XRP_RLUSD_PAIR_GROWTH_APPROVED_WINDOW_DAYS
+
+    series = _load_rlusd_pair_volume_series()
+    if not series:
+        return _feature_result(
+            None, STATUS_MISSING, "xrpl.book_changes.rlusd_pair_collector", as_of_fallback, 0, window_days,
+            "nessun dato ancora accumulato dal collector XRP/RLUSD (mai avviato, oppure "
+            "nessun periodo di raccolta ancora completato)",
+        )
+
+    if len(series) < _XRP_RLUSD_PAIR_GROWTH_APPROVED_MIN_OBSERVATIONS:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.book_changes.rlusd_pair_collector", series[-1][0], len(series), window_days,
+            f"solo {len(series)} periodi completi disponibili, sotto il minimo approvato di "
+            f"{_XRP_RLUSD_PAIR_GROWTH_APPROVED_MIN_OBSERVATIONS} (4 cicli settimanali)",
+        )
+
+    latest_dt, latest_val = series[-1]
+    base_val, gap_days = _find_base_point(series, latest_dt, window_days)
+    if base_val is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.book_changes.rlusd_pair_collector", latest_dt, len(series), window_days,
+            f"nessun periodo completo trovato a {window_days}gg o piu' di distanza: "
+            f"storico disponibile {(latest_dt - series[0][0]).total_seconds() / 86400.0:.2f} giorni "
+            f"({len(series)} periodi completi)",
+        )
+
+    value = growth_pct(latest_val, base_val)
+    if value is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.book_changes.rlusd_pair_collector", latest_dt, len(series), window_days,
+            "base troppo vicina a zero per calcolare una crescita percentuale affidabile",
+        )
+
+    status = STATUS_ACTIVE if gap_days >= window_days * 0.8 else STATUS_PARTIAL
+    reason = None if status == STATUS_ACTIVE else (
+        f"finestra reale ({gap_days:.1f}gg) piu' corta della richiesta ({window_days}gg)"
     )
+    return _feature_result(value, status, "xrpl.book_changes.rlusd_pair_collector", latest_dt, len(series), window_days, reason)
 
 
 # ============================================================

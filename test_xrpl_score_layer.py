@@ -391,14 +391,19 @@ class TestGap1ApprovedMethodology(unittest.TestCase):
         }
         return feats
 
-    def test_registry_has_exactly_the_four_approved_metrics(self):
+    def test_registry_has_exactly_the_five_approved_metrics(self):
         self.assertEqual(
             set(sl._APPROVED_HISTORY_WINDOWS.keys()),
-            {"amm_growth", "dex_volume_growth", "xrp_btc_relative_strength", "xrp_eth_relative_strength"},
+            {"amm_growth", "dex_volume_growth", "xrp_rlusd_pair_growth",
+             "xrp_btc_relative_strength", "xrp_eth_relative_strength"},
         )
         for feature_key, spec in sl._APPROVED_HISTORY_WINDOWS.items():
-            self.assertEqual(spec["window_days"], 90, feature_key)
-            self.assertEqual(spec["min_observations"], 30, feature_key)
+            if feature_key == "xrp_rlusd_pair_growth":
+                self.assertEqual(spec["window_days"], 84, feature_key)  # M8 Gap 2B, motivazione: 12 settimane esatte
+                self.assertEqual(spec["min_observations"], 28, feature_key)
+            else:
+                self.assertEqual(spec["window_days"], 90, feature_key)
+                self.assertEqual(spec["min_observations"], 30, feature_key)
 
     def test_29_observations_stays_non_mature(self):
         history = [(i, 10.0 + (i % 3)) for i in range(1, 30)]  # 29 punti, entro 90gg
@@ -512,6 +517,31 @@ class TestGap1ApprovedMethodology(unittest.TestCase):
         cat_e = result["category_breakdown"]["E"]
         self.assertIn("E.xrp_btc_relative_strength", cat_e["active_metrics"])
         self.assertIsNotNone(cat_e["score"])
+
+    def test_xrp_rlusd_pair_growth_now_really_active_at_score_level(self):
+        # M8 Gap 2B, chiusura definitiva: xrp_rlusd_pair_growth (categoria
+        # F di Score2) usa ora la stessa pipeline z-score->percentile gia'
+        # congelata, con la finestra 84gg/28oss appena approvata.
+        feats = {}
+        for cat in sl.SCORE2_CATEGORIES.values():
+            for m in cat["metrics"]:
+                if m["feature_key"]:
+                    feats[m["feature_key"]] = {
+                        "value": None, "status": sl.STATUS_MISSING, "source": "test",
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        "history_points": 0, "history_required": 84, "reason": "test default",
+                    }
+        feats["xrp_rlusd_pair_growth"] = {
+            "value": 12.0, "status": sl.STATUS_ACTIVE, "source": "test",
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "history_points": 28, "history_required": 84, "reason": None,
+        }
+        history = [(i, 10.0 + (i % 5)) for i in range(1, 29)]
+        self._write_history("xrp_rlusd_pair_growth", history)
+        result = sl.compute_capture_dependency_score(features=feats)
+        cat_f = result["category_breakdown"]["F"]
+        self.assertIn("F.xrp_rlusd_pair_growth", cat_f["active_metrics"])
+        self.assertIsNotNone(cat_f["score"])
 
     def test_zero_history_stays_non_mature(self):
         result = sl.compute_ecosystem_growth_score(features=self._amm_features(12.0))

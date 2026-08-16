@@ -5295,6 +5295,19 @@ async def main():
             await app.updater.start_polling()
             log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
+        # --- XRPL GAP2B RLUSD PAIR COLLECTOR (auto-patch) ---
+        # Task asyncio indipendente sullo stesso event loop, avviato DOPO
+        # che il polling Telegram e' gia' partito (start_polling() sopra):
+        # non lo blocca, non e' un secondo polling, e' un secondo task
+        # concorrente. Isolato: un fallimento qui non impedisce l'avvio
+        # del bot ne' del polling gia' in corso.
+        try:
+            import xrpl_rlusd_pair_collector as _xrpl_rlusd_collector
+            asyncio.create_task(_xrpl_rlusd_collector.run_collector_forever())
+            log.info("[XRPL] collector XRP/RLUSD (WebSocket book_changes) avviato")
+        except Exception as _xrpl_collector_e:
+            log.warning(f"[XRPL] avvio collector XRP/RLUSD fallito (non bloccante): {_xrpl_collector_e}")
+        # --- END XRPL GAP2B RLUSD PAIR COLLECTOR ---
         # alert_loop (sistema alert operativo legacy) DISATTIVATO - vedi nota import sopra
         log.info("Sistema alert legacy disattivato (alerts.py non avviato)")
         while True:

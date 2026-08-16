@@ -301,25 +301,104 @@ class TestFeatureEngineWithFixtures(unittest.TestCase):
         self.assertEqual(result["status"], fe.STATUS_ACTIVE)
         self.assertAlmostEqual(result["value"], 10.0, places=4)
 
-    def test_xrp_rlusd_pair_growth_always_missing_even_with_amm_history(self):
-        # anche con storico AMM ampio e maturo, xrp_rlusd_pair_growth NON deve
-        # riusare quel dato: misura attivita'/volume, non liquidita' del pool.
+    def test_xrp_rlusd_pair_growth_missing_when_amm_history_present_but_collector_absent(self):
+        # xrp_rlusd_pair_growth legge dal collector WebSocket dedicato
+        # (M8 Gap 2B), MAI dai RAW di M1: uno storico AMM ricco negli
+        # snapshot di M1 non ha alcun effetto su questa feature.
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=91)
         self._write_snapshots([
             _snap(old, amm_lp_value=500.0),
             _snap(now, amm_lp_value=600.0),
         ])
-        result = fe.xrp_rlusd_pair_growth(window_days=90)
-        self.assertEqual(result["status"], fe.STATUS_MISSING)
-        self.assertIsNone(result["value"])
-        self.assertIn("amm_growth", result["reason"])
-        self.assertIn("book_changes", result["reason"])
-
-    def test_xrp_rlusd_pair_growth_missing_with_no_data_too(self):
         result = fe.xrp_rlusd_pair_growth()
         self.assertEqual(result["status"], fe.STATUS_MISSING)
         self.assertIsNone(result["value"])
+
+    def _write_rlusd_pair_history(self, hist_path, entries):
+        with open(hist_path, "w") as f:
+            for days_ago, vol, complete in entries:
+                now = datetime.now(timezone.utc)
+                f.write(json.dumps({
+                    "period_end_utc": (now - timedelta(days=days_ago)).isoformat(),
+                    "volume_xrp": vol, "complete": complete,
+                }) + "\n")
+
+    def test_xrp_rlusd_pair_growth_default_call_uses_approved_window(self):
+        # M8 Gap 2B, chiusura definitiva: la finestra (84gg/28oss) e'
+        # ora approvata — la chiamata di produzione (senza window_days
+        # esplicito, come fa compute_all_features()) deve funzionare.
+        import xrpl_rlusd_pair_collector as collector_mod
+        tmpdir = tempfile.mkdtemp()
+        hist_path = os.path.join(tmpdir, "hist.jsonl")
+        # 30 periodi completi, distanziati di 3gg l'uno dall'altro (0..87gg fa)
+        entries = [(i * 3, 1000.0 + i * 10, True) for i in range(30)]
+        self._write_rlusd_pair_history(hist_path, entries)
+        with patch.object(collector_mod, "_VOLUME_HISTORY_PATH", hist_path):
+            result = fe.xrp_rlusd_pair_growth()  # nessun window_days esplicito
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertIsNotNone(result["value"])
+
+    def test_xrp_rlusd_pair_growth_active_with_sufficient_history(self):
+        import xrpl_rlusd_pair_collector as collector_mod
+        tmpdir = tempfile.mkdtemp()
+        hist_path = os.path.join(tmpdir, "hist.jsonl")
+        entries = [(84, 1000.0, True), (0, 1500.0, True)] + [(i, 1000.0, True) for i in range(1, 27)]
+        self._write_rlusd_pair_history(hist_path, entries)
+        with patch.object(collector_mod, "_VOLUME_HISTORY_PATH", hist_path):
+            result = fe.xrp_rlusd_pair_growth(window_days=84)
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 50.0, places=4)
+
+    def test_xrp_rlusd_pair_growth_non_mature_below_min_observations(self):
+        # Meno di 28 periodi completi: NON_MATURE per soglia di maturita',
+        # anche se il punto base a 84gg esiste.
+        import xrpl_rlusd_pair_collector as collector_mod
+        tmpdir = tempfile.mkdtemp()
+        hist_path = os.path.join(tmpdir, "hist.jsonl")
+        entries = [(84, 1000.0, True), (0, 1500.0, True)]  # solo 2 periodi
+        self._write_rlusd_pair_history(hist_path, entries)
+        with patch.object(collector_mod, "_VOLUME_HISTORY_PATH", hist_path):
+            result = fe.xrp_rlusd_pair_growth(window_days=84)
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+        self.assertIn("minimo approvato", result["reason"])
+
+    def test_xrp_rlusd_pair_growth_non_mature_when_no_base_point_at_84_days(self):
+        # 28+ periodi completi ma tutti troppo recenti (nessuno a 84gg+ di distanza).
+        import xrpl_rlusd_pair_collector as collector_mod
+        tmpdir = tempfile.mkdtemp()
+        hist_path = os.path.join(tmpdir, "hist.jsonl")
+        entries = [(i, 1000.0, True) for i in range(30)]  # 0..29gg fa, mai 84gg
+        self._write_rlusd_pair_history(hist_path, entries)
+        with patch.object(collector_mod, "_VOLUME_HISTORY_PATH", hist_path):
+            result = fe.xrp_rlusd_pair_growth(window_days=84)
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_xrp_rlusd_pair_growth_incomplete_period_excluded_from_series(self):
+        # Un periodo marcato 'complete': False (gap di backfill non
+        # recuperato) NON deve mai essere usato come osservazione valida,
+        # ne' contare per il minimo di 28 osservazioni.
+        import xrpl_rlusd_pair_collector as collector_mod
+        tmpdir = tempfile.mkdtemp()
+        hist_path = os.path.join(tmpdir, "hist.jsonl")
+        entries = [(84, 1000.0, True), (0, 1500.0, True)]
+        entries += [(i, 1000.0, True) for i in range(1, 27)]  # 26 -> totale 28 complete
+        entries += [(40, 99999.0, False)]  # incompleto, DEVE essere ignorato
+        self._write_rlusd_pair_history(hist_path, entries)
+        with patch.object(collector_mod, "_VOLUME_HISTORY_PATH", hist_path):
+            result = fe.xrp_rlusd_pair_growth(window_days=84)
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 50.0, places=4)  # come se il periodo incompleto non esistesse
+
+    def test_xrp_rlusd_pair_growth_now_in_approved_history_windows(self):
+        # M8 Gap 2B, chiusura definitiva: approvata esplicitamente.
+        import xrpl_score_layer as sl
+        self.assertIn("xrp_rlusd_pair_growth", sl._APPROVED_HISTORY_WINDOWS)
+        spec = sl._APPROVED_HISTORY_WINDOWS["xrp_rlusd_pair_growth"]
+        self.assertEqual(spec["window_days"], 84)
+        self.assertEqual(spec["min_observations"], 28)
 
     def test_rwa_features_always_missing_with_reason(self):
         now = datetime.now(timezone.utc)
