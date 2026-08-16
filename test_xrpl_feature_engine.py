@@ -18,7 +18,8 @@ def _iso(dt):
     return dt.isoformat()
 
 
-def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
+def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, trustline_count=None,
+          trustline_complete=True, rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
     sources = {
         "xrpl_native": {},
         "defillama": {},
@@ -64,6 +65,17 @@ def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, rwa_error="
     else:
         sources["xrpl_to"]["dex_volume"] = {
             "status": "SOURCE_UNAVAILABLE", "source": "xrpl_to.dex_volume", "data": None, "error": "test-down",
+        }
+    if trustline_count is not None:
+        sources["xrpl_native"]["account_lines_rlusd_issuer_paginated"] = {
+            "status": "RAW_AVAILABLE" if trustline_complete else "SOURCE_UNAVAILABLE",
+            "source": "xrpl.account_lines_paginated",
+            "data": {"total_trustlines": trustline_count, "pages_fetched": 3, "complete": trustline_complete},
+            "error": None if trustline_complete else "tetto di sicurezza raggiunto (test)",
+        }
+    else:
+        sources["xrpl_native"]["account_lines_rlusd_issuer_paginated"] = {
+            "status": "SOURCE_UNAVAILABLE", "source": "xrpl.account_lines_paginated", "data": None, "error": "test-down",
         }
     return {"timestamp_utc": _iso(ts), "sources": sources}
 
@@ -533,11 +545,89 @@ class TestFeatureEngineWithFixtures(unittest.TestCase):
         }
         self.assertNotIn("dex_volume_acceleration", all_feature_keys)
 
-    def test_trustline_features_always_missing_with_pagination_reason(self):
-        for fn in (fe.trustline_growth, fe.trustline_acceleration):
-            result = fn()
-            self.assertEqual(result["status"], fe.STATUS_MISSING)
-            self.assertIn("paginato", result["reason"])
+    def test_trustline_growth_default_call_uses_approved_window(self):
+        # M8 Gap 3, chiusura definitiva: window_days=30 ora approvato —
+        # la chiamata di produzione (senza window_days esplicito) deve
+        # funzionare, non piu' NON_MATURE per assenza di approvazione.
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), trustline_count=30000),
+            _snap(datetime.now(timezone.utc), trustline_count=31500),
+        ])
+        result = fe.trustline_growth()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 5.0, places=4)  # (31500-30000)/30000*100
+
+    def test_trustline_growth_active_with_explicit_window(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), trustline_count=30000),
+            _snap(datetime.now(timezone.utc), trustline_count=31500),
+        ])
+        result = fe.trustline_growth(window_days=30)
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 5.0, places=4)
+
+    def test_trustline_growth_incomplete_snapshot_excluded(self):
+        # Un conteggio non 'complete' (tetto raggiunto o pagina fallita)
+        # non deve mai essere usato come punto valido della serie.
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), trustline_count=30000, trustline_complete=True),
+            _snap(datetime.now(timezone.utc) - timedelta(days=15), trustline_count=999999, trustline_complete=False),
+            _snap(datetime.now(timezone.utc), trustline_count=31500, trustline_complete=True),
+        ])
+        result = fe.trustline_growth()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 5.0, places=4)  # come se il punto incompleto non esistesse
+
+    def test_trustline_growth_missing_with_no_data(self):
+        result = fe.trustline_growth()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_trustline_growth_non_mature_short_history(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=5), trustline_count=30000),
+            _snap(datetime.now(timezone.utc), trustline_count=31500),
+        ])
+        result = fe.trustline_growth()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_trustline_acceleration_correct_formula_with_known_values(self):
+        # 60gg fa=28000, 30gg fa=30000 (+7.142857%), oggi=31500 (+5.0%)
+        # growth_prev = (30000-28000)/28000*100 = 7.142857...
+        # growth_now  = (31500-30000)/30000*100 = 5.0
+        # acceleration = growth_now - growth_prev = -2.142857...
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=63), trustline_count=28000),
+            _snap(datetime.now(timezone.utc) - timedelta(days=33), trustline_count=30000),
+            _snap(datetime.now(timezone.utc) - timedelta(days=3), trustline_count=31500),
+            _snap(datetime.now(timezone.utc), trustline_count=31500),
+        ])
+        result = fe.trustline_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], -2.142857, places=4)
+
+    def test_trustline_acceleration_non_mature_below_60_days(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), trustline_count=30000),
+            _snap(datetime.now(timezone.utc), trustline_count=31500),
+        ])
+        result = fe.trustline_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_trustline_acceleration_missing_with_no_data(self):
+        result = fe.trustline_acceleration()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_trustline_growth_now_in_approved_history_windows(self):
+        # M8 Gap 3, chiusura definitiva: approvato esplicitamente.
+        import xrpl_score_layer as sl
+        self.assertIn("trustline_growth", sl._APPROVED_HISTORY_WINDOWS)
+        spec = sl._APPROVED_HISTORY_WINDOWS["trustline_growth"]
+        self.assertEqual(spec["window_days"], 90)
+        self.assertEqual(spec["min_observations"], 30)
 
     def test_fee_burn_features_always_missing_with_issuer_only_reason(self):
         for fn in (fe.fee_per_tx, fe.burn_rate):

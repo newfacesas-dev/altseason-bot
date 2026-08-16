@@ -340,6 +340,122 @@ class TestXrplToDexVolume(unittest.TestCase):
         self.assertEqual(snapshot["sources"]["xrpl_to"]["dex_volume"]["status"], layer.STATUS_RAW_AVAILABLE)
 
 
+class TestXrplAccountLinesPaginated(unittest.TestCase):
+    """M8 Gap 3: paginazione completa di account_lines."""
+
+    def setUp(self):
+        layer._raw_cache.clear()
+
+    def test_single_page_complete(self):
+        def fake_rpc(method, params, source):
+            return {"lines": [{"account": f"r{i}", "currency": "RLUSD"} for i in range(50)]}, None
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertEqual(env["data"]["total_trustlines"], 50)
+        self.assertEqual(env["data"]["pages_fetched"], 1)
+        self.assertTrue(env["data"]["complete"])
+
+    def test_multiple_pages_complete(self):
+        call_count = {"n": 0}
+
+        def fake_rpc(method, params, source):
+            call_count["n"] += 1
+            if call_count["n"] < 3:
+                return {"lines": [{"account": f"r{call_count['n']}_{i}", "currency": "RLUSD"} for i in range(200)],
+                        "marker": f"MARK{call_count['n']}"}, None
+            return {"lines": [{"account": f"rlast_{i}", "currency": "RLUSD"} for i in range(30)]}, None
+
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertEqual(env["data"]["total_trustlines"], 430)  # 200+200+30
+        self.assertEqual(env["data"]["pages_fetched"], 3)
+        self.assertTrue(env["data"]["complete"])
+
+    def test_final_marker_absent_ends_pagination(self):
+        def fake_rpc(method, params, source):
+            return {"lines": [{"account": "r1", "currency": "RLUSD"}]}, None  # nessun campo 'marker'
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertTrue(env["data"]["complete"])
+        self.assertEqual(env["data"]["pages_fetched"], 1)
+
+    def test_repeated_marker_stops_safely(self):
+        def fake_rpc(method, params, source):
+            return {"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "SAME_MARKER"}, None
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated(max_pages=10)
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+        self.assertIn("ripetuto", env["error"])
+        # non deve continuare all'infinito: si ferma appena rileva la ripetizione
+        self.assertLessEqual(env["data"]["pages_fetched"], 3)
+
+    def test_intermediate_page_failure(self):
+        call_count = {"n": 0}
+
+        def fake_rpc(method, params, source):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "MARK1"}, None
+            return None, "errore di rete simulato"
+
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+        self.assertIn("fallita", env["error"])
+        self.assertEqual(env["data"]["total_trustlines"], 1)  # la prima pagina resta visibile per debug
+
+    def test_safety_cap_reached(self):
+        def fake_rpc(method, params, source):
+            return {"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": f"MARK_{params.get('marker')}"}, None
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated(max_pages=5)
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+        self.assertEqual(env["data"]["pages_fetched"], 5)
+        self.assertIn("tetto di sicurezza", env["error"])
+
+    def test_dedup_of_duplicate_lines(self):
+        def fake_rpc(method, params, source):
+            # la stessa linea compare due volte nella stessa pagina (caso limite)
+            return {"lines": [
+                {"account": "rDUP", "currency": "RLUSD"},
+                {"account": "rDUP", "currency": "RLUSD"},
+                {"account": "rUnique", "currency": "RLUSD"},
+            ]}, None
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["data"]["total_trustlines"], 2)  # non 3
+
+    def test_missing_lines_field(self):
+        def fake_rpc(method, params, source):
+            return {"no_lines_here": True}, None
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+
+    def test_pages_fetched_zero_on_immediate_failure(self):
+        def fake_rpc(method, params, source):
+            return None, "connessione rifiutata"
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertEqual(env["data"]["pages_fetched"], 0)
+        self.assertEqual(env["data"]["total_trustlines"], 0)
+
+    def test_cache_avoids_duplicate_calls(self):
+        def fake_rpc(method, params, source):
+            return {"lines": [{"account": "r1", "currency": "RLUSD"}]}, None
+        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc) as mock_rpc:
+            layer.xrpl_account_lines_paginated()
+            layer.xrpl_account_lines_paginated()
+        self.assertEqual(mock_rpc.call_count, 1)
+
+
 class TestRwaXyzDisabledByDefault(unittest.TestCase):
     def setUp(self):
         layer._raw_cache.clear()

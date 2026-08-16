@@ -526,21 +526,102 @@ def amm_growth(window_days=30):
 # FEATURE — NETWORK
 # ============================================================
 
-_TRUSTLINE_MISSING_REASON = (
-    "account_lines e' paginato dall'API XRPL (limit=200 per chiamata, con 'marker' "
-    "presente nella risposta osservata) e M1 non implementa la paginazione completa: "
-    "il conteggio linee per snapshot resterebbe sempre ~200 indipendentemente dalla "
-    "crescita reale, quindi non e' un segnale di crescita affidabile. Serve prima "
-    "estendere M1 con paginazione completa (gap gia' segnalato nel deliverable M1)."
-)
+def _extract_trustline_count(snapshot):
+    """M8 Gap 3: conteggio trust line paginato completo (issuer RLUSD).
+    Usa SOLO snapshot con complete=True nei dati grezzi — un conteggio
+    parziale (tetto raggiunto, pagina fallita, marker ripetuto) non deve
+    mai essere trattato come un punto valido della serie."""
+    try:
+        env = snapshot["sources"]["xrpl_native"]["account_lines_rlusd_issuer_paginated"]
+    except (KeyError, TypeError):
+        return None
+    if env.get("status") != raw.STATUS_RAW_AVAILABLE:
+        return None
+    try:
+        data = env["data"]
+        if not data.get("complete"):
+            return None
+        return float(data["total_trustlines"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
-def trustline_growth():
-    return _feature_result(None, STATUS_MISSING, "xrpl.account_lines", _latest_known_timestamp(), 0, 30, _TRUSTLINE_MISSING_REASON)
+# M8 Gap 3: window_days=30 esplicitamente approvato per trustline_growth.
+# Motivazione (non per analogia): il conteggio trust line e' uno STOCK
+# (adozione), non un flusso di trading — non serve controllare la
+# stagionalita' settimanale (motivo dei 84gg per XRP/RLUSD). 30gg e' il
+# ciclo mensile gia' usato per metriche della stessa classe concettuale
+# (adozione istituzionale, es. RWA growth), non un numero preso da una
+# metrica di volume.
+_TRUSTLINE_GROWTH_APPROVED_WINDOW_DAYS = 30
+
+
+def trustline_growth(window_days=None):
+    """M8 Gap 3: crescita del conteggio trust line RLUSD, raccolto con
+    paginazione completa (xrpl_account_lines_paginated in M1). Riuso
+    diretto di _build_growth_feature() gia' congelato (stessa identica
+    logica di amm_growth/dex_volume_growth) — nessuna formula nuova.
+
+    'window_days': se non passato esplicitamente, usa la finestra
+    approvata (30gg)."""
+    if window_days is None:
+        window_days = _TRUSTLINE_GROWTH_APPROVED_WINDOW_DAYS
+    return _build_growth_feature(_extract_trustline_count, window_days, "xrpl.account_lines_paginated", "trustline_growth")
 
 
 def trustline_acceleration():
-    return _feature_result(None, STATUS_MISSING, "xrpl.account_lines", _latest_known_timestamp(), 0, 60, _TRUSTLINE_MISSING_REASON)
+    """M8 Gap 3: approvato. Stessa identica costruzione di
+    dex_volume_acceleration — riuso ESCLUSIVO di growth_pct(),
+    acceleration(), _find_base_point() gia' congelati, nessuna formula
+    nuova:
+        growth_now  = growth_pct(count_oggi, count_30gg_fa)
+        growth_prev = growth_pct(count_30gg_fa, count_60gg_fa)
+        trustline_acceleration = acceleration(growth_now, growth_prev)
+    Storico minimo ~60gg (due finestre consecutive da 30gg). Nessun
+    fallback, nessuna interpolazione."""
+    as_of_fallback = _latest_known_timestamp()
+    series = _load_series(_extract_trustline_count)
+    if not series:
+        return _feature_result(
+            None, STATUS_MISSING, "xrpl.account_lines_paginated", as_of_fallback, 0, 60,
+            "nessun dato raccolto per trustline_acceleration",
+        )
+
+    latest_dt, latest_val = series[-1]
+
+    base_30, _gap_30 = _find_base_point(series, latest_dt, 30)
+    if base_30 is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.account_lines_paginated", latest_dt, len(series), 60,
+            f"storico insufficiente per la finestra dei 30gg piu' recenti: disponibili "
+            f"{(latest_dt - series[0][0]).total_seconds() / 86400.0:.2f}gg in totale",
+        )
+
+    base_60, _gap_60 = _find_base_point(series, latest_dt, 60)
+    if base_60 is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.account_lines_paginated", latest_dt, len(series), 60,
+            f"storico insufficiente per la seconda finestra dei 30gg (60gg totali "
+            f"richiesti per confrontare due periodi consecutivi): disponibili "
+            f"{(latest_dt - series[0][0]).total_seconds() / 86400.0:.2f}gg in totale",
+        )
+
+    growth_now = growth_pct(latest_val, base_30)
+    growth_prev = growth_pct(base_30, base_60)
+    if growth_now is None or growth_prev is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.account_lines_paginated", latest_dt, len(series), 60,
+            "una delle due basi di calcolo e' troppo vicina a zero per un growth_pct affidabile",
+        )
+
+    value = acceleration(growth_now, growth_prev)
+    if value is None:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.account_lines_paginated", latest_dt, len(series), 60,
+            "acceleration() non calcolabile nonostante growth_now/growth_prev disponibili",
+        )
+
+    return _feature_result(value, STATUS_ACTIVE, "xrpl.account_lines_paginated", latest_dt, len(series), 60, None)
 
 
 _ISSUER_ONLY_REASON = (

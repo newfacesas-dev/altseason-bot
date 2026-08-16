@@ -3762,11 +3762,21 @@ def _estrai_confidenza_analisi(score_text):
 _xrpl_last_result = None
 
 
-# --- XRPL GAP1C FEATURE HISTORY WIRING (auto-patch) ---
+# --- XRPL GAP3 RAW COLLECTION WIRING (auto-patch) ---
 def _xrpl_run_daily_pipeline():
     """Esegue la pipeline XRPL M1-M5 e salva il risultato in cache locale.
     Isolamento totale: qualunque eccezione viene loggata, mai propagata
     al chiamante (ne' un import fallito, ne' un errore di calcolo).
+
+    Fix strutturale (Gap 3): collect_xrpl_raw_snapshot() viene chiamata
+    UNA SOLA volta, PRIMA di compute_all_features() — prima non veniva
+    mai chiamata automaticamente, quindi nessun dato RAW (RLUSD, AMM,
+    DEX volume, trustline paginate) sarebbe mai maturato da solo. Isolata
+    nel proprio try/except separato: se la raccolta RAW fallisce
+    completamente, la pipeline prosegue comunque con lo storico gia'
+    persistito (mai bloccante, mai un dato inventato al suo posto). I
+    singoli adapter gia' gestiscono da soli i fallimenti parziali
+    (status SOURCE_UNAVAILABLE per singola fonte, mai un'eccezione).
 
     Gap 1C: compute_all_features() viene chiamata UNA SOLA volta (prima
     ne venivano fatte fino a 4 — due con rotation iniettata dentro gli
@@ -3776,6 +3786,7 @@ def _xrpl_run_daily_pipeline():
     (xrpl_feature_history.py) — mai ricalcolato."""
     global _xrpl_last_result
     try:
+        import xrpl_raw_data_layer as _xrpl_raw
         import xrpl_feature_engine as _xrpl_fe
         import xrpl_score_layer as _xrpl_sl
         import xrpl_confidence_engine as _xrpl_ce
@@ -3785,6 +3796,12 @@ def _xrpl_run_daily_pipeline():
     except Exception as e:
         log.warning(f"[XRPL] moduli non disponibili, pipeline saltata (non bloccante): {e}")
         return
+
+    try:
+        _xrpl_raw.collect_xrpl_raw_snapshot()
+    except Exception as e:
+        log.warning(f"[XRPL] raccolta RAW fallita (non bloccante, si procede con lo storico esistente): {e}")
+
     try:
         features = _xrpl_fe.compute_all_features(
             rot_get_history_func=_rot_get_history, rot_perf_func=_rot_perf
@@ -3813,7 +3830,7 @@ def _xrpl_run_daily_pipeline():
         _xrpl_fh.record_feature_snapshot(features=features)
     except Exception as e:
         log.warning(f"[XRPL] registrazione storico feature fallita (non bloccante): {e}")
-# --- END XRPL GAP1C FEATURE HISTORY WIRING ---
+# --- END XRPL GAP3 RAW COLLECTION WIRING ---
 
 
 def _fmt_xrpl_intelligence():

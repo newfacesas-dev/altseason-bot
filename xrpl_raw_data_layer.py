@@ -54,6 +54,15 @@ _RLUSD_CURRENCY_HEX = os.environ.get(
     "RLUSD_CURRENCY_HEX", "524C555344000000000000000000000000000000"
 )  # "RLUSD" codificato come valuta a 160 bit, come richiesto dal protocollo XRPL
 
+# M8 Gap 3: tetto di sicurezza per la paginazione di account_lines. Il
+# conteggio reale di trust line RLUSD e' nell'ordine delle decine di
+# migliaia (verificato in audit precedenti tramite fonti esterne) — un
+# tetto troppo basso non raggiungerebbe mai 'complete=True' in pratica.
+# Costo dichiarato esplicitamente: nel caso peggiore, questo tetto
+# corrisponde a fino a 250 chiamate JSON-RPC sequenziali per una singola
+# raccolta RAW — un costo reale, non nascosto.
+_ACCOUNT_LINES_MAX_PAGES = int(os.environ.get("XRPL_ACCOUNT_LINES_MAX_PAGES", "250"))
+
 _DEFILLAMA_CHAIN_SLUG = os.environ.get("DEFILLAMA_XRPL_CHAIN_SLUG", "XRPL")
 _DEFILLAMA_HTTP_TIMEOUT = float(os.environ.get("DEFILLAMA_HTTP_TIMEOUT", "12"))
 
@@ -338,6 +347,98 @@ def xrpl_account_lines(account=None):
         return env
 
     env = _available(source, result)
+    _cache_set(cache_key, env)
+    return env
+
+
+def xrpl_account_lines_paginated(account=None, max_pages=None):
+    """M8 Gap 3: paginazione completa di account_lines, seguendo 'marker'
+    fino a esaurimento o al tetto di sicurezza. Riusa _xrpl_rpc_call() gia'
+    esistente per ogni singola pagina (stesso fallback primario/secondario,
+    stesso retry) — nessuna nuova logica di rete, solo il loop di
+    paginazione che l'adapter singola-pagina non aveva.
+
+    Correzione rispetto al vecchio commento di xrpl_account_lines(): una
+    trust line e' un oggetto BILATERALE — account_lines(issuer) elenca
+    esattamente le controparti con una linea aperta verso quell'issuer per
+    quella valuta, che E' il conteggio holder/trustline. Il limite reale
+    non era mai semantico, solo la paginazione mancante (ora risolta qui).
+
+    Ritorna SEMPRE total_trustlines, pages_fetched, complete. Se
+    complete=False (tetto raggiunto, pagina fallita, o marker ripetuto),
+    lo status resta SOURCE_UNAVAILABLE: il conteggio non va MAI trattato
+    come valido in quel caso, anche se e' comunque incluso nei dati per
+    trasparenza/debug."""
+    source = "xrpl.account_lines_paginated"
+    account = account or _RLUSD_ISSUER
+    max_pages = max_pages or _ACCOUNT_LINES_MAX_PAGES
+    cache_key = f"{source}:{account}"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    seen_line_keys = set()
+    seen_markers = set()
+    total_lines = 0
+    pages_fetched = 0
+    marker = None
+    complete = False
+    error_reason = None
+
+    while pages_fetched < max_pages:
+        params = {"account": account, "ledger_index": "validated", "limit": 200}
+        if marker is not None:
+            params["marker"] = marker
+
+        result, err = _xrpl_rpc_call("account_lines", params, source)
+        if result is None:
+            error_reason = f"pagina {pages_fetched + 1} fallita: {err}"
+            break
+
+        lines = result.get("lines")
+        if not isinstance(lines, list):
+            error_reason = f"pagina {pages_fetched + 1}: risposta priva del campo 'lines'"
+            break
+
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+            key = (line.get("account"), line.get("currency"))
+            if key in seen_line_keys:
+                continue  # dedup: stessa linea vista due volte (es. marker che si sovrappone)
+            seen_line_keys.add(key)
+            total_lines += 1
+
+        pages_fetched += 1
+        next_marker = result.get("marker")
+        if next_marker is None:
+            complete = True
+            break
+        if next_marker in seen_markers:
+            error_reason = f"marker ripetuto rilevato dopo {pages_fetched} pagine, interrotto per sicurezza (evita loop infinito)"
+            break
+        seen_markers.add(next_marker)
+        marker = next_marker
+
+    if not complete and error_reason is None:
+        error_reason = (
+            f"tetto di sicurezza di {max_pages} pagine raggiunto senza esaurire la "
+            f"paginazione (marker ancora presente): conteggio NON dichiarato completo"
+        )
+
+    data = {
+        "total_trustlines": total_lines,
+        "pages_fetched": pages_fetched,
+        "complete": complete,
+    }
+
+    if not complete:
+        env = _envelope(STATUS_SOURCE_UNAVAILABLE, source, data=data, error=error_reason)
+        log.warning(f"[xrpl_raw_data_layer] {source}: SOURCE_UNAVAILABLE ({error_reason})")
+        _cache_set(cache_key, env)
+        return env
+
+    env = _envelope(STATUS_RAW_AVAILABLE, source, data=data, error=None)
     _cache_set(cache_key, env)
     return env
 
@@ -629,6 +730,7 @@ def collect_xrpl_raw_snapshot():
                 "amm_info_xrp_rlusd": xrpl_amm_info(),
                 "account_tx_rlusd_issuer": xrpl_account_tx(),
                 "account_lines_rlusd_issuer": xrpl_account_lines(),
+                "account_lines_rlusd_issuer_paginated": xrpl_account_lines_paginated(),
                 "feature": xrpl_feature(),
                 "server_info": xrpl_server_info(),
                 "book_changes_latest": xrpl_book_changes_latest(),

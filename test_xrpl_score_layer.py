@@ -391,10 +391,10 @@ class TestGap1ApprovedMethodology(unittest.TestCase):
         }
         return feats
 
-    def test_registry_has_exactly_the_five_approved_metrics(self):
+    def test_registry_has_exactly_the_six_approved_metrics(self):
         self.assertEqual(
             set(sl._APPROVED_HISTORY_WINDOWS.keys()),
-            {"amm_growth", "dex_volume_growth", "xrp_rlusd_pair_growth",
+            {"amm_growth", "dex_volume_growth", "xrp_rlusd_pair_growth", "trustline_growth",
              "xrp_btc_relative_strength", "xrp_eth_relative_strength"},
         )
         for feature_key, spec in sl._APPROVED_HISTORY_WINDOWS.items():
@@ -542,6 +542,23 @@ class TestGap1ApprovedMethodology(unittest.TestCase):
         cat_f = result["category_breakdown"]["F"]
         self.assertIn("F.xrp_rlusd_pair_growth", cat_f["active_metrics"])
         self.assertIsNotNone(cat_f["score"])
+
+    def test_trustline_growth_now_really_active_at_score_level(self):
+        # M8 Gap 3, chiusura definitiva: trustline_growth (categoria D di
+        # Score1) usa ora la stessa pipeline z-score->percentile gia'
+        # congelata, con la finestra 90gg/30oss appena approvata.
+        feats = self._amm_features(None, status=sl.STATUS_MISSING)
+        feats["trustline_growth"] = {
+            "value": 5.0, "status": sl.STATUS_ACTIVE, "source": "test",
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "history_points": 30, "history_required": 90, "reason": None,
+        }
+        history = [(i, 4.0 + (i % 3)) for i in range(1, 31)]
+        self._write_history("trustline_growth", history)
+        result = sl.compute_ecosystem_growth_score(features=feats)
+        cat_d = result["category_breakdown"]["D"]
+        self.assertIn("D.trustline_growth", cat_d["active_metrics"])
+        self.assertIsNotNone(cat_d["score"])
 
     def test_zero_history_stays_non_mature(self):
         result = sl.compute_ecosystem_growth_score(features=self._amm_features(12.0))
