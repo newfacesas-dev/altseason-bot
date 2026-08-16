@@ -62,6 +62,9 @@ _RWA_XYZ_ENABLED = bool(_RWA_XYZ_API_KEY) and os.environ.get("RWA_XYZ_ENABLED", 
 _RWA_XYZ_BASE_URL = os.environ.get("RWA_XYZ_BASE_URL", "https://api.rwa.xyz")
 _RWA_XYZ_HTTP_TIMEOUT = float(os.environ.get("RWA_XYZ_HTTP_TIMEOUT", "12"))
 
+_XRPL_TO_BASE_URL = os.environ.get("XRPL_TO_BASE_URL", "https://api.xrpl.to/v1")
+_XRPL_TO_HTTP_TIMEOUT = float(os.environ.get("XRPL_TO_HTTP_TIMEOUT", "12"))
+
 _RAW_SNAPSHOT_PATH = os.environ.get("XRPL_RAW_SNAPSHOT_PATH", "/data/xrpl_raw_snapshots.jsonl")
 
 _CACHE_TTL_SECONDS = float(os.environ.get("XRPL_RAW_CACHE_TTL_SECONDS", "300"))  # 5 min
@@ -506,6 +509,64 @@ def defillama_dex_overview(chain=None):
 
 
 # ============================================================
+# ADAPTER — XRPL.TO (esterno, PRIMARY per DEX volume aggregato — M8 Gap 2A)
+# ============================================================
+# Fonte esterna (non protocollo XRPL nativo), verificata con chiamata reale
+# in fase di audit (nessuna API key richiesta, risposta JSON valida, campo
+# 'global.gDexVolume' presente e numerico). Usata SOLO per il volume DEX
+# aggregato di rete — non sostituisce nessun adapter nativo esistente.
+# book_changes nativo resta FALLBACK architetturale (non costruito ora).
+
+def xrpl_to_dex_volume():
+    source = "xrpl_to.dex_volume"
+    cache_key = source
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    url = f"{_XRPL_TO_BASE_URL}/tokens"
+    # limit=1: il blocco 'global' (che ci interessa) e' presente comunque,
+    # indipendentemente dal numero di token restituiti nella lista — non
+    # serve scaricare l'elenco completo per il solo aggregato di rete.
+    data, err = _http_get_json(url, params={"limit": 1}, timeout=_XRPL_TO_HTTP_TIMEOUT, source=source)
+    if data is None:
+        env = _unavailable(source, err)
+        _cache_set(cache_key, env)
+        return env
+
+    if not isinstance(data, dict):
+        env = _unavailable(source, "risposta non nel formato dict atteso")
+        _cache_set(cache_key, env)
+        return env
+
+    global_block = data.get("global")
+    if not isinstance(global_block, dict):
+        env = _unavailable(source, "campo 'global' assente o non nel formato dict atteso")
+        _cache_set(cache_key, env)
+        return env
+
+    raw_value = global_block.get("gDexVolume")
+    if raw_value is None:
+        env = _unavailable(source, "campo 'global.gDexVolume' assente nella risposta")
+        _cache_set(cache_key, env)
+        return env
+
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        env = _unavailable(source, f"'global.gDexVolume' non numerico (tipo: {type(raw_value).__name__})")
+        _cache_set(cache_key, env)
+        return env
+
+    if raw_value < 0:
+        env = _unavailable(source, f"'global.gDexVolume' negativo ({raw_value}): valore non valido")
+        _cache_set(cache_key, env)
+        return env
+
+    env = _available(source, {"gDexVolume": float(raw_value)})
+    _cache_set(cache_key, env)
+    return env
+
+
+# ============================================================
 # ADAPTER — RWA.XYZ (disabled-by-default)
 # ============================================================
 # Nessuna chiamata di rete se la API key non e' configurata ED
@@ -576,6 +637,9 @@ def collect_xrpl_raw_snapshot():
                 "chain_tvl_history": defillama_chain_tvl_history(),
                 "stablecoins_chain_history": defillama_stablecoins_chain_history(),
                 "dex_overview": defillama_dex_overview(),
+            },
+            "xrpl_to": {
+                "dex_volume": xrpl_to_dex_volume(),
             },
             "rwa_xyz": {
                 "assets_xrpl": rwa_xyz_assets_xrpl(),

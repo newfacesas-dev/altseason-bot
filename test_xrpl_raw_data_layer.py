@@ -213,6 +213,133 @@ class TestDefiLlamaAdapters(unittest.TestCase):
         self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
 
 
+class TestXrplToDexVolume(unittest.TestCase):
+    """M8 Gap 2A: adapter XRPL.to per il volume DEX aggregato di rete."""
+
+    def setUp(self):
+        layer._raw_cache.clear()
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_valid_payload_real_shape(self, mock_get):
+        # Forma realistica verificata con chiamata reale in fase di audit
+        mock_get.return_value = _fake_response(200, {
+            "global": {"gDexVolume": 2557644.785188, "gXRPdominance": 98.43},
+            "tokens": [],
+        })
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertAlmostEqual(env["data"]["gDexVolume"], 2557644.785188)
+        self.assertEqual(env["source"], "xrpl_to.dex_volume")
+        self.assertIn("fetched_at_utc", env)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_gdexvolume_zero_is_valid(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"global": {"gDexVolume": 0}})
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertEqual(env["data"]["gDexVolume"], 0.0)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_global_field_missing(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"tokens": []})
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("global", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_gdexvolume_field_missing(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"global": {"gXRPdominance": 98.0}})
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("gDexVolume", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_gdexvolume_non_numeric(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"global": {"gDexVolume": "non-un-numero"}})
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("non numerico", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_gdexvolume_boolean_rejected(self, mock_get):
+        # bool e' sottoclasse di int in Python: deve essere esplicitamente escluso
+        mock_get.return_value = _fake_response(200, {"global": {"gDexVolume": True}})
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_gdexvolume_negative_rejected(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"global": {"gDexVolume": -100.0}})
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("negativo", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_response_not_a_dict(self, mock_get):
+        mock_get.return_value = _fake_response(200, ["lista", "inattesa"])
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_malformed_json(self, mock_get):
+        mock_get.return_value = _fake_response(200, raise_json_error=True)
+        env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_http_error_status(self, mock_get):
+        mock_get.return_value = _fake_response(500)
+        with patch.object(layer, "_MAX_RETRIES", 0):
+            env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("500", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_timeout(self, mock_get):
+        import requests
+        mock_get.side_effect = requests.exceptions.Timeout()
+        with patch.object(layer, "_MAX_RETRIES", 0):
+            env = layer.xrpl_to_dex_volume()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("timeout", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_never_raises_on_connection_error(self, mock_get):
+        # Errore di rete realistico (sottoclasse di RequestException, gia'
+        # gestita da _http_get_json) — non un'eccezione Python arbitraria,
+        # che non rientra nella categoria "errori di rete" dichiarata.
+        import requests
+        mock_get.side_effect = requests.exceptions.ConnectionError("connessione rifiutata")
+        with patch.object(layer, "_MAX_RETRIES", 0), \
+             patch("xrpl_raw_data_layer.time.sleep", return_value=None):
+            try:
+                env = layer.xrpl_to_dex_volume()
+            except Exception as e:
+                self.fail(f"xrpl_to_dex_volume ha sollevato un'eccezione: {e}")
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_cache_avoids_duplicate_calls(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"global": {"gDexVolume": 1000.0}})
+        layer.xrpl_to_dex_volume()
+        layer.xrpl_to_dex_volume()
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_included_in_collect_xrpl_raw_snapshot(self, mock_get, mock_post):
+        mock_get.return_value = _fake_response(200, {"global": {"gDexVolume": 500.0}})
+        mock_post.return_value = _fake_response(500)  # adapter nativi: falliscono velocemente, non ci interessano qui
+        tmpdir = tempfile.mkdtemp()
+        with patch.object(layer, "_RAW_SNAPSHOT_PATH", os.path.join(tmpdir, "s.jsonl")), \
+             patch.object(layer, "_MAX_RETRIES", 0), \
+             patch("xrpl_raw_data_layer.time.sleep", return_value=None):
+            snapshot = layer.collect_xrpl_raw_snapshot()
+        self.assertIn("xrpl_to", snapshot["sources"])
+        self.assertIn("dex_volume", snapshot["sources"]["xrpl_to"])
+        self.assertEqual(snapshot["sources"]["xrpl_to"]["dex_volume"]["status"], layer.STATUS_RAW_AVAILABLE)
+
+
 class TestRwaXyzDisabledByDefault(unittest.TestCase):
     def setUp(self):
         layer._raw_cache.clear()
