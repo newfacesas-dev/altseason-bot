@@ -636,8 +636,62 @@ def fee_per_tx():
     return _feature_result(None, STATUS_MISSING, "xrpl.account_tx", _latest_known_timestamp(), 0, 30, _ISSUER_ONLY_REASON)
 
 
+_DROPS_PER_XRP = 1_000_000.0
+
+
+def _extract_total_coins_drops(snapshot):
+    """M8 Gap 4A: total_coins (drops) dal nuovo adapter leggero xrpl.ledger_info."""
+    try:
+        env = snapshot["sources"]["xrpl_native"]["ledger_info"]
+    except (KeyError, TypeError):
+        return None
+    if env.get("status") != raw.STATUS_RAW_AVAILABLE:
+        return None
+    try:
+        return float(env["data"]["total_coins_drops"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def burn_rate():
-    return _feature_result(None, STATUS_MISSING, "xrpl.account_tx", _latest_known_timestamp(), 0, 30, _ISSUER_ONLY_REASON)
+    """M8 Gap 4A: implementata con dati XRPL nativi (contatore cumulativo
+    total_coins, monotonicamente decrescente per costruzione).
+
+    xrp_burned = (total_coins_precedente - total_coins_corrente) / 1_000_000
+    burn_rate  = xrp_burned / giorni_trascorsi
+
+    Usa ESATTAMENTE due snapshot RAW consecutivi con total_coins valido —
+    mai un valore inventato. Se total_coins aumenta (dato anomalo: XRP
+    non ha nuova emissione), il delta non viene trattato come burn."""
+    as_of_fallback = _latest_known_timestamp()
+    series = _load_series(_extract_total_coins_drops)
+
+    if len(series) < 2:
+        status = STATUS_MISSING if not series else STATUS_NON_MATURE
+        as_of = as_of_fallback if not series else series[-1][0]
+        return _feature_result(
+            None, status, "xrpl.ledger_info", as_of, len(series), None,
+            f"servono almeno 2 snapshot con total_coins valido, disponibili {len(series)}",
+        )
+
+    (dt_prev, drops_prev), (dt_curr, drops_curr) = series[-2], series[-1]
+    dt_days = (dt_curr - dt_prev).total_seconds() / 86400.0
+    if dt_days <= 0:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.ledger_info", dt_curr, len(series), None,
+            f"intervallo temporale non valido tra gli ultimi due snapshot ({dt_days:.6f}gg)",
+        )
+
+    xrp_burned = (drops_prev - drops_curr) / _DROPS_PER_XRP
+    if xrp_burned < 0:
+        return _feature_result(
+            None, STATUS_NON_MATURE, "xrpl.ledger_info", dt_curr, len(series), None,
+            f"total_coins e' aumentato tra i due snapshot (delta={xrp_burned:.6f} XRP): dato "
+            f"anomalo (XRP non prevede nuova emissione), non trattato come burn valido",
+        )
+
+    value = xrp_burned / dt_days
+    return _feature_result(value, STATUS_ACTIVE, "xrpl.ledger_info", dt_curr, len(series), None, None)
 
 
 # ============================================================

@@ -340,6 +340,74 @@ class TestXrplToDexVolume(unittest.TestCase):
         self.assertEqual(snapshot["sources"]["xrpl_to"]["dex_volume"]["status"], layer.STATUS_RAW_AVAILABLE)
 
 
+class TestXrplLedgerInfo(unittest.TestCase):
+    """M8 Gap 4A: adapter leggero xrpl_ledger_info per total_coins."""
+
+    def setUp(self):
+        layer._raw_cache.clear()
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_valid_ledger_response(self, mock_post):
+        mock_post.return_value = _fake_response(200, {
+            "result": {"ledger": {"total_coins": "99985738468528946"}, "validated": True}
+        })
+        env = layer.xrpl_ledger_info()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertAlmostEqual(env["data"]["total_coins_drops"], 99985738468528946.0)
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_total_coins_field_missing(self, mock_post):
+        mock_post.return_value = _fake_response(200, {"result": {"ledger": {}, "validated": True}})
+        env = layer.xrpl_ledger_info()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("total_coins", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_total_coins_non_numeric(self, mock_post):
+        mock_post.return_value = _fake_response(200, {
+            "result": {"ledger": {"total_coins": "non-un-numero"}, "validated": True}
+        })
+        env = layer.xrpl_ledger_info()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("non numerico", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_total_coins_negative_rejected(self, mock_post):
+        mock_post.return_value = _fake_response(200, {
+            "result": {"ledger": {"total_coins": "-100"}, "validated": True}
+        })
+        env = layer.xrpl_ledger_info()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("negativo", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_ledger_field_missing(self, mock_post):
+        mock_post.return_value = _fake_response(200, {"result": {"validated": True}})
+        env = layer.xrpl_ledger_info()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("ledger", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_http_error_isolated(self, mock_post):
+        mock_post.return_value = _fake_response(500)
+        with patch.object(layer, "_MAX_RETRIES", 0):
+            env = layer.xrpl_ledger_info()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    def test_included_in_collect_xrpl_raw_snapshot(self, mock_post):
+        mock_post.return_value = _fake_response(200, {
+            "result": {"ledger": {"total_coins": "99985738468528946"}, "validated": True}
+        })
+        with patch.object(layer, "_MAX_RETRIES", 0), \
+             patch("xrpl_raw_data_layer.requests.get", return_value=_fake_response(500)), \
+             patch("xrpl_raw_data_layer.time.sleep", return_value=None):
+            tmpdir = tempfile.mkdtemp()
+            with patch.object(layer, "_RAW_SNAPSHOT_PATH", os.path.join(tmpdir, "s.jsonl")):
+                snapshot = layer.collect_xrpl_raw_snapshot()
+        self.assertIn("ledger_info", snapshot["sources"]["xrpl_native"])
+
+
 class TestXrplAccountLinesPaginated(unittest.TestCase):
     """M8 Gap 3: paginazione completa di account_lines."""
 

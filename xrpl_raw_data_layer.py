@@ -487,6 +487,54 @@ def xrpl_server_info():
     return env
 
 
+def xrpl_ledger_info():
+    """M8 Gap 4A: adapter leggero per il metodo 'ledger' (ledger_index=
+    'validated'), usato SOLO per leggere 'total_coins' — contatore
+    cumulativo reale (XRP totale ancora in esistenza, in drops),
+    monotonicamente decrescente per costruzione (nessuna nuova emissione
+    di XRP, solo bruciature da fee). Una sola chiamata leggera, riusa
+    _xrpl_rpc_call() gia' esistente (stesso fallback/retry)."""
+    source = "xrpl.ledger_info"
+    cache_key = source
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    result, err = _xrpl_rpc_call("ledger", {"ledger_index": "validated"}, source)
+    if result is None:
+        env = _unavailable(source, err)
+        _cache_set(cache_key, env)
+        return env
+
+    ledger = result.get("ledger")
+    if not isinstance(ledger, dict):
+        env = _unavailable(source, "risposta priva del campo 'ledger'")
+        _cache_set(cache_key, env)
+        return env
+
+    raw_total_coins = ledger.get("total_coins")
+    if raw_total_coins is None:
+        env = _unavailable(source, "campo 'ledger.total_coins' assente nella risposta")
+        _cache_set(cache_key, env)
+        return env
+
+    try:
+        total_coins_drops = float(raw_total_coins)
+    except (TypeError, ValueError):
+        env = _unavailable(source, f"'total_coins' non numerico (valore: {raw_total_coins!r})")
+        _cache_set(cache_key, env)
+        return env
+
+    if total_coins_drops < 0:
+        env = _unavailable(source, f"'total_coins' negativo ({total_coins_drops}): valore non valido")
+        _cache_set(cache_key, env)
+        return env
+
+    env = _available(source, {"total_coins_drops": total_coins_drops})
+    _cache_set(cache_key, env)
+    return env
+
+
 def xrpl_book_changes_latest():
     """Un singolo snapshot di book_changes per il ledger validato piu'
     recente. NON accumula storico (quello e' compito della M5, dove si
@@ -733,6 +781,7 @@ def collect_xrpl_raw_snapshot():
                 "account_lines_rlusd_issuer_paginated": xrpl_account_lines_paginated(),
                 "feature": xrpl_feature(),
                 "server_info": xrpl_server_info(),
+                "ledger_info": xrpl_ledger_info(),
                 "book_changes_latest": xrpl_book_changes_latest(),
             },
             "defillama": {

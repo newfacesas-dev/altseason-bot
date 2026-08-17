@@ -19,7 +19,8 @@ def _iso(dt):
 
 
 def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, trustline_count=None,
-          trustline_complete=True, rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
+          trustline_complete=True, total_coins_drops=None, ledger_info_available=True,
+          rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
     sources = {
         "xrpl_native": {},
         "defillama": {},
@@ -76,6 +77,17 @@ def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, trustline_c
     else:
         sources["xrpl_native"]["account_lines_rlusd_issuer_paginated"] = {
             "status": "SOURCE_UNAVAILABLE", "source": "xrpl.account_lines_paginated", "data": None, "error": "test-down",
+        }
+    if total_coins_drops is not None:
+        sources["xrpl_native"]["ledger_info"] = {
+            "status": "RAW_AVAILABLE" if ledger_info_available else "SOURCE_UNAVAILABLE",
+            "source": "xrpl.ledger_info",
+            "data": {"total_coins_drops": total_coins_drops} if ledger_info_available else None,
+            "error": None if ledger_info_available else "errore simulato (test)",
+        }
+    else:
+        sources["xrpl_native"]["ledger_info"] = {
+            "status": "SOURCE_UNAVAILABLE", "source": "xrpl.ledger_info", "data": None, "error": "test-down",
         }
     return {"timestamp_utc": _iso(ts), "sources": sources}
 
@@ -629,11 +641,71 @@ class TestFeatureEngineWithFixtures(unittest.TestCase):
         self.assertEqual(spec["window_days"], 90)
         self.assertEqual(spec["min_observations"], 30)
 
-    def test_fee_burn_features_always_missing_with_issuer_only_reason(self):
-        for fn in (fe.fee_per_tx, fe.burn_rate):
-            result = fn()
-            self.assertEqual(result["status"], fe.STATUS_MISSING)
-            self.assertIn("issuer RLUSD", result["reason"])
+    def test_fee_per_tx_always_missing_with_issuer_only_reason(self):
+        # fee_per_tx NON toccata in questo gap: resta MISSING con lo
+        # stesso motivo di sempre.
+        result = fe.fee_per_tx()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIn("issuer RLUSD", result["reason"])
+
+    def test_burn_rate_missing_with_no_data(self):
+        result = fe.burn_rate()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_burn_rate_non_mature_with_single_snapshot(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc), total_coins_drops=99985738468528946.0),
+        ])
+        result = fe.burn_rate()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_burn_rate_correct_delta_and_conversion(self):
+        # ieri: total_coins piu' alto, oggi: piu' basso di 100_000_000 drops
+        # (= 100 XRP) su un intervallo di 1 giorno -> burn_rate = 100.0
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=1), total_coins_drops=99985738468528946.0),
+            _snap(datetime.now(timezone.utc), total_coins_drops=99985738368528946.0),
+        ])
+        result = fe.burn_rate()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 100.0, places=4)
+
+    def test_burn_rate_total_coins_increasing_stays_non_mature(self):
+        # anomalia: total_coins aumenta (XRP non ha nuova emissione) ->
+        # NON_MATURE, mai un burn negativo inventato.
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=1), total_coins_drops=99985738368528946.0),
+            _snap(datetime.now(timezone.utc), total_coins_drops=99985738468528946.0),  # piu' alto di ieri
+        ])
+        result = fe.burn_rate()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+        self.assertIn("aumentato", result["reason"])
+
+    def test_burn_rate_missing_total_coins_field_skipped(self):
+        # snapshot con ledger_info presente ma senza dato valido (SOURCE_UNAVAILABLE)
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=1), total_coins_drops=100.0, ledger_info_available=False),
+            _snap(datetime.now(timezone.utc), total_coins_drops=100.0, ledger_info_available=False),
+        ])
+        result = fe.burn_rate()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_burn_rate_not_in_score1_or_score2_registry(self):
+        # Requisito esplicito: burn_rate non e' consumata da M3, non va
+        # aggiunta ora.
+        import xrpl_score_layer as sl
+        all_feature_keys = {
+            m["feature_key"]
+            for cats in (sl.SCORE1_CATEGORIES, sl.SCORE2_CATEGORIES)
+            for cat in cats.values()
+            for m in cat["metrics"]
+        }
+        self.assertNotIn("burn_rate", all_feature_keys)
+        self.assertNotIn("burn_rate", sl._APPROVED_HISTORY_WINDOWS)
 
     def test_xrp_dependency_ratio_and_pool_share_structurally_missing(self):
         for fn in (fe.xrp_dependency_ratio, fe.xrp_pool_share):
