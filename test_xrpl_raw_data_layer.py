@@ -340,6 +340,82 @@ class TestXrplToDexVolume(unittest.TestCase):
         self.assertEqual(snapshot["sources"]["xrpl_to"]["dex_volume"]["status"], layer.STATUS_RAW_AVAILABLE)
 
 
+class TestXrplFiRwaMetrics(unittest.TestCase):
+    """M8 Gap 5A: adapter xrpl.fi per RWA (totalTvl)."""
+
+    def setUp(self):
+        layer._raw_cache.clear()
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_valid_payload(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"totalTvl": 1234567.89, "tvlSeries": [{"date": "2026-08-01", "tvl": 1000000}]})
+        env = layer.xrpl_fi_rwa_metrics()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertAlmostEqual(env["data"]["total_tvl_usd"], 1234567.89)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_total_tvl_field_missing(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"tvlSeries": []})
+        env = layer.xrpl_fi_rwa_metrics()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("totalTvl", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_total_tvl_non_numeric(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"totalTvl": "non-un-numero"})
+        env = layer.xrpl_fi_rwa_metrics()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("non numerico", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_total_tvl_negative_rejected(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"totalTvl": -100.0})
+        env = layer.xrpl_fi_rwa_metrics()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertIn("negativo", env["error"])
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_http_error_isolated(self, mock_get):
+        mock_get.return_value = _fake_response(500)
+        with patch.object(layer, "_MAX_RETRIES", 0):
+            env = layer.xrpl_fi_rwa_metrics()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_never_raises_on_connection_error(self, mock_get):
+        import requests
+        mock_get.side_effect = requests.exceptions.ConnectionError("connessione rifiutata")
+        with patch.object(layer, "_MAX_RETRIES", 0):
+            try:
+                env = layer.xrpl_fi_rwa_metrics()
+            except Exception as e:
+                self.fail(f"xrpl_fi_rwa_metrics ha sollevato un'eccezione: {e}")
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_cache_avoids_duplicate_calls(self, mock_get):
+        mock_get.return_value = _fake_response(200, {"totalTvl": 1000.0})
+        layer.xrpl_fi_rwa_metrics()
+        layer.xrpl_fi_rwa_metrics()
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("xrpl_raw_data_layer.requests.post")
+    @patch("xrpl_raw_data_layer.requests.get")
+    def test_included_in_collect_xrpl_raw_snapshot(self, mock_get, mock_post):
+        mock_get.return_value = _fake_response(200, {"totalTvl": 1000.0})
+        mock_post.return_value = _fake_response(500)
+        with patch.object(layer, "_MAX_RETRIES", 0), \
+             patch("xrpl_raw_data_layer.time.sleep", return_value=None):
+            tmpdir = tempfile.mkdtemp()
+            with patch.object(layer, "_RAW_SNAPSHOT_PATH", os.path.join(tmpdir, "s.jsonl")):
+                snapshot = layer.collect_xrpl_raw_snapshot()
+        self.assertIn("xrpl_fi", snapshot["sources"])
+        self.assertEqual(snapshot["sources"]["xrpl_fi"]["rwa_metrics"]["status"], layer.STATUS_RAW_AVAILABLE)
+        # DeFiLlama e RWA.xyz devono restare presenti e distinti
+        self.assertIn("defillama", snapshot["sources"])
+        self.assertIn("rwa_xyz", snapshot["sources"])
+
+
 class TestXrplLedgerInfo(unittest.TestCase):
     """M8 Gap 4A: adapter leggero xrpl_ledger_info per total_coins."""
 

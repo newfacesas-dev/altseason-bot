@@ -74,6 +74,9 @@ _RWA_XYZ_HTTP_TIMEOUT = float(os.environ.get("RWA_XYZ_HTTP_TIMEOUT", "12"))
 _XRPL_TO_BASE_URL = os.environ.get("XRPL_TO_BASE_URL", "https://api.xrpl.to/v1")
 _XRPL_TO_HTTP_TIMEOUT = float(os.environ.get("XRPL_TO_HTTP_TIMEOUT", "12"))
 
+_XRPL_FI_BASE_URL = os.environ.get("XRPL_FI_BASE_URL", "https://xrpl.fi")
+_XRPL_FI_HTTP_TIMEOUT = float(os.environ.get("XRPL_FI_HTTP_TIMEOUT", "12"))
+
 _RAW_SNAPSHOT_PATH = os.environ.get("XRPL_RAW_SNAPSHOT_PATH", "/data/xrpl_raw_snapshots.jsonl")
 
 _CACHE_TTL_SECONDS = float(os.environ.get("XRPL_RAW_CACHE_TTL_SECONDS", "300"))  # 5 min
@@ -716,6 +719,59 @@ def xrpl_to_dex_volume():
 
 
 # ============================================================
+# ADAPTER — XRPL.FI (esterno, PRIMARY per RWA — M8 Gap 5A)
+# ============================================================
+# Fonte dedicata RWA, separata da RWA.xyz (disabled-by-default sotto).
+# Non sostituisce ne' modifica RWA.xyz. Verificata con chiamata reale in
+# fase di audit: nessuna API key, risposta JSON valida, campo 'totalTvl'
+# presente e numerico. Solo il valore corrente viene salvato — lo storico
+# necessario a _build_trend_feature/_build_growth_feature in M2 si
+# costruisce dalla NOSTRA accumulazione giornaliera (stesso principio
+# gia' usato per rlusd_supply_trend), non dal pacchetto storico esterno
+# di xrpl.fi (tvlSeries), che introdurrebbe un meccanismo diverso da
+# quello gia' congelato.
+
+def xrpl_fi_rwa_metrics():
+    source = "xrpl_fi.rwa_metrics"
+    cache_key = source
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    url = f"{_XRPL_FI_BASE_URL}/api/metrics"
+    data, err = _http_get_json(url, timeout=_XRPL_FI_HTTP_TIMEOUT, source=source)
+    if data is None:
+        env = _unavailable(source, err)
+        _cache_set(cache_key, env)
+        return env
+
+    if not isinstance(data, dict):
+        env = _unavailable(source, "risposta non nel formato dict atteso")
+        _cache_set(cache_key, env)
+        return env
+
+    raw_total_tvl = data.get("totalTvl")
+    if raw_total_tvl is None:
+        env = _unavailable(source, "campo 'totalTvl' assente nella risposta")
+        _cache_set(cache_key, env)
+        return env
+
+    if isinstance(raw_total_tvl, bool) or not isinstance(raw_total_tvl, (int, float)):
+        env = _unavailable(source, f"'totalTvl' non numerico (tipo: {type(raw_total_tvl).__name__})")
+        _cache_set(cache_key, env)
+        return env
+
+    if raw_total_tvl < 0:
+        env = _unavailable(source, f"'totalTvl' negativo ({raw_total_tvl}): valore non valido")
+        _cache_set(cache_key, env)
+        return env
+
+    env = _available(source, {"total_tvl_usd": float(raw_total_tvl)})
+    _cache_set(cache_key, env)
+    return env
+
+
+# ============================================================
 # ADAPTER — RWA.XYZ (disabled-by-default)
 # ============================================================
 # Nessuna chiamata di rete se la API key non e' configurata ED
@@ -791,6 +847,9 @@ def collect_xrpl_raw_snapshot():
             },
             "xrpl_to": {
                 "dex_volume": xrpl_to_dex_volume(),
+            },
+            "xrpl_fi": {
+                "rwa_metrics": xrpl_fi_rwa_metrics(),
             },
             "rwa_xyz": {
                 "assets_xrpl": rwa_xyz_assets_xrpl(),

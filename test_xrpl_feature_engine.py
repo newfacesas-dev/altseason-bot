@@ -20,7 +20,7 @@ def _iso(dt):
 
 def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, trustline_count=None,
           trustline_complete=True, total_coins_drops=None, ledger_info_available=True,
-          rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
+          xrpl_fi_total_tvl=None, rwa_error="RWA_XYZ_API_KEY non configurata (test)"):
     sources = {
         "xrpl_native": {},
         "defillama": {},
@@ -89,6 +89,15 @@ def _snap(ts, rlusd_supply=None, amm_lp_value=None, dex_volume=None, trustline_c
         sources["xrpl_native"]["ledger_info"] = {
             "status": "SOURCE_UNAVAILABLE", "source": "xrpl.ledger_info", "data": None, "error": "test-down",
         }
+    if xrpl_fi_total_tvl is not None:
+        sources["xrpl_fi"] = {"rwa_metrics": {
+            "status": "RAW_AVAILABLE", "source": "xrpl_fi.rwa_metrics",
+            "data": {"total_tvl_usd": xrpl_fi_total_tvl}, "error": None,
+        }}
+    else:
+        sources["xrpl_fi"] = {"rwa_metrics": {
+            "status": "SOURCE_UNAVAILABLE", "source": "xrpl_fi.rwa_metrics", "data": None, "error": "test-down",
+        }}
     return {"timestamp_utc": _iso(ts), "sources": sources}
 
 
@@ -424,13 +433,95 @@ class TestFeatureEngineWithFixtures(unittest.TestCase):
         self.assertEqual(spec["window_days"], 84)
         self.assertEqual(spec["min_observations"], 28)
 
-    def test_rwa_features_always_missing_with_reason(self):
+    def test_rwa_90d_and_acceleration_still_always_missing(self):
+        # NON toccate in Gap 5A: restano legate a RWA.xyz (disabilitato).
         now = datetime.now(timezone.utc)
         self._write_snapshots([_snap(now, rwa_error="RWA_XYZ_API_KEY non configurata (test)")])
-        for fn in (fe.rwa_value_trend, fe.rwa_growth_30d, fe.rwa_growth_90d, fe.rwa_acceleration):
+        for fn in (fe.rwa_growth_90d, fe.rwa_acceleration):
             result = fn()
             self.assertEqual(result["status"], fe.STATUS_MISSING)
             self.assertIn("RWA_XYZ_API_KEY", result["reason"])
+
+    def test_rwa_value_trend_missing_with_no_data(self):
+        result = fe.rwa_value_trend()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_rwa_value_trend_non_mature_with_single_point(self):
+        # _build_trend_feature richiede ALMENO 2 punti in finestra (stesso
+        # comportamento gia' verificato per dex_volume_trend/amm_growth):
+        # un solo punto non basta, indipendentemente dall'ampiezza temporale.
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc), xrpl_fi_total_tvl=1_050_000.0),
+        ])
+        result = fe.rwa_value_trend()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_rwa_value_trend_active_with_sufficient_history(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), xrpl_fi_total_tvl=1_000_000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=20), xrpl_fi_total_tvl=1_010_000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=5), xrpl_fi_total_tvl=1_020_000.0),
+            _snap(datetime.now(timezone.utc), xrpl_fi_total_tvl=1_050_000.0),
+        ])
+        result = fe.rwa_value_trend()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertIsNotNone(result["value"])
+
+    def test_rwa_growth_30d_missing_with_no_data(self):
+        result = fe.rwa_growth_30d()
+        self.assertEqual(result["status"], fe.STATUS_MISSING)
+        self.assertIsNone(result["value"])
+
+    def test_rwa_growth_30d_correct_calculation(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), xrpl_fi_total_tvl=1_000_000.0),
+            _snap(datetime.now(timezone.utc), xrpl_fi_total_tvl=1_100_000.0),
+        ])
+        result = fe.rwa_growth_30d()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 10.0, places=4)  # (1.1M-1M)/1M*100
+
+    def test_rwa_growth_30d_non_mature_short_history(self):
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=5), xrpl_fi_total_tvl=1_000_000.0),
+            _snap(datetime.now(timezone.utc), xrpl_fi_total_tvl=1_100_000.0),
+        ])
+        result = fe.rwa_growth_30d()
+        self.assertEqual(result["status"], fe.STATUS_NON_MATURE)
+        self.assertIsNone(result["value"])
+
+    def test_rwa_unavailable_snapshot_excluded_no_look_ahead(self):
+        # snapshot con xrpl.fi non disponibile in mezzo alla serie: deve
+        # essere escluso, non usato come punto valido ne' come "futuro".
+        self._write_snapshots([
+            _snap(datetime.now(timezone.utc) - timedelta(days=35), xrpl_fi_total_tvl=1_000_000.0),
+            _snap(datetime.now(timezone.utc) - timedelta(days=15), xrpl_fi_total_tvl=None),  # non disponibile
+            _snap(datetime.now(timezone.utc), xrpl_fi_total_tvl=1_100_000.0),
+        ])
+        result = fe.rwa_growth_30d()
+        self.assertEqual(result["status"], fe.STATUS_ACTIVE)
+        self.assertAlmostEqual(result["value"], 10.0, places=4)  # come se il punto mancante non esistesse
+
+    def test_rwa_distributed_still_indispensable_in_m3(self):
+        import xrpl_score_layer as sl
+        cat_a = sl.SCORE1_CATEGORIES["A"]
+        rwa_distributed = next(m for m in cat_a["metrics"] if m["name"] == "rwa_distributed")
+        self.assertTrue(rwa_distributed["indispensable"])
+        self.assertEqual(rwa_distributed["weight"], 0.55)
+        self.assertEqual(rwa_distributed["feature_key"], "rwa_value_trend")
+
+    def test_rwa_represented_still_missing_no_feature(self):
+        import xrpl_score_layer as sl
+        cat_a = sl.SCORE1_CATEGORIES["A"]
+        rwa_represented = next(m for m in cat_a["metrics"] if m["name"] == "rwa_represented")
+        self.assertIsNone(rwa_represented["feature_key"])
+
+    def test_no_new_metric_registered_in_m3(self):
+        import xrpl_score_layer as sl
+        cat_a_names = {m["name"] for m in sl.SCORE1_CATEGORIES["A"]["metrics"]}
+        self.assertEqual(cat_a_names, {"rwa_distributed", "rwa_growth", "rwa_represented"})
 
     def test_dex_volume_missing_without_any_raw_snapshot(self):
         # M8 Gap 2A: senza storico raccolto, restano MISSING (non piu'

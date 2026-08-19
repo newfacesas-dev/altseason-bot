@@ -388,14 +388,37 @@ def _build_velocity_feature(extractor, source_name, feature_name, required_days=
 # RWA.xyz e' disabled-by-default in M1 (nessuna API key configurata).
 # Nessun fallback: tutte MISSING finche' la fonte non e' abilitata.
 
-def rwa_value_trend():
-    reason = _extract_rwa_reason_latest()
-    return _feature_result(None, STATUS_MISSING, "rwa_xyz.assets", _latest_known_timestamp(), 0, 30, reason)
+def _extract_xrpl_fi_total_tvl(snapshot):
+    """M8 Gap 5A: totalTvl (USD) da xrpl.fi, fonte RWA dedicata."""
+    try:
+        env = snapshot["sources"]["xrpl_fi"]["rwa_metrics"]
+    except (KeyError, TypeError):
+        return None
+    if env.get("status") != raw.STATUS_RAW_AVAILABLE:
+        return None
+    try:
+        return float(env["data"]["total_tvl_usd"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
-def rwa_growth_30d():
-    reason = _extract_rwa_reason_latest()
-    return _feature_result(None, STATUS_MISSING, "rwa_xyz.assets", _latest_known_timestamp(), 0, 30, reason)
+def rwa_value_trend(window_days=30):
+    """M8 Gap 5A: implementata con dati reali xrpl.fi (RWA Distributed
+    Value). Riuso diretto di _build_trend_feature() gia' congelato —
+    nessuna formula nuova. Finestra 30gg: stessa gia' congelata per
+    rlusd_supply_trend (stessa famiglia di normalizzazione M3,
+    NORM_ZSCORE_CDF), coerente con la menzione esplicita del design
+    originale "Trend vs media mobile propria (30d)" per questa specifica
+    metrica — non presa per analogia con altre."""
+    return _build_trend_feature(_extract_xrpl_fi_total_tvl, window_days, "xrpl_fi.rwa_metrics", "rwa_value_trend")
+
+
+def rwa_growth_30d(window_days=30):
+    """M8 Gap 5A: implementata con dati reali xrpl.fi. Riuso diretto di
+    _build_growth_feature() gia' congelato — nessuna formula nuova.
+    Finestra 30gg: dichiarata esplicitamente nel nome stesso della
+    metrica (design originale "RWA growth 30d/90d")."""
+    return _build_growth_feature(_extract_xrpl_fi_total_tvl, window_days, "xrpl_fi.rwa_metrics", "rwa_growth_30d")
 
 
 def rwa_growth_90d():
