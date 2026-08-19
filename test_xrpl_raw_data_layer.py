@@ -485,15 +485,41 @@ class TestXrplLedgerInfo(unittest.TestCase):
 
 
 class TestXrplAccountLinesPaginated(unittest.TestCase):
-    """M8 Gap 3: paginazione completa di account_lines."""
+    """M8 Gap 3 + ottimizzazione finale: paginazione completa di
+    account_lines, con endpoint fissato una volta e ledger pinnato."""
 
     def setUp(self):
         layer._raw_cache.clear()
 
+    @staticmethod
+    def _make_fixed_endpoint_mock(primary_fails=True, ledger_index=88530953,
+                                   account_lines_pages=None, ledger_resolve_fails_everywhere=False):
+        """account_lines_pages: lista di (result, err) restituiti in sequenza
+        alle chiamate 'account_lines'. call_log registra ogni chiamata reale."""
+        call_log = []
+        pages_iter = iter(account_lines_pages or [])
+
+        def fake(url, method, params, source_label):
+            call_log.append({"url": url, "method": method, "params": dict(params)})
+            if primary_fails and url == layer._XRPL_RPC_PRIMARY:
+                return None, "HTTP 402"
+            if method == "ledger":
+                if ledger_resolve_fails_everywhere:
+                    return None, "ledger resolve fallito"
+                return {"ledger": {"total_coins": "99"}, "ledger_index": ledger_index}, None
+            if method == "account_lines":
+                try:
+                    return next(pages_iter)
+                except StopIteration:
+                    return None, "nessuna pagina mock rimanente"
+            return None, "metodo non gestito nel mock"
+
+        return fake, call_log
+
     def test_single_page_complete(self):
-        def fake_rpc(method, params, source):
-            return {"lines": [{"account": f"r{i}", "currency": "RLUSD"} for i in range(50)]}, None
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [({"lines": [{"account": f"r{i}", "currency": "RLUSD"} for i in range(50)]}, None)]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
         self.assertEqual(env["data"]["total_trustlines"], 50)
@@ -501,61 +527,116 @@ class TestXrplAccountLinesPaginated(unittest.TestCase):
         self.assertTrue(env["data"]["complete"])
 
     def test_multiple_pages_complete(self):
-        call_count = {"n": 0}
-
-        def fake_rpc(method, params, source):
-            call_count["n"] += 1
-            if call_count["n"] < 3:
-                return {"lines": [{"account": f"r{call_count['n']}_{i}", "currency": "RLUSD"} for i in range(200)],
-                        "marker": f"MARK{call_count['n']}"}, None
-            return {"lines": [{"account": f"rlast_{i}", "currency": "RLUSD"} for i in range(30)]}, None
-
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [
+            ({"lines": [{"account": f"r1_{i}", "currency": "RLUSD"} for i in range(400)], "marker": "MARK1"}, None),
+            ({"lines": [{"account": f"r2_{i}", "currency": "RLUSD"} for i in range(400)], "marker": "MARK2"}, None),
+            ({"lines": [{"account": f"r3_{i}", "currency": "RLUSD"} for i in range(30)]}, None),
+        ]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
-        self.assertEqual(env["data"]["total_trustlines"], 430)  # 200+200+30
+        self.assertEqual(env["data"]["total_trustlines"], 830)  # 400+400+30
         self.assertEqual(env["data"]["pages_fetched"], 3)
         self.assertTrue(env["data"]["complete"])
 
+    def test_limit_400_used_in_every_page_request(self):
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]
+        fake, call_log = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            layer.xrpl_account_lines_paginated()
+        account_lines_calls = [c for c in call_log if c["method"] == "account_lines"]
+        self.assertEqual(len(account_lines_calls), 1)
+        self.assertEqual(account_lines_calls[0]["params"]["limit"], 400)
+
+    def test_ledger_resolved_once_and_pinned_on_every_page(self):
+        pages = [
+            ({"lines": [{"account": f"r1_{i}", "currency": "RLUSD"} for i in range(400)], "marker": "MARK1"}, None),
+            ({"lines": [{"account": f"r2_{i}", "currency": "RLUSD"} for i in range(10)]}, None),
+        ]
+        fake, call_log = self._make_fixed_endpoint_mock(ledger_index=99999999, account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            layer.xrpl_account_lines_paginated()
+        ledger_calls = [c for c in call_log if c["method"] == "ledger"]
+        account_lines_calls = [c for c in call_log if c["method"] == "account_lines"]
+        # risoluzione ledger tentata sul primario (fallisce) + una volta sul fallback = 2 chiamate 'ledger'
+        self.assertEqual(len(ledger_calls), 2)
+        # OGNI pagina account_lines usa lo STESSO ledger_index pinnato
+        used_ledger_indexes = {c["params"]["ledger_index"] for c in account_lines_calls}
+        self.assertEqual(used_ledger_indexes, {99999999})
+
+    def test_primary_tried_exactly_once_fallback_reused_for_all_pages(self):
+        pages = [
+            ({"lines": [{"account": f"r1_{i}", "currency": "RLUSD"} for i in range(400)], "marker": "MARK1"}, None),
+            ({"lines": [{"account": f"r2_{i}", "currency": "RLUSD"} for i in range(400)], "marker": "MARK2"}, None),
+            ({"lines": [{"account": f"r3_{i}", "currency": "RLUSD"} for i in range(5)]}, None),
+        ]
+        fake, call_log = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            layer.xrpl_account_lines_paginated()
+        primary_calls = [c for c in call_log if c["url"] == layer._XRPL_RPC_PRIMARY]
+        fallback_calls = [c for c in call_log if c["url"] == layer._XRPL_RPC_FALLBACK]
+        self.assertEqual(len(primary_calls), 1)  # tentato SOLO per la risoluzione iniziale, mai per pagina
+        self.assertEqual(len(fallback_calls), 1 + 3)  # 1 resolve + 3 pagine, tutte sul fallback
+
     def test_final_marker_absent_ends_pagination(self):
-        def fake_rpc(method, params, source):
-            return {"lines": [{"account": "r1", "currency": "RLUSD"}]}, None  # nessun campo 'marker'
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]  # nessun campo 'marker'
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertTrue(env["data"]["complete"])
         self.assertEqual(env["data"]["pages_fetched"], 1)
 
     def test_repeated_marker_stops_safely(self):
-        def fake_rpc(method, params, source):
-            return {"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "SAME_MARKER"}, None
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "SAME_MARKER"}, None)] * 10
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated(max_pages=10)
         self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
         self.assertFalse(env["data"]["complete"])
         self.assertIn("ripetuto", env["error"])
-        # non deve continuare all'infinito: si ferma appena rileva la ripetizione
         self.assertLessEqual(env["data"]["pages_fetched"], 3)
 
     def test_intermediate_page_failure(self):
-        call_count = {"n": 0}
-
-        def fake_rpc(method, params, source):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                return {"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "MARK1"}, None
-            return None, "errore di rete simulato"
-
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [
+            ({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "MARK1"}, None),
+            (None, "errore di rete simulato"),
+        ]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
         self.assertFalse(env["data"]["complete"])
         self.assertIn("fallita", env["error"])
         self.assertEqual(env["data"]["total_trustlines"], 1)  # la prima pagina resta visibile per debug
 
+    def test_pinned_ledger_unavailable_mid_pagination_gives_incomplete(self):
+        # simula: il ledger pinnato non e' piu' disponibile su una pagina
+        # successiva (es. nodo con storico limitato) -> stesso percorso di
+        # 'pagina fallita', complete=False, mai un dato parziale valido.
+        pages = [
+            ({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "MARK1"}, None),
+            (None, "ledgerNotFound"),
+        ]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+        self.assertIn("ledgerNotFound", env["error"])
+
+    def test_ledger_resolution_fails_on_both_endpoints(self):
+        fake, _ = self._make_fixed_endpoint_mock(ledger_resolve_fails_everywhere=True)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+        self.assertEqual(env["data"]["pages_fetched"], 0)
+
     def test_safety_cap_reached(self):
-        def fake_rpc(method, params, source):
-            return {"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": f"MARK_{params.get('marker')}"}, None
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": f"MARK_{i}"}, None) for i in range(10)]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated(max_pages=5)
         self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
         self.assertFalse(env["data"]["complete"])
@@ -563,41 +644,50 @@ class TestXrplAccountLinesPaginated(unittest.TestCase):
         self.assertIn("tetto di sicurezza", env["error"])
 
     def test_dedup_of_duplicate_lines(self):
-        def fake_rpc(method, params, source):
-            # la stessa linea compare due volte nella stessa pagina (caso limite)
-            return {"lines": [
-                {"account": "rDUP", "currency": "RLUSD"},
-                {"account": "rDUP", "currency": "RLUSD"},
-                {"account": "rUnique", "currency": "RLUSD"},
-            ]}, None
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [({"lines": [
+            {"account": "rDUP", "currency": "RLUSD"},
+            {"account": "rDUP", "currency": "RLUSD"},
+            {"account": "rUnique", "currency": "RLUSD"},
+        ]}, None)]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertEqual(env["data"]["total_trustlines"], 2)  # non 3
 
     def test_missing_lines_field(self):
-        def fake_rpc(method, params, source):
-            return {"no_lines_here": True}, None
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [({"no_lines_here": True}, None)]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
         self.assertFalse(env["data"]["complete"])
 
     def test_pages_fetched_zero_on_immediate_failure(self):
-        def fake_rpc(method, params, source):
-            return None, "connessione rifiutata"
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc):
+        pages = [(None, "connessione rifiutata")]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
             env = layer.xrpl_account_lines_paginated()
         self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
         self.assertEqual(env["data"]["pages_fetched"], 0)
         self.assertEqual(env["data"]["total_trustlines"], 0)
 
     def test_cache_avoids_duplicate_calls(self):
-        def fake_rpc(method, params, source):
-            return {"lines": [{"account": "r1", "currency": "RLUSD"}]}, None
-        with patch.object(layer, "_xrpl_rpc_call", side_effect=fake_rpc) as mock_rpc:
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake) as mock_call:
             layer.xrpl_account_lines_paginated()
             layer.xrpl_account_lines_paginated()
-        self.assertEqual(mock_rpc.call_count, 1)
+        # prima esecuzione: 2 chiamate di resolve (primario fallito + fallback) + 1 pagina = 3;
+        # seconda esecuzione: 0 (risultato gia' in cache)
+        self.assertEqual(mock_call.call_count, 3)
+
+    def test_global_xrpl_rpc_call_untouched_for_other_adapters(self):
+        # Requisito esplicito: _xrpl_rpc_call() NON deve essere toccata —
+        # verifichiamo che esista ancora identica nella firma, usata da
+        # tutti gli altri adapter.
+        import inspect
+        sig = inspect.signature(layer._xrpl_rpc_call)
+        self.assertEqual(list(sig.parameters.keys()), ["method", "params", "source_label"])
 
 
 class TestRwaXyzDisabledByDefault(unittest.TestCase):

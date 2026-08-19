@@ -354,24 +354,75 @@ def xrpl_account_lines(account=None):
     return env
 
 
-def xrpl_account_lines_paginated(account=None, max_pages=None):
-    """M8 Gap 3: paginazione completa di account_lines, seguendo 'marker'
-    fino a esaurimento o al tetto di sicurezza. Riusa _xrpl_rpc_call() gia'
-    esistente per ogni singola pagina (stesso fallback primario/secondario,
-    stesso retry) — nessuna nuova logica di rete, solo il loop di
-    paginazione che l'adapter singola-pagina non aveva.
+def _call_xrpl_rpc_fixed_endpoint(url, method, params, source_label):
+    """Chiamata JSON-RPC verso UN endpoint fisso, senza il fallback
+    automatico primario->secondario per-chiamata di _xrpl_rpc_call().
+    Usata SOLO dalla paginazione trustline (locale a questa funzione):
+    _xrpl_rpc_call() resta completamente invariata per tutti gli altri
+    adapter, che continuano a provare il primario ad ogni chiamata."""
+    payload = {"method": method, "params": [params] if params is not None else [{}]}
+    body, err = _http_post_json(url, payload, timeout=_XRPL_HTTP_TIMEOUT, source=source_label)
+    if body is None:
+        return None, err
+    result = body.get("result") if isinstance(body, dict) else None
+    if result is None:
+        return None, "risposta priva del campo 'result'"
+    if isinstance(result, dict) and result.get("status") == "error":
+        return None, f"errore XRPL: {result.get('error', 'sconosciuto')}"
+    return result, None
 
-    Correzione rispetto al vecchio commento di xrpl_account_lines(): una
-    trust line e' un oggetto BILATERALE — account_lines(issuer) elenca
-    esattamente le controparti con una linea aperta verso quell'issuer per
-    quella valuta, che E' il conteggio holder/trustline. Il limite reale
-    non era mai semantico, solo la paginazione mancante (ora risolta qui).
+
+def _resolve_paginated_endpoint_and_ledger(source):
+    """Risolve UNA SOLA VOLTA, per l'intera paginazione: quale endpoint
+    (primario o fallback) risponde, e il ledger_index validato da pinnare
+    su tutte le pagine (mai 'validated' ripetuto per pagina, che rischia
+    di attraversare ledger diversi durante una paginazione lunga). Il
+    primario viene tentato una sola volta qui; se fallisce, il fallback
+    viene scelto e riusato per tutte le pagine successive."""
+    for url in (_XRPL_RPC_PRIMARY, _XRPL_RPC_FALLBACK):
+        result, err = _call_xrpl_rpc_fixed_endpoint(url, "ledger", {"ledger_index": "validated"}, f"{source}/resolve")
+        if result is None:
+            log.warning(f"[{source}] endpoint {url} non disponibile per la risoluzione iniziale ({err}), provo il successivo")
+            continue
+        raw_idx = result.get("ledger_index")
+        if raw_idx is None and isinstance(result.get("ledger"), dict):
+            raw_idx = result["ledger"].get("ledger_index")
+        try:
+            return url, int(raw_idx), None
+        except (TypeError, ValueError):
+            log.warning(f"[{source}] endpoint {url} risposta senza ledger_index valido, provo il successivo")
+            continue
+    return None, None, "nessun endpoint disponibile per risolvere il ledger validato"
+
+
+def xrpl_account_lines_paginated(account=None, max_pages=None):
+    """M8 Gap 3 + ottimizzazione finale: paginazione completa di
+    account_lines, seguendo 'marker' fino a esaurimento o al tetto di
+    sicurezza. Correzione rispetto al vecchio commento di
+    xrpl_account_lines(): una trust line e' un oggetto BILATERALE —
+    account_lines(issuer) elenca esattamente le controparti con una linea
+    aperta verso quell'issuer per quella valuta, che E' il conteggio
+    holder/trustline.
+
+    Ottimizzazione (risolve un problema reale osservato in produzione:
+    il nodo primario rispondeva HTTP 402 e veniva ritentato ad ogni
+    singola pagina, raddoppiando le richieste):
+    - limit=400 (massimo documentato per account_lines, dimezza le pagine
+      necessarie rispetto al precedente limit=200);
+    - endpoint (primario o fallback) scelto UNA VOLTA all'inizio e riusato
+      per tutte le pagine di questa paginazione — mai ritentato il
+      primario pagina per pagina;
+    - ledger_index risolto UNA VOLTA e pinnato (intero fisso) su tutte le
+      pagine, invece di 'validated' ripetuto (che rischierebbe di
+      attraversare ledger diversi durante una paginazione lunga).
+    Questa logica e' locale a questa funzione: _xrpl_rpc_call() resta
+    invariata per tutti gli altri adapter.
 
     Ritorna SEMPRE total_trustlines, pages_fetched, complete. Se
-    complete=False (tetto raggiunto, pagina fallita, o marker ripetuto),
-    lo status resta SOURCE_UNAVAILABLE: il conteggio non va MAI trattato
-    come valido in quel caso, anche se e' comunque incluso nei dati per
-    trasparenza/debug."""
+    complete=False (tetto raggiunto, pagina fallita, ledger pinnato non
+    piu' disponibile, o marker ripetuto), lo status resta
+    SOURCE_UNAVAILABLE: il conteggio non va MAI trattato come valido in
+    quel caso, anche se e' comunque incluso nei dati per trasparenza/debug."""
     source = "xrpl.account_lines_paginated"
     account = account or _RLUSD_ISSUER
     max_pages = max_pages or _ACCOUNT_LINES_MAX_PAGES
@@ -379,6 +430,15 @@ def xrpl_account_lines_paginated(account=None, max_pages=None):
     cached = _cache_get(cache_key)
     if cached:
         return cached
+
+    resolved_url, pinned_ledger_index, resolve_err = _resolve_paginated_endpoint_and_ledger(source)
+    if resolved_url is None:
+        data = {"total_trustlines": 0, "pages_fetched": 0, "complete": False}
+        error_reason = f"impossibile risolvere ledger/endpoint iniziale: {resolve_err}"
+        env = _envelope(STATUS_SOURCE_UNAVAILABLE, source, data=data, error=error_reason)
+        log.warning(f"[{source}] SOURCE_UNAVAILABLE ({error_reason})")
+        _cache_set(cache_key, env)
+        return env
 
     seen_line_keys = set()
     seen_markers = set()
@@ -389,11 +449,11 @@ def xrpl_account_lines_paginated(account=None, max_pages=None):
     error_reason = None
 
     while pages_fetched < max_pages:
-        params = {"account": account, "ledger_index": "validated", "limit": 200}
+        params = {"account": account, "ledger_index": pinned_ledger_index, "limit": 400}
         if marker is not None:
             params["marker"] = marker
 
-        result, err = _xrpl_rpc_call("account_lines", params, source)
+        result, err = _call_xrpl_rpc_fixed_endpoint(resolved_url, "account_lines", params, source)
         if result is None:
             error_reason = f"pagina {pages_fetched + 1} fallita: {err}"
             break
