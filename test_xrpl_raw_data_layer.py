@@ -495,12 +495,17 @@ class TestXrplAccountLinesPaginated(unittest.TestCase):
     def _make_fixed_endpoint_mock(primary_fails=True, ledger_index=88530953,
                                    account_lines_pages=None, ledger_resolve_fails_everywhere=False):
         """account_lines_pages: lista di (result, err) restituiti in sequenza
-        alle chiamate 'account_lines'. call_log registra ogni chiamata reale."""
+        alle chiamate 'account_lines'. call_log registra ogni chiamata reale,
+        incluso il timeout/max_retries effettivamente passati (per
+        verificare il budget di tempo)."""
         call_log = []
         pages_iter = iter(account_lines_pages or [])
 
-        def fake(url, method, params, source_label):
-            call_log.append({"url": url, "method": method, "params": dict(params)})
+        def fake(url, method, params, source_label, timeout=None, max_retries=None):
+            call_log.append({
+                "url": url, "method": method, "params": dict(params),
+                "timeout": timeout, "max_retries": max_retries,
+            })
             if primary_fails and url == layer._XRPL_RPC_PRIMARY:
                 return None, "HTTP 402"
             if method == "ledger":
@@ -670,6 +675,129 @@ class TestXrplAccountLinesPaginated(unittest.TestCase):
         self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
         self.assertEqual(env["data"]["pages_fetched"], 0)
         self.assertEqual(env["data"]["total_trustlines"], 0)
+
+    def test_max_retries_zero_passed_to_every_call(self):
+        # requisito: nessun retry interno per la paginazione trustline
+        # (un fallimento di pagina interrompe gia' tutto, un retry
+        # interno consumerebbe budget in modo imprevedibile).
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]
+        fake, call_log = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            layer.xrpl_account_lines_paginated()
+        for call in call_log:
+            if call["url"] == layer._XRPL_RPC_FALLBACK:  # solo le chiamate riuscite/tentate sul fallback
+                self.assertEqual(call["max_retries"], 0)
+
+    def test_budget_exceeded_between_pages_gives_incomplete(self):
+        pages = [
+            ({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "MARK1"}, None),
+            ({"lines": [{"account": "r2", "currency": "RLUSD"}], "marker": "MARK2"}, None),
+            ({"lines": [{"account": "r3", "currency": "RLUSD"}]}, None),
+        ]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        # budget minuscolo: scade sicuramente prima che tutte le pagine finiscano
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake), \
+             patch.object(layer, "_ACCOUNT_LINES_TIME_BUDGET_SECONDS", 0.0):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_SOURCE_UNAVAILABLE)
+        self.assertFalse(env["data"]["complete"])
+        self.assertIn("time budget exceeded", env["error"])
+
+    def test_no_new_request_when_remaining_time_non_positive(self):
+        # con budget 0, la risoluzione stessa non deve nemmeno tentare
+        # una richiesta: 0 chiamate registrate.
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]
+        fake, call_log = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake), \
+             patch.object(layer, "_ACCOUNT_LINES_TIME_BUDGET_SECONDS", 0.0):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(len(call_log), 0)
+        self.assertEqual(env["data"]["pages_fetched"], 0)
+        self.assertFalse(env["data"]["complete"])
+
+    def test_per_request_timeout_shrinks_with_remaining_budget(self):
+        # simula il passare del tempo: ogni chiamata a time.monotonic()
+        # avanza artificialmente di un valore scelto in modo che il tempo
+        # residuo scenda sotto _XRPL_HTTP_TIMEOUT (12s) per le pagine
+        # successive — cosi' il timeout locale (min(12, residuo)) deve
+        # diminuire visibilmente, non restare sempre appiattito a 12.
+        pages = [
+            ({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "MARK1"}, None),
+            ({"lines": [{"account": "r2", "currency": "RLUSD"}]}, None),
+        ]
+        fake, call_log = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        real_monotonic = layer.time.monotonic
+        base = real_monotonic()
+        state = {"elapsed": 0.0}
+
+        def fake_monotonic():
+            state["elapsed"] += 8.0  # ogni controllo "consuma" 8s di budget
+            return base + state["elapsed"]
+
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake), \
+             patch.object(layer, "_ACCOUNT_LINES_TIME_BUDGET_SECONDS", 35.0), \
+             patch.object(layer.time, "monotonic", side_effect=fake_monotonic):
+            env = layer.xrpl_account_lines_paginated()
+
+        account_lines_timeouts = [c["timeout"] for c in call_log if c["method"] == "account_lines"]
+        self.assertEqual(len(account_lines_timeouts), 2)
+        self.assertGreater(account_lines_timeouts[0], account_lines_timeouts[1])
+        self.assertLessEqual(account_lines_timeouts[0], layer._XRPL_HTTP_TIMEOUT)
+        self.assertTrue(env["data"]["complete"])  # entrambe le pagine completate entro budget
+
+    def test_timeout_never_exceeds_xrpl_http_timeout_even_with_ample_budget(self):
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]
+        fake, call_log = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake), \
+             patch.object(layer, "_ACCOUNT_LINES_TIME_BUDGET_SECONDS", 99999.0):
+            layer.xrpl_account_lines_paginated()
+        account_lines_calls = [c for c in call_log if c["method"] == "account_lines"]
+        self.assertEqual(account_lines_calls[0]["timeout"], layer._XRPL_HTTP_TIMEOUT)
+
+    def test_normal_collection_within_budget_unaffected(self):
+        # requisito: la raccolta normale (che termina entro il budget)
+        # deve comportarsi esattamente come prima — nessuna regressione
+        # funzionale introdotta dal budget.
+        pages = [
+            ({"lines": [{"account": f"r1_{i}", "currency": "RLUSD"} for i in range(400)], "marker": "MARK1"}, None),
+            ({"lines": [{"account": f"r2_{i}", "currency": "RLUSD"} for i in range(30)]}, None),
+        ]
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake):
+            env = layer.xrpl_account_lines_paginated()
+        self.assertEqual(env["status"], layer.STATUS_RAW_AVAILABLE)
+        self.assertEqual(env["data"]["total_trustlines"], 430)
+        self.assertTrue(env["data"]["complete"])
+
+    def test_time_budget_derived_from_existing_constants_not_hardcoded(self):
+        expected = round(
+            (layer._XRPL_HTTP_TIMEOUT * (layer._MAX_RETRIES + 1)
+             + layer._BACKOFF_BASE_SECONDS * sum(2 ** i for i in range(layer._MAX_RETRIES))) * 3,
+            1,
+        )
+        self.assertAlmostEqual(layer._ACCOUNT_LINES_TIME_BUDGET_SECONDS, expected, places=4)
+
+    def test_snapshot_continues_with_other_adapters_when_trustline_budget_exceeded(self):
+        pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}], "marker": "M"}, None)] * 5
+        fake, _ = self._make_fixed_endpoint_mock(account_lines_pages=pages)
+        with patch.object(layer, "_call_xrpl_rpc_fixed_endpoint", side_effect=fake), \
+             patch.object(layer, "_ACCOUNT_LINES_TIME_BUDGET_SECONDS", 0.0), \
+             patch.object(layer, "_MAX_RETRIES", 0), \
+             patch("xrpl_raw_data_layer.requests.get", return_value=_fake_response(500)), \
+             patch("xrpl_raw_data_layer.requests.post", return_value=_fake_response(500)), \
+             patch("xrpl_raw_data_layer.time.sleep", return_value=None):
+            tmpdir = tempfile.mkdtemp()
+            with patch.object(layer, "_RAW_SNAPSHOT_PATH", os.path.join(tmpdir, "s.jsonl")):
+                snapshot = layer.collect_xrpl_raw_snapshot()
+        # lo snapshot deve comunque contenere TUTTE le altre fonti, anche
+        # se trustline e' andata in time budget exceeded
+        self.assertIn("xrpl_native", snapshot["sources"])
+        self.assertIn("account_lines_rlusd_issuer_paginated", snapshot["sources"]["xrpl_native"])
+        self.assertFalse(snapshot["sources"]["xrpl_native"]["account_lines_rlusd_issuer_paginated"]["data"]["complete"])
+        self.assertIn("defillama", snapshot["sources"])
+        self.assertIn("xrpl_to", snapshot["sources"])
+        self.assertIn("xrpl_fi", snapshot["sources"])
+        self.assertIn("rwa_xyz", snapshot["sources"])
 
     def test_cache_avoids_duplicate_calls(self):
         pages = [({"lines": [{"account": "r1", "currency": "RLUSD"}]}, None)]

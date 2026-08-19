@@ -83,6 +83,26 @@ _CACHE_TTL_SECONDS = float(os.environ.get("XRPL_RAW_CACHE_TTL_SECONDS", "300")) 
 _MAX_RETRIES = int(os.environ.get("XRPL_RAW_MAX_RETRIES", "2"))
 _BACKOFF_BASE_SECONDS = float(os.environ.get("XRPL_RAW_BACKOFF_BASE_SECONDS", "1.5"))
 
+# Budget di tempo complessivo (wall-clock) per l'INTERA paginazione trustline
+# (risoluzione ledger/endpoint + tutte le pagine), non solo per singola
+# richiesta — risolve un problema reale osservato in produzione: una
+# singola requests.post() rimasta bloccata dentro conn.getresponse()
+# impediva alla paginazione di terminare, nonostante il timeout per
+# singola chiamata gia' impostato. Derivato dalle costanti gia' esistenti,
+# non scelto a caso: worst-case gia' implicito di UNA chiamata JSON-RPC
+# con i retry gia' approvati (_XRPL_HTTP_TIMEOUT * (_MAX_RETRIES+1) +
+# backoff cumulativo tra i tentativi), moltiplicato per 3 come margine
+# esplicito per accogliere ~100 pagine reali in condizioni normali (dove
+# ogni pagina sana impiega una frazione di secondo, non il caso peggiore)
+# prima di concludere che qualcosa e' strutturalmente compromesso.
+_ACCOUNT_LINES_TIME_BUDGET_SECONDS = float(os.environ.get(
+    "XRPL_ACCOUNT_LINES_TIME_BUDGET_SECONDS",
+    str(round(
+        (_XRPL_HTTP_TIMEOUT * (_MAX_RETRIES + 1) + _BACKOFF_BASE_SECONDS * sum(2 ** i for i in range(_MAX_RETRIES))) * 3,
+        1,
+    )),
+))
+
 # Stati possibili per ogni singolo dato raccolto
 STATUS_RAW_AVAILABLE = "RAW_AVAILABLE"
 STATUS_SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
@@ -354,14 +374,24 @@ def xrpl_account_lines(account=None):
     return env
 
 
-def _call_xrpl_rpc_fixed_endpoint(url, method, params, source_label):
+def _call_xrpl_rpc_fixed_endpoint(url, method, params, source_label, timeout=None, max_retries=None):
     """Chiamata JSON-RPC verso UN endpoint fisso, senza il fallback
     automatico primario->secondario per-chiamata di _xrpl_rpc_call().
     Usata SOLO dalla paginazione trustline (locale a questa funzione):
     _xrpl_rpc_call() resta completamente invariata per tutti gli altri
-    adapter, che continuano a provare il primario ad ogni chiamata."""
+    adapter, che continuano a provare il primario ad ogni chiamata.
+
+    'timeout'/'max_retries' opzionali: se non specificati, preservano il
+    comportamento gia' esistente (_XRPL_HTTP_TIMEOUT / _MAX_RETRIES
+    globali di _http_post_json, mai modificata). La paginazione trustline
+    li passa esplicitamente per applicare un budget di tempo complessivo
+    rigido (vedi _ACCOUNT_LINES_TIME_BUDGET_SECONDS): timeout ridotto al
+    tempo residuo, max_retries=0 perche' un fallimento di pagina interrompe
+    gia' l'intera paginazione (un retry interno sarebbe ridondante e
+    consumerebbe tempo del budget in modo imprevedibile)."""
     payload = {"method": method, "params": [params] if params is not None else [{}]}
-    body, err = _http_post_json(url, payload, timeout=_XRPL_HTTP_TIMEOUT, source=source_label)
+    effective_timeout = timeout if timeout is not None else _XRPL_HTTP_TIMEOUT
+    body, err = _http_post_json(url, payload, timeout=effective_timeout, max_retries=max_retries, source=source_label)
     if body is None:
         return None, err
     result = body.get("result") if isinstance(body, dict) else None
@@ -372,15 +402,25 @@ def _call_xrpl_rpc_fixed_endpoint(url, method, params, source_label):
     return result, None
 
 
-def _resolve_paginated_endpoint_and_ledger(source):
+def _resolve_paginated_endpoint_and_ledger(source, start_time, budget_seconds):
     """Risolve UNA SOLA VOLTA, per l'intera paginazione: quale endpoint
     (primario o fallback) risponde, e il ledger_index validato da pinnare
     su tutte le pagine (mai 'validated' ripetuto per pagina, che rischia
     di attraversare ledger diversi durante una paginazione lunga). Il
     primario viene tentato una sola volta qui; se fallisce, il fallback
-    viene scelto e riusato per tutte le pagine successive."""
+    viene scelto e riusato per tutte le pagine successive. Rispetta lo
+    stesso budget di tempo complessivo della paginazione: se il tempo
+    residuo si esaurisce durante la sola risoluzione, si interrompe
+    subito senza tentare l'endpoint successivo."""
     for url in (_XRPL_RPC_PRIMARY, _XRPL_RPC_FALLBACK):
-        result, err = _call_xrpl_rpc_fixed_endpoint(url, "ledger", {"ledger_index": "validated"}, f"{source}/resolve")
+        remaining = budget_seconds - (time.monotonic() - start_time)
+        if remaining <= 0:
+            return None, None, f"time budget exceeded ({budget_seconds:.1f}s) durante la risoluzione iniziale"
+        local_timeout = min(_XRPL_HTTP_TIMEOUT, remaining)
+        result, err = _call_xrpl_rpc_fixed_endpoint(
+            url, "ledger", {"ledger_index": "validated"}, f"{source}/resolve",
+            timeout=local_timeout, max_retries=0,
+        )
         if result is None:
             log.warning(f"[{source}] endpoint {url} non disponibile per la risoluzione iniziale ({err}), provo il successivo")
             continue
@@ -396,33 +436,46 @@ def _resolve_paginated_endpoint_and_ledger(source):
 
 
 def xrpl_account_lines_paginated(account=None, max_pages=None):
-    """M8 Gap 3 + ottimizzazione finale: paginazione completa di
-    account_lines, seguendo 'marker' fino a esaurimento o al tetto di
-    sicurezza. Correzione rispetto al vecchio commento di
-    xrpl_account_lines(): una trust line e' un oggetto BILATERALE —
-    account_lines(issuer) elenca esattamente le controparti con una linea
-    aperta verso quell'issuer per quella valuta, che E' il conteggio
-    holder/trustline.
+    """M8 Gap 3 + ottimizzazione finale + hard time budget: paginazione
+    completa di account_lines, seguendo 'marker' fino a esaurimento, al
+    tetto di sicurezza, o al budget di tempo complessivo. Correzione
+    rispetto al vecchio commento di xrpl_account_lines(): una trust line
+    e' un oggetto BILATERALE — account_lines(issuer) elenca esattamente
+    le controparti con una linea aperta verso quell'issuer per quella
+    valuta, che E' il conteggio holder/trustline.
 
     Ottimizzazione (risolve un problema reale osservato in produzione:
     il nodo primario rispondeva HTTP 402 e veniva ritentato ad ogni
     singola pagina, raddoppiando le richieste):
-    - limit=400 (massimo documentato per account_lines, dimezza le pagine
-      necessarie rispetto al precedente limit=200);
-    - endpoint (primario o fallback) scelto UNA VOLTA all'inizio e riusato
-      per tutte le pagine di questa paginazione — mai ritentato il
-      primario pagina per pagina;
-    - ledger_index risolto UNA VOLTA e pinnato (intero fisso) su tutte le
-      pagine, invece di 'validated' ripetuto (che rischierebbe di
-      attraversare ledger diversi durante una paginazione lunga).
-    Questa logica e' locale a questa funzione: _xrpl_rpc_call() resta
-    invariata per tutti gli altri adapter.
+    - limit=400 (massimo documentato per account_lines);
+    - endpoint scelto UNA VOLTA e riusato per tutte le pagine;
+    - ledger_index risolto UNA VOLTA e pinnato su tutte le pagine.
+
+    Hard time budget (risolve un secondo problema reale osservato in
+    produzione: una singola requests.post() rimasta bloccata dentro
+    conn.getresponse() nonostante il timeout per chiamata gia' impostato
+    — un timeout per-request da solo non basta a limitare il tempo totale
+    di una paginazione con centinaia di pagine potenziali):
+    - _ACCOUNT_LINES_TIME_BUDGET_SECONDS e' un tetto di tempo complessivo
+      per l'intera funzione (risoluzione + tutte le pagine);
+    - prima di OGNI richiesta (inclusa la risoluzione), se il tempo
+      residuo e' <= 0, NESSUNA nuova richiesta viene effettuata;
+    - ogni richiesta riceve un timeout locale pari a
+      min(_XRPL_HTTP_TIMEOUT, tempo_residuo): una singola richiesta non
+      puo' mai chiedere piu' tempo di quanto ne resti nel budget totale;
+    - allo scadere del budget: complete=False, errore esplicito
+      'time budget exceeded', nessun dato parziale dichiarato valido.
+
+    Questa logica e' locale a questa funzione: _xrpl_rpc_call() e
+    _http_post_json() restano invariate per tutti gli altri adapter, che
+    continuano a usare i timeout/retry globali come prima. Un fallimento
+    qui (incluso lo scadere del budget) non impedisce a
+    collect_xrpl_raw_snapshot() di raccogliere e salvare le altre fonti.
 
     Ritorna SEMPRE total_trustlines, pages_fetched, complete. Se
-    complete=False (tetto raggiunto, pagina fallita, ledger pinnato non
-    piu' disponibile, o marker ripetuto), lo status resta
-    SOURCE_UNAVAILABLE: il conteggio non va MAI trattato come valido in
-    quel caso, anche se e' comunque incluso nei dati per trasparenza/debug."""
+    complete=False lo status resta SOURCE_UNAVAILABLE: il conteggio non
+    va MAI trattato come valido in quel caso, anche se e' comunque
+    incluso nei dati per trasparenza/debug."""
     source = "xrpl.account_lines_paginated"
     account = account or _RLUSD_ISSUER
     max_pages = max_pages or _ACCOUNT_LINES_MAX_PAGES
@@ -431,7 +484,10 @@ def xrpl_account_lines_paginated(account=None, max_pages=None):
     if cached:
         return cached
 
-    resolved_url, pinned_ledger_index, resolve_err = _resolve_paginated_endpoint_and_ledger(source)
+    start_time = time.monotonic()
+    budget = _ACCOUNT_LINES_TIME_BUDGET_SECONDS
+
+    resolved_url, pinned_ledger_index, resolve_err = _resolve_paginated_endpoint_and_ledger(source, start_time, budget)
     if resolved_url is None:
         data = {"total_trustlines": 0, "pages_fetched": 0, "complete": False}
         error_reason = f"impossibile risolvere ledger/endpoint iniziale: {resolve_err}"
@@ -449,11 +505,22 @@ def xrpl_account_lines_paginated(account=None, max_pages=None):
     error_reason = None
 
     while pages_fetched < max_pages:
+        remaining = budget - (time.monotonic() - start_time)
+        if remaining <= 0:
+            error_reason = (
+                f"time budget exceeded ({budget:.1f}s): raccolta interrotta dopo {pages_fetched} pagine, "
+                f"nessuna nuova richiesta effettuata"
+            )
+            break
+
+        local_timeout = min(_XRPL_HTTP_TIMEOUT, remaining)
         params = {"account": account, "ledger_index": pinned_ledger_index, "limit": 400}
         if marker is not None:
             params["marker"] = marker
 
-        result, err = _call_xrpl_rpc_fixed_endpoint(resolved_url, "account_lines", params, source)
+        result, err = _call_xrpl_rpc_fixed_endpoint(
+            resolved_url, "account_lines", params, source, timeout=local_timeout, max_retries=0
+        )
         if result is None:
             error_reason = f"pagina {pages_fetched + 1} fallita: {err}"
             break
