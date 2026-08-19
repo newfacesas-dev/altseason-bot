@@ -3762,11 +3762,23 @@ def _estrai_confidenza_analisi(score_text):
 _xrpl_last_result = None
 
 
-# --- XRPL GAP3 RAW COLLECTION WIRING (auto-patch) ---
-def _xrpl_run_daily_pipeline():
+# --- XRPL M5 EXTERNAL SIGNALS WIRING (auto-patch) ---
+def _xrpl_run_daily_pipeline(rot=None, fg=None):
     """Esegue la pipeline XRPL M1-M5 e salva il risultato in cache locale.
     Isolamento totale: qualunque eccezione viene loggata, mai propagata
     al chiamante (ne' un import fallito, ne' un errore di calcolo).
+
+    'rot'/'fg': risultati GIA' calcolati dal chiamante nello stesso ciclo
+    giornaliero (compute_rotation_state(...) e get_fg(), gia' presenti nel
+    blocco snapshot delle ore 9) — riusati qui per costruire
+    external_signals per M5, mai ricalcolati ne' rifetchati. Se assenti
+    (None), i segnali esterni restano None (dato non disponibile) — MAI
+    False, che significherebbe invece 'disponibile e sotto soglia'.
+
+    rotation_state: rot.get('state'), stesso Rotation Engine esistente,
+    nessun nuovo calcolo. fear_greed_extreme_euphoria: fg.get('v') >= 80,
+    stessa soglia gia' usata da compute_exit_risk() per 'fear_estremo' —
+    nessuna soglia nuova, nessun mapping alternativo.
 
     Fix strutturale (Gap 3): collect_xrpl_raw_snapshot() viene chiamata
     UNA SOLA volta, PRIMA di compute_all_features() — prima non veniva
@@ -3811,9 +3823,19 @@ def _xrpl_run_daily_pipeline():
         conf1 = _xrpl_ce.compute_confidence(score1, features=features)
         conf2 = _xrpl_ce.compute_confidence(score2, features=features)
         divergence = _xrpl_ds.compute_divergence_state(score1_result=score1, score2_result=score2, record=True)
+
+        rotation_state = rot.get("state") if isinstance(rot, dict) else None
+        fg_val = fg.get("v") if isinstance(fg, dict) else None
+        fear_greed_extreme_euphoria = (fg_val >= 80) if fg_val is not None else None
+        external_signals = {
+            "rotation_state": rotation_state,
+            "fear_greed_extreme_euphoria": fear_greed_extreme_euphoria,
+        }
+
         decision = _xrpl_de.compute_decision(
             score1_result=score1, score2_result=score2,
             confidence1=conf1, confidence2=conf2, divergence_result=divergence,
+            external_signals=external_signals,
             record=True,
         )
         _xrpl_last_result = decision
@@ -3830,7 +3852,7 @@ def _xrpl_run_daily_pipeline():
         _xrpl_fh.record_feature_snapshot(features=features)
     except Exception as e:
         log.warning(f"[XRPL] registrazione storico feature fallita (non bloccante): {e}")
-# --- END XRPL GAP3 RAW COLLECTION WIRING ---
+# --- END XRPL M5 EXTERNAL SIGNALS WIRING ---
 
 
 def _fmt_xrpl_intelligence():
@@ -5085,10 +5107,8 @@ async def auto_monitor(app):
             # Snapshot automatico giornaliero alle 9:00 (per validazione statistica)
             if hour == 9 and today != last_snapshot_day:
                 last_snapshot_day = today
-                try:
-                    _xrpl_run_daily_pipeline()
-                except Exception as _xrpl_e:
-                    log.warning(f"[XRPL] chiamata pipeline giornaliera fallita (non bloccante): {_xrpl_e}")
+                sfg = None
+                s_rot = None
                 try:
                     sg = get_global(); sp = get_prices(); sfg = get_fg()
                     s_stable = get_stablecoins()
@@ -5096,12 +5116,21 @@ async def auto_monitor(app):
                     s_ctx = s_ctx + chr(10) + _fmt_stable(s_stable)
                     s_ctx = s_ctx + chr(10) + _fmt_deriv(get_derivatives())
                     s_ctx = s_ctx + chr(10) + _fmt_trend(get_trend_7d())
-                    s_ctx = s_ctx + chr(10) + _fmt_rotation(compute_rotation_state(sg, get_trend_7d(), s_stable))
+                    s_rot = compute_rotation_state(sg, get_trend_7d(), s_stable)
+                    s_ctx = s_ctx + chr(10) + _fmt_rotation(s_rot)
                     s_resp = get_claude_response("Analisi automatica giornaliera", s_ctx, ADMIN_ID)
                     salva_snapshot_auto(sg, sp, sfg, s_stable, get_derivatives(), get_trend_7d(), s_ctx, s_resp)
                     log.info("Snapshot automatico giornaliero salvato")
                 except Exception as e:
                     log.error(f"Snapshot automatico error: {e}")
+                # XRPL M5 external signals wiring: sfg/s_rot gia' calcolati
+                # sopra (o None se lo snapshot e' fallito prima di
+                # assegnarli) — nessun nuovo fetch, nessun secondo calcolo
+                # del Rotation Engine.
+                try:
+                    _xrpl_run_daily_pipeline(rot=s_rot, fg=sfg)
+                except Exception as _xrpl_e:
+                    log.warning(f"[XRPL] chiamata pipeline giornaliera fallita (non bloccante): {_xrpl_e}")
             g = get_global(); p = get_prices(); fg = get_fg()
             ph, desc, level = phase(g["dom"])
             # Check alerts per ogni utente
