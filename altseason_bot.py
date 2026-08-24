@@ -1151,10 +1151,13 @@ _PCTX_GIORNI_PERSISTENZA = 3        # snapshot consecutivi per confermare una ro
 _PCTX_CAT = {
     "BTC": "BTC", "ETH": "ETH",
     "XRP": "LARGE", "SOL": "LARGE", "BNB": "LARGE",
+    "AVAX": "LARGE", "DOT": "LARGE", "QNT": "LARGE",
     "ADA": "MID", "HBAR": "MID", "XLM": "MID", "POL": "MID", "ALGO": "MID",
-    "TRX": "MID", "NEAR": "MID", "GRT": "MID",
+    "TRX": "MID", "NEAR": "MID", "GRT": "MID", "SEI": "MID",
+    "VET": "MID", "VTHO": "MID", "ICP": "MID", "GALA": "MID", "S": "MID",
     "FET": "AI", "AGIX": "AI",
-    "DOGE": "MEME", "BONK": "MEME", "MANA": "MEME", "SEI": "MID",
+    "DOGE": "MEME", "BONK": "MEME", "MANA": "MEME",
+    "FLOKI": "MEME", "BOME": "MEME", "PEOPLE": "MEME", "JAGER": "MEME",
 }
 
 def _pctx_pesi(portfolio, prices):
