@@ -1805,9 +1805,13 @@ def salva_snapshot_auto(g, p, fg, stable, deriv, trend, market_context, analisi_
             "analisi_completa": analisi_ai,
         }
         try:
-            for sym in ("BTC", "ETH", "XRP", "SOL", "BONK", "DOGE", "BNB"):
-                if sym in p:
-                    snap["prezzi"][sym] = {"price": _gp(p[sym], "price"), "ch": _gp(p[sym], "ch")}
+            for sym in ASSETS:
+                price = _gp(p.get(sym, {}), "price")
+                if price is not None and price > 0:
+                    snap["prezzi"][sym] = {
+                        "price": price,
+                        "ch": _gp(p.get(sym, {}), "ch"),
+                    }
         except Exception:
             pass
         try:
@@ -1881,13 +1885,14 @@ def salva_snapshot(g, p, fg, stable, deriv, trend, market_context, analisi_ai, u
             "market_context": market_context,
             "analisi_completa": analisi_ai,
         }
-        # prezzi delle coin chiave
+        # prezzi di tutti gli asset supportati con prezzo valido
         try:
-            for sym in ("BTC", "ETH", "XRP", "SOL", "BONK", "DOGE", "BNB"):
-                if sym in p:
+            for sym in ASSETS:
+                price = _gp(p.get(sym, {}), "price")
+                if price is not None and price > 0:
                     snap["prezzi"][sym] = {
-                        "price": _gp(p[sym], "price"),
-                        "ch": _gp(p[sym], "ch"),
+                        "price": price,
+                        "ch": _gp(p.get(sym, {}), "ch"),
                     }
         except Exception:
             pass
