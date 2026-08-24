@@ -2729,6 +2729,84 @@ def _fmt_qty(q):
     # micro (es. prezzi non quantita, ma per sicurezza)
     return f"{q:.4f}".rstrip("0").rstrip(".")
 
+# --- PORTFOLIO RESETBASELINE (auto-patch) ---
+# Funzioni pure (nessuna dipendenza da Telegram/Redis) — testabili
+# direttamente, vedi test_portfolio_engine.py. Nessuna di queste modifica
+# mai 'qty'; 'buy' resta sempre in USD (baseline_price_usd), la
+# conversione EUR avviene solo in visualizzazione (_usd_to_eur).
+
+def _resetbaseline_validate_price(price):
+    """True se il prezzo e' un numero valido e strettamente positivo.
+    Rifiuta None, stringhe non numeriche, zero, negativi."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return False
+    return p > 0
+
+
+def _pnl_position(qty, buy, current_price):
+    """P&L di una singola posizione. qty non viene mai modificata. Se
+    'buy' non e' un prezzo valido (None/<=0/non numerico), la baseline e'
+    dichiarata non disponibile: pnl_usd/pnl_pct restano None, MAI 0 —
+    zero significherebbe 'in pareggio', non 'dato mancante'."""
+    valid_buy = _resetbaseline_validate_price(buy)
+    current_value_usd = qty * current_price
+    if valid_buy:
+        initial_value_usd = qty * buy
+        pnl_usd = current_value_usd - initial_value_usd
+        pnl_pct = (pnl_usd / initial_value_usd * 100) if initial_value_usd > 0 else None
+    else:
+        initial_value_usd = None
+        pnl_usd = None
+        pnl_pct = None
+    return {
+        "initial_value_usd": initial_value_usd,
+        "current_value_usd": current_value_usd,
+        "pnl_usd": pnl_usd,
+        "pnl_pct": pnl_pct,
+        "baseline_valid": valid_buy,
+    }
+
+
+def _usd_to_eur(value_usd, eurusd_rate):
+    """value_usd / eurusd_rate (EURUSD=X e' gia' nel formato 1 EUR = X USD,
+    verificato con chiamata live). None se value_usd o il cambio non sono
+    validi — mai un cambio inventato."""
+    if value_usd is None:
+        return None
+    if not _resetbaseline_validate_price(eurusd_rate):
+        return None
+    return value_usd / eurusd_rate
+
+
+def _get_valid_eurusd_rate(forex_data):
+    """Estrae il tasso EUR/USD da get_forex(), o None se assente/non
+    valido — mai un cambio fisso di riserva."""
+    if not isinstance(forex_data, dict):
+        return None
+    entry = forex_data.get("EUR/USD")
+    if not isinstance(entry, dict):
+        return None
+    rate = entry.get("price")
+    return float(rate) if _resetbaseline_validate_price(rate) else None
+
+
+def _resetbaseline_build_plan(portfolio, prices):
+    """Determina quali posizioni hanno un prezzo corrente valido (>0) e
+    quali vanno saltate. Non modifica 'portfolio'. Ritorna
+    (valid: {sym: nuovo_prezzo_float}, skipped: [sym, ...])."""
+    valid = {}
+    skipped = []
+    for sym, pos in portfolio.items():
+        pr = prices.get(sym, {}).get("price", 0)
+        if _resetbaseline_validate_price(pr):
+            valid[sym] = float(pr)
+        else:
+            skipped.append(sym)
+    return valid, skipped
+
+
 async def cmd_portfolio(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
@@ -2738,27 +2816,199 @@ async def cmd_portfolio(u, c):
         return
     try:
         prices = get_prices()
+        forex = get_forex()  # UNA sola volta per l'intero rendering, mai per singola coin
+        eurusd = _get_valid_eurusd_rate(forex)
+        eur_ok = eurusd is not None
+        cur_sym = "€" if eur_ok else "$"
+
         lines = ["💼 *PORTFOLIO*\n"]
-        ti = tc = 0
+        if not eur_ok:
+            lines.append("⚠️ Cambio EUR/USD non disponibile — valori visualizzati in USD\n")
+
+        total_current_usd = 0.0
+        total_baseline_usd = 0.0
+        total_pnl_usd = 0.0
+        n_valid = 0
+        n_priced = 0
+
         for sym, pos in sorted(pf.items()):
             pr = prices.get(sym, {}).get("price", 0)
-            if pr == 0: continue
-            qty, buy = pos["qty"], pos["buy"]
-            inv, cur = qty * buy, qty * pr
-            pnl = cur - inv
-            pct = ((pr - buy) / buy * 100) if buy else 0
-            a = "🟢" if pnl >= 0 else "🔴"
-            lines.append(f"{a} *{sym}*: `{_fmt_qty(qty)}` | `{pct:+.1f}%` (`${pnl:+,.0f}`)")
-            ti += inv; tc += cur
-        tp = tc - ti
-        tpct = ((tc - ti) / ti * 100) if ti else 0
-        a = "🟢" if tp >= 0 else "🔴"
-        lines.append(f"\n💰 Investito: `${ti:,.0f}`")
-        lines.append(f"💎 Attuale: `${tc:,.0f}`")
-        lines.append(f"{a} *P&L TOT*: `{tpct:+.1f}%` (`${tp:+,.0f}`)")
+            if not _resetbaseline_validate_price(pr):
+                continue
+            n_priced += 1
+            qty = pos["qty"]
+            buy = pos.get("buy")
+            calc = _pnl_position(qty, buy, pr)
+            total_current_usd += calc["current_value_usd"]
+
+            price_disp = pr if not eur_ok else _usd_to_eur(pr, eurusd)
+            cur_disp = calc["current_value_usd"] if not eur_ok else _usd_to_eur(calc["current_value_usd"], eurusd)
+
+            lines.append(f"\n🔹 *{sym}*")
+            lines.append(f"Quantità: `{_fmt_qty(qty)} {sym}`")
+            lines.append(f"Prezzo attuale: `{cur_sym}{price_disp:,.4f}`")
+            lines.append(f"Valore posizione: `{cur_sym}{cur_disp:,.2f}`")
+
+            if calc["baseline_valid"]:
+                n_valid += 1
+                total_baseline_usd += calc["initial_value_usd"]
+                total_pnl_usd += calc["pnl_usd"]
+                baseline_price_disp = buy if not eur_ok else _usd_to_eur(buy, eurusd)
+                pnl_disp = calc["pnl_usd"] if not eur_ok else _usd_to_eur(calc["pnl_usd"], eurusd)
+                pct = calc["pnl_pct"] if calc["pnl_pct"] is not None else 0.0
+                a = "🟢" if calc["pnl_usd"] >= 0 else "🔴"
+                lines.append(f"Prezzo baseline: `{cur_sym}{baseline_price_disp:,.4f}`")
+                lines.append(f"{a} P&L: `{cur_sym}{pnl_disp:+,.2f}` (`{pct:+.1f}%`)")
+                baseline_at = pos.get("baseline_at")
+                if baseline_at:
+                    try:
+                        dt = datetime.fromisoformat(baseline_at)
+                        lines.append(f"Baseline: `{dt.strftime('%d/%m/%Y %H:%M')}`")
+                    except Exception:
+                        pass
+            else:
+                lines.append("Prezzo baseline: `NON DISPONIBILE`")
+                lines.append("P&L: `N/D`")
+
+        tot_current_disp = total_current_usd if not eur_ok else _usd_to_eur(total_current_usd, eurusd)
+        lines.append("\n💼 *TOTALE PORTAFOGLIO*")
+        lines.append(f"Valore attuale: `{cur_sym}{tot_current_disp:,.2f}`")
+        if n_valid > 0:
+            tot_baseline_disp = total_baseline_usd if not eur_ok else _usd_to_eur(total_baseline_usd, eurusd)
+            tot_pnl_disp = total_pnl_usd if not eur_ok else _usd_to_eur(total_pnl_usd, eurusd)
+            tot_pct = (total_pnl_usd / total_baseline_usd * 100) if total_baseline_usd > 0 else 0.0
+            a = "🟢" if total_pnl_usd >= 0 else "🔴"
+            lines.append(f"Valore baseline: `{cur_sym}{tot_baseline_disp:,.2f}`")
+            lines.append(f"{a} P&L: `{cur_sym}{tot_pnl_disp:+,.2f}` (`{tot_pct:+.1f}%`)")
+        else:
+            lines.append("P&L: `N/D` (nessuna posizione con baseline valida)")
+        if n_valid < n_priced:
+            lines.append(f"\n_P&L calcolato su {n_valid}/{n_priced} posizioni con baseline valida_")
+        lines.append(f"\n_Valori letti dal sistema alle {datetime.now().strftime('%H:%M')}_")
+
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
+
+
+async def cmd_resetbaseline(u, c):
+    """Reset baseline (solo ADMIN_ID): opera ESCLUSIVAMENTE sul portfolio
+    gia' salvato dell'admin — non tocca ADMIN_PORTFOLIO, non aggiunge/
+    rimuove coin, non modifica qty. Prezzi acquisiti UNA sola volta in
+    anteprima e riusati identici alla conferma (mai una seconda
+    get_prices()). Stato pending in context.user_data, stesso meccanismo
+    gia' usato dal wizard /add — nessun nuovo ConversationHandler."""
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("❌ Comando riservato all'amministratore.", reply_markup=KEYBOARD)
+        return
+    ud = load_user(uid)
+    pf = ud.get("portfolio", {})
+    if not pf:
+        await u.message.reply_text("💼 Portfolio vuoto, nessuna baseline da impostare.", reply_markup=KEYBOARD)
+        return
+    try:
+        prices = get_prices()
+    except Exception as e:
+        await u.message.reply_text(f"❌ Impossibile recuperare i prezzi: {e}", reply_markup=KEYBOARD)
+        return
+
+    valid, skipped = _resetbaseline_build_plan(pf, prices)
+    if not valid:
+        await u.message.reply_text(
+            "❌ Nessun prezzo valido disponibile per nessuna posizione. Reset annullato, nessuna modifica effettuata.",
+            reply_markup=KEYBOARD,
+        )
+        return
+
+    baseline_at = datetime.now().isoformat()
+    c.user_data["pending_resetbaseline"] = {"prices": valid, "baseline_at": baseline_at}
+
+    # --- RESETBASELINE PREVIEW EUR (auto-patch) ---
+    # get_forex() chiamato UNA sola volta, solo per l'anteprima. Riusa
+    # _get_valid_eurusd_rate/_usd_to_eur gia' esistenti, non modificate.
+    # 'valid'/'pending_resetbaseline' restano in USD, invariati: la
+    # conversione EUR e' esclusivamente qui, per la sola visualizzazione.
+    forex = get_forex()
+    eurusd = _get_valid_eurusd_rate(forex)
+    eur_ok = eurusd is not None
+    cur_sym = "€" if eur_ok else "$"
+
+    def _preview_disp(v):
+        return v if not eur_ok else _usd_to_eur(v, eurusd)
+
+    lines = ["🔄 *ANTEPRIMA RESET BASELINE*\n"]
+    if not eur_ok:
+        lines.append("⚠️ Cambio EUR/USD non disponibile — anteprima visualizzata in USD\n")
+    for sym, new_price in sorted(valid.items()):
+        old_buy = pf[sym].get("buy")
+        old_valid = _resetbaseline_validate_price(old_buy)
+        old_disp = _preview_disp(old_buy) if old_valid else None
+        new_disp = _preview_disp(new_price)
+        old_str = f"{cur_sym}{old_disp:,.4f}" if old_disp is not None else "N/D"
+        lines.append(f"\n🔹 *{sym}*")
+        lines.append(f"Quantità: `{_fmt_qty(pf[sym]['qty'])} {sym}`")
+        lines.append(f"Baseline precedente: `{old_str}`")
+        lines.append(f"Nuova baseline: `{cur_sym}{new_disp:,.4f}`")
+    if skipped:
+        lines.append(f"\n⚠️ Saltate (prezzo non disponibile): {', '.join(sorted(skipped))}")
+    lines.append(f"\n_Prezzi letti dal sistema alle {datetime.now().strftime('%H:%M')}_")
+    lines.append("La quantità NON verrà modificata.")
+    # --- END RESETBASELINE PREVIEW EUR ---
+
+    buttons = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ CONFERMA RESET", callback_data="resetbaseline_confirm"),
+        InlineKeyboardButton("❌ ANNULLA", callback_data="resetbaseline_cancel"),
+    ]])
+    await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=buttons)
+
+
+async def resetbaseline_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    uid = str(query.message.chat_id)
+    if uid != ADMIN_ID:
+        await query.edit_message_text("❌ Operazione non autorizzata.")
+        return
+
+    if query.data == "resetbaseline_cancel":
+        context.user_data.pop("pending_resetbaseline", None)
+        await query.edit_message_text("❌ Reset baseline annullato. Nessuna modifica effettuata.")
+        return
+
+    pending = context.user_data.get("pending_resetbaseline")
+    if not pending:
+        await query.edit_message_text("❌ Nessuna operazione di reset in sospeso (forse scaduta). Ripeti /resetbaseline.")
+        return
+
+    ud = load_user(uid)
+    pf = ud.get("portfolio", {})
+    reset_syms = []
+    for sym, new_price in pending["prices"].items():
+        if sym not in pf:
+            continue  # posizione rimossa nel frattempo: non applicare a qualcosa che non esiste piu'
+        pf[sym]["buy"] = new_price
+        pf[sym]["baseline_at"] = pending["baseline_at"]
+        pf[sym]["baseline_source"] = "coingecko"
+        reset_syms.append(sym)
+    ud["portfolio"] = pf
+    save_user(uid, ud)
+    context.user_data.pop("pending_resetbaseline", None)
+
+    try:
+        dt = datetime.fromisoformat(pending["baseline_at"])
+        ts_str = dt.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        ts_str = pending["baseline_at"]
+
+    lines = [
+        "✅ *BASELINE RESETTATA*",
+        f"\n{len(reset_syms)} posizioni aggiornate: {', '.join(sorted(reset_syms)) if reset_syms else '-'}",
+        f"Baseline impostata: `{ts_str}`",
+        "\nIl P&L di queste posizioni riparte da 0% da questo momento.",
+    ]
+    await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+# --- END PORTFOLIO RESETBASELINE ---
 
 async def cmd_reset(u, c):
     uid = get_uid(u)
@@ -5296,7 +5546,7 @@ async def main():
         ("phase", cmd_phase), ("feargreed", cmd_feargreed), ("rsimacd", cmd_rsimacd),
         ("top", cmd_top), ("forex", cmd_forex), ("news", cmd_news),
         ("timeline", cmd_timeline), ("price", cmd_price),
-        ("portfolio", cmd_portfolio), ("reset", cmd_reset),
+        ("portfolio", cmd_portfolio), ("reset", cmd_reset), ("resetbaseline", cmd_resetbaseline),
         ("addcoin", cmd_addcoin), ("removecoin", cmd_removecoin),
         ("alert", cmd_alert), ("alerts", cmd_alerts),
         ("delalert", cmd_delalert), ("setup", cmd_setup),
@@ -5323,6 +5573,7 @@ async def main():
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(lang_callback, pattern="^lang_"))
     app.add_handler(CallbackQueryHandler(wizard_coin_button, pattern="^coin_"))
+    app.add_handler(CallbackQueryHandler(resetbaseline_callback, pattern="^resetbaseline_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     threading.Thread(target=start_web, daemon=True).start()
     log.info("🚀 Altseason Bot V2 online!")
