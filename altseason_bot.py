@@ -2911,7 +2911,38 @@ async def cmd_portfolio(u, c):
             lines.append(f"\n_P&L calcolato su {n_valid}/{n_priced} posizioni con baseline valida_")
         lines.append(f"\n_Valori letti dal sistema alle {datetime.now(_ROME_TZ).strftime('%H:%M')}_")
 
-        await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+        # Telegram limita ogni messaggio a 4096 caratteri.
+        # Spezza il portfolio in messaggi sicuri senza cambiare i calcoli.
+        messages = []
+        current = []
+
+        for line in lines:
+            candidate = "\n".join(current + [line])
+
+            natural_boundary = (
+                line.startswith("\n🔹")
+                or line.startswith("\n💼 *TOTALE PORTAFOGLIO*")
+            )
+
+            if current and len(candidate) > 3400 and natural_boundary:
+                messages.append("\n".join(current))
+                current = ["💼 *PORTFOLIO — continua*\n", line]
+            elif current and len(candidate) > 3900:
+                messages.append("\n".join(current))
+                current = [line]
+            else:
+                current.append(line)
+
+        if current:
+            messages.append("\n".join(current))
+
+        for i, msg in enumerate(messages):
+            await u.message.reply_text(
+                msg,
+                parse_mode="Markdown",
+                reply_markup=KEYBOARD if i == len(messages) - 1 else None,
+            )
+
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
