@@ -2055,11 +2055,19 @@ VIETATO:
 - usare “focus operativo”
 
 CLASSIFICAZIONE PORTAFOGLIO:
-BLUE CHIP: ETH, SOL, XRP, ADA, DOGE, BNB, BTC
-QUASI BLUE CHIP: AVAX, DOT, NEAR, LINK, ATOM
-EMERGENTI: SUI, APT, TIA, AR, RNDR, RENDER, FET, HBAR, SEI, GRT, INJ, ALGO, FXS
-MEME / MICROCAP: DOGE, SHIB, PEPE, BONK, FLOKI, WIF, BOME, BUZZ, WEPE
-(Se una coin non rientra, assegnala alla categoria piu vicina per market cap e rischio.)
+
+BLUE CHIP: ETH, SOL, XRP, ADA, BNB
+
+QUASI BLUE CHIP: AVAX, DOT, NEAR, QNT, ICP, TRX, XLM
+
+EMERGENTI: HBAR, SEI, GRT, ALGO, POL, FET, AGIX, VET, VTHO, GALA, MANA, S
+
+MEME / MICROCAP: DOGE, BONK, FLOKI, BOME, PEOPLE, JAGER
+
+REGOLA DETERMINISTICA: ogni asset deve appartenere a una sola categoria.
+Non riclassificare autonomamente gli asset e non spostarli tra categorie.
+Usa esclusivamente questa tabella per gli asset elencati.
+
 Per ogni categoria presente nel portafoglio indica una azione tra: HOLD, MONITORA, ACCUMULA SELETTIVAMENTE, RIDUCI PARZIALMENTE, NESSUNA AZIONE.
 Usa ESCLUSIVAMENTE gli asset realmente presenti nel portafoglio utente indicato sotto. Non elencare coin generiche o di esempio se non sono nel portafoglio. Se una categoria non ha asset nel portafoglio, scrivi: nessun asset in questa categoria.
 
