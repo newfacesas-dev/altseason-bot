@@ -10,6 +10,7 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
@@ -2730,6 +2731,26 @@ def _fmt_qty(q):
     return f"{q:.4f}".rstrip("0").rstrip(".")
 
 # --- PORTFOLIO RESETBASELINE (auto-patch) ---
+
+_ROME_TZ = ZoneInfo("Europe/Rome")
+
+
+def _fmt_price_dynamic(price):
+    """Formattazione solo visuale: non modifica il valore numerico."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return str(price)
+
+    ap = abs(p)
+    if ap >= 1000:
+        return f"{p:,.2f}"
+    if ap >= 0.01:
+        return f"{p:,.4f}"
+    if ap >= 0.0001:
+        return f"{p:,.6f}"
+    return f"{p:,.8f}"
+
 # Funzioni pure (nessuna dipendenza da Telegram/Redis) — testabili
 # direttamente, vedi test_portfolio_engine.py. Nessuna di queste modifica
 # mai 'qty'; 'buy' resta sempre in USD (baseline_price_usd), la
@@ -2846,7 +2867,7 @@ async def cmd_portfolio(u, c):
 
             lines.append(f"\n🔹 *{sym}*")
             lines.append(f"Quantità: `{_fmt_qty(qty)} {sym}`")
-            lines.append(f"Prezzo attuale: `{cur_sym}{price_disp:,.4f}`")
+            lines.append(f"Prezzo attuale: `{cur_sym}{_fmt_price_dynamic(price_disp)}`")
             lines.append(f"Valore posizione: `{cur_sym}{cur_disp:,.2f}`")
 
             if calc["baseline_valid"]:
@@ -2857,7 +2878,7 @@ async def cmd_portfolio(u, c):
                 pnl_disp = calc["pnl_usd"] if not eur_ok else _usd_to_eur(calc["pnl_usd"], eurusd)
                 pct = calc["pnl_pct"] if calc["pnl_pct"] is not None else 0.0
                 a = "🟢" if calc["pnl_usd"] >= 0 else "🔴"
-                lines.append(f"Prezzo baseline: `{cur_sym}{baseline_price_disp:,.4f}`")
+                lines.append(f"Prezzo baseline: `{cur_sym}{_fmt_price_dynamic(baseline_price_disp)}`")
                 lines.append(f"{a} P&L: `{cur_sym}{pnl_disp:+,.2f}` (`{pct:+.1f}%`)")
                 baseline_at = pos.get("baseline_at")
                 if baseline_at:
@@ -2884,7 +2905,7 @@ async def cmd_portfolio(u, c):
             lines.append("P&L: `N/D` (nessuna posizione con baseline valida)")
         if n_valid < n_priced:
             lines.append(f"\n_P&L calcolato su {n_valid}/{n_priced} posizioni con baseline valida_")
-        lines.append(f"\n_Valori letti dal sistema alle {datetime.now().strftime('%H:%M')}_")
+        lines.append(f"\n_Valori letti dal sistema alle {datetime.now(_ROME_TZ).strftime('%H:%M')}_")
 
         await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
     except Exception as e:
@@ -2921,7 +2942,7 @@ async def cmd_resetbaseline(u, c):
         )
         return
 
-    baseline_at = datetime.now().isoformat()
+    baseline_at = datetime.now(_ROME_TZ).isoformat()
     c.user_data["pending_resetbaseline"] = {"prices": valid, "baseline_at": baseline_at}
 
     # --- RESETBASELINE PREVIEW EUR (auto-patch) ---
@@ -2945,14 +2966,14 @@ async def cmd_resetbaseline(u, c):
         old_valid = _resetbaseline_validate_price(old_buy)
         old_disp = _preview_disp(old_buy) if old_valid else None
         new_disp = _preview_disp(new_price)
-        old_str = f"{cur_sym}{old_disp:,.4f}" if old_disp is not None else "N/D"
+        old_str = f"{cur_sym}{_fmt_price_dynamic(old_disp)}" if old_disp is not None else "N/D"
         lines.append(f"\n🔹 *{sym}*")
         lines.append(f"Quantità: `{_fmt_qty(pf[sym]['qty'])} {sym}`")
         lines.append(f"Baseline precedente: `{old_str}`")
-        lines.append(f"Nuova baseline: `{cur_sym}{new_disp:,.4f}`")
+        lines.append(f"Nuova baseline: `{cur_sym}{_fmt_price_dynamic(new_disp)}`")
     if skipped:
         lines.append(f"\n⚠️ Saltate (prezzo non disponibile): {', '.join(sorted(skipped))}")
-    lines.append(f"\n_Prezzi letti dal sistema alle {datetime.now().strftime('%H:%M')}_")
+    lines.append(f"\n_Prezzi letti dal sistema alle {datetime.now(_ROME_TZ).strftime('%H:%M')}_")
     lines.append("La quantità NON verrà modificata.")
     # --- END RESETBASELINE PREVIEW EUR ---
 
