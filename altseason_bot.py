@@ -368,7 +368,7 @@ async def cmd_stato_dati(u, c):
 ADMIN_KEYBOARD = ReplyKeyboardMarkup([
     [KeyboardButton("👥 I miei Utenti"), KeyboardButton("📊 Stats Admin")],
     [KeyboardButton("💰 Ricavi"), KeyboardButton("🔙 Torna al Bot")],
-    [KeyboardButton("📈 Stato Dati")],
+    [KeyboardButton("📈 Stato Dati"), KeyboardButton("🔄 Reset Baseline")],
 ], resize_keyboard=True)
 
 # ============================================================
@@ -5169,6 +5169,7 @@ async def handle_text(u, c):
         "👥 I miei Utenti": cmd_users, "📊 Stats Admin": cmd_admin,
         "💰 Ricavi": cmd_admin, "🔙 Torna al Bot": None,
         "📈 Stato Dati": cmd_stato_dati,
+        "🔄 Reset Baseline": cmd_resetbaseline,
     }
     if t in handlers:
         fn = handlers[t]
