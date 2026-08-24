@@ -228,6 +228,10 @@ ASSETS = {
     "SEI": "sei-network", "LUNA": "terra-luna-2", "MANA": "decentraland",
     "PEPE": "pepe", "SHIB": "shiba-inu", "AGIX": "singularitynet",
     "RENDER": "render-token", "INJ": "injective-protocol", "TIA": "celestia",
+    "VTHO": "vethor-token", "DOT": "polkadot", "GALA": "gala",
+    "ICP": "internet-computer", "AVAX": "avalanche-2", "VET": "vechain",
+    "QNT": "quant-network", "BOME": "book-of-meme", "FLOKI": "floki",
+    "PEOPLE": "constitutiondao", "JAGER": "jager-hunter", "S": "sonic-3",
 }
 
 # ============================================================
