@@ -5866,8 +5866,238 @@ def start_web():
 # from alerts import start_alert_system, alert_loop
 
 
+# PATCH-04 SINGLE-INSTANCE
+import hashlib as _hashlib_si
+import signal as _signal_si
+import socket as _socket_si
+import uuid as _uuid_si
+
+_LEASE_TTL = 120                # secondi di validita' del lock
+_LEASE_RENEW_EVERY = 20         # rinnovo (da un THREAD: continua anche se il bot e' occupato)
+_LEASE_GIVE_UP_AFTER = 90       # senza rinnovi riusciti per tanto -> leadership persa (< TTL - rinnovo)
+_LEASE_STANDBY_POLL = 5         # standby: ogni quanto riprova
+_LEASE_CALL_TIMEOUT = 5         # timeout di ogni chiamata Redis del lock
+_LEASE_START_RETRIES = 3        # tentativi se Redis non risponde all'avvio (poi fail-open)
+_CONFLICT_ALERT_EVERY = 3600    # avviso admin per 409 Conflict: max 1 l'ora
+_WEB_STARTED = {"on": False}
+_CONFLICT_STATE = {"last": 0.0}
+
+def _ensure_web_started():
+    """Il web server deve rispondere anche in standby (health check); parte una sola volta."""
+    if _WEB_STARTED["on"]:
+        return
+    _WEB_STARTED["on"] = True
+    threading.Thread(target=start_web, daemon=True).start()
+
+def _lease_key():
+    return "bot:leader:" + _hashlib_si.sha256(TELEGRAM_TOKEN.encode("utf-8")).hexdigest()[:16]
+
+def _as_text(v):
+    return v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else v
+
+class LeaderLease:
+    """Lock a scadenza su Redis con proprietario. Le operazioni sono sincrone e brevi."""
+    def __init__(self, key, owner, ttl):
+        self.key, self.owner, self.ttl = key, owner, ttl
+
+    def try_acquire(self, rds):
+        return bool(rds.set(self.key, self.owner, nx=True, ex=self.ttl))
+
+    def current_owner(self, rds):
+        return _as_text(rds.get(self.key))
+
+    def _guarded(self, rds, action):
+        from redis.exceptions import WatchError
+        for _ in range(3):
+            with rds.pipeline() as pipe:
+                try:
+                    pipe.watch(self.key)
+                    if _as_text(pipe.get(self.key)) != self.owner:
+                        pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    action(pipe)
+                    pipe.execute()
+                    return True
+                except WatchError:
+                    continue
+        return False
+
+    def renew(self, rds):
+        return self._guarded(rds, lambda pipe: pipe.expire(self.key, self.ttl))
+
+    def release(self, rds):
+        return self._guarded(rds, lambda pipe: pipe.delete(self.key))
+
+async def _redis_call(fn, *args):
+    """Esegue una chiamata Redis sincrona fuori dal loop, con timeout."""
+    loop = asyncio.get_running_loop()
+    return await asyncio.wait_for(loop.run_in_executor(None, lambda: fn(*args)), timeout=_LEASE_CALL_TIMEOUT)
+
+def _lease_redis():
+    """Client Redis per il lock, con timeout sui socket: una chiamata appesa non deve
+    bloccare il rinnovo per sempre (altrimenti il lock scadrebbe senza che nessuno se ne accorga)."""
+    r = get_redis()
+    try:
+        r.connection_pool.connection_kwargs.update(
+            socket_timeout=_LEASE_CALL_TIMEOUT, socket_connect_timeout=_LEASE_CALL_TIMEOUT)
+    except Exception:
+        pass
+    return r
+
+def _lease_mark_lost(ctx, loop):
+    ctx["lost"] = True
+    ctx["halt"].set()
+    try:
+        loop.call_soon_threadsafe(ctx["stop"].set)   # sveglia main() anche da un altro thread
+    except RuntimeError:
+        pass  # loop gia' chiuso: il processo sta terminando
+
+def _lease_keeper_thread(ctx, loop):
+    """Rinnova il lock da un THREAD, non da un task asyncio: il bot ha parti sincrone
+    (pipeline XRPL, richieste HTTP) che possono occupare l'event loop per minuti; un rinnovo
+    legato al loop scadrebbe e farebbe perdere il lock a un'istanza perfettamente sana."""
+    lease, halt = ctx["lease"], ctx["halt"]
+    last_ok = time.time()
+    while not halt.wait(_LEASE_RENEW_EVERY):
+        try:
+            rds = _lease_redis()
+            ok = lease.renew(rds)
+            if not ok and lease.try_acquire(rds):
+                # chiave scaduta e NESSUNO l'ha presa: la leadership e' ancora nostra
+                log.warning("[LOCK] lock scaduto ma libero: ripreso da questa istanza (%s)", lease.owner)
+                ok = True
+        except Exception as e:
+            log.warning("[LOCK] rinnovo fallito (%s)", e)
+            if time.time() - last_ok > _LEASE_GIVE_UP_AFTER:
+                log.critical("[LOCK] nessun rinnovo da %ss: leadership considerata PERSA", _LEASE_GIVE_UP_AFTER)
+                _lease_mark_lost(ctx, loop)
+                return
+            continue
+        if ok:
+            last_ok = time.time()
+        else:
+            log.critical("[LOCK] leadership PERSA: il lock e' di un'altra istanza (%s)", lease.owner)
+            _lease_mark_lost(ctx, loop)
+            return
+
+async def _single_instance_start():
+    """Attende di diventare leader. Ritorna un contesto {lease, stop, lost, keeper}.
+    lease=None se il lock e' disattivato o Redis e' assente all'avvio (fail-open)."""
+    ctx = {"lease": None, "stop": asyncio.Event(), "halt": threading.Event(), "lost": False, "keeper": None}
+    try:
+        asyncio.get_running_loop().add_signal_handler(_signal_si.SIGTERM, ctx["stop"].set)
+    except (NotImplementedError, RuntimeError, ValueError):
+        pass
+    if os.environ.get("SINGLE_INSTANCE_LOCK", "1").strip().lower() in ("0", "false", "off", "no"):
+        log.warning("[LOCK] lock istanza singola DISATTIVATO (SINGLE_INSTANCE_LOCK=0)")
+        return ctx
+    if not TELEGRAM_TOKEN:
+        return ctx
+    owner = "%s-%s-%s-%s" % (_socket_si.gethostname(), os.getpid(),
+                             os.environ.get("RAILWAY_DEPLOYMENT_ID", "")[:8], _uuid_si.uuid4().hex[:6])
+    lease = LeaderLease(_lease_key(), owner, _LEASE_TTL)
+    _ensure_web_started()
+    seen_leader, failures, announced = False, 0, False
+    while True:
+        if ctx["stop"].is_set():
+            log.info("[LOCK] arresto richiesto durante l'attesa: esco senza avviare il bot")
+            ctx["abort"] = True
+            return ctx
+        try:
+            rds = _lease_redis()
+            if rds is None:
+                log.warning("[LOCK] Redis non configurato: lock istanza singola NON attivo")
+                return ctx
+            if await _redis_call(lease.try_acquire, rds):
+                ctx["lease"] = lease
+                ctx["keeper"] = threading.Thread(
+                    target=_lease_keeper_thread, args=(ctx, asyncio.get_running_loop()),
+                    name="lease-keeper", daemon=True)
+                ctx["keeper"].start()
+                log.info("[LOCK] questa istanza e' il LEADER (%s)", owner)
+                return ctx
+            seen_leader = True
+            if not announced:
+                announced = True
+                try:
+                    holder = await _redis_call(lease.current_owner, rds)
+                except Exception:
+                    holder = "?"
+                log.warning("[LOCK] istanza in STANDBY: leader attuale %s. Resto in attesa.", holder)
+        except Exception as e:
+            if not seen_leader:
+                failures += 1
+                if failures >= _LEASE_START_RETRIES:
+                    log.warning("[LOCK] Redis non raggiungibile all'avvio (%s): avvio SENZA lock (fail-open)", e)
+                    return ctx
+            else:
+                log.warning("[LOCK] standby: Redis non raggiungibile (%s), continuo ad attendere", e)
+        try:
+            await asyncio.wait_for(ctx["stop"].wait(), timeout=_LEASE_STANDBY_POLL)
+        except asyncio.TimeoutError:
+            pass
+
+async def _single_instance_finish(ctx):
+    """Chiusura: rilascia il lock se ancora nostro. Ritorna il codice di uscita del processo:
+    3 se la leadership e' persa (Railway riavvia il servizio come standby), altrimenti 0.
+    Non solleva SystemExit: dentro un task asyncio interromperebbe l'intero event loop."""
+    ctx["stop"].set()
+    ctx["halt"].set()
+    keeper = ctx.get("keeper")
+    if keeper is not None:
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, keeper.join, _LEASE_CALL_TIMEOUT + 1)
+        except BaseException:
+            pass
+    lease = ctx.get("lease")
+    if lease is not None and not ctx["lost"]:
+        try:
+            await _redis_call(lambda: lease.release(_lease_redis()))
+            log.info("[LOCK] lock rilasciato")
+        except Exception as e:
+            log.warning("[LOCK] rilascio fallito (%s): scadra' da solo entro %ss", e, _LEASE_TTL)
+    if ctx["lost"]:
+        log.critical("[LOCK] esco con codice 3: il servizio ripartira' come standby")
+        return 3
+    return 0
+
+def _polling_error_cb(exc):
+    """409 Conflict = un'altra istanza usa lo stesso token (il lock Redis non la vede se ha
+    un Redis diverso). Log CRITICAL e avviso all'admin, al massimo 1 l'ora."""
+    try:
+        from telegram.error import Conflict
+        if not isinstance(exc, Conflict):
+            log.error("Errore polling Telegram: %s", exc, exc_info=exc)
+            return
+        now = time.time()
+        if now - _CONFLICT_STATE["last"] < _CONFLICT_ALERT_EVERY:
+            return
+        _CONFLICT_STATE["last"] = now
+        log.critical("[409] CONFLICT: un'altra istanza sta facendo polling con lo stesso token. "
+                     "Fermare i vecchi servizi Railway o revocare il token (BotFather).")
+        loop = asyncio.get_running_loop()
+        loop.create_task(_notify_conflict())
+    except Exception as e:
+        log.warning("[409] gestione conflitto fallita: %s", e)
+
+async def _notify_conflict():
+    try:
+        await _APP_REF["app"].bot.send_message(
+            chat_id=CHAT_ID,
+            text="\u26a0\ufe0f Rilevata un'altra istanza Telegram con lo stesso token (409 Conflict). "
+                 "Controlla i servizi Railway attivi e ferma quelli vecchi.")
+    except Exception as e:
+        log.warning("[409] avviso admin non inviato: %s", e)
+
+_APP_REF = {"app": None}
+
 async def main():
+    _si = await _single_instance_start()   # PATCH-04: attende di essere leader
+    if _si.get("abort"):
+        return 0  # SIGTERM durante lo standby: nulla da avviare
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    _APP_REF["app"] = app
     cmds = [
         ("start", cmd_start), ("help", cmd_help), ("status", cmd_status),
         ("phase", cmd_phase), ("feargreed", cmd_feargreed), ("rsimacd", cmd_rsimacd),
@@ -5902,7 +6132,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(wizard_coin_button, pattern="^coin_"))
     app.add_handler(CallbackQueryHandler(resetbaseline_callback, pattern="^resetbaseline_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    threading.Thread(target=start_web, daemon=True).start()
+    _ensure_web_started()  # PATCH-04 (idempotente: puo' essere gia' partito in standby)
     log.info("🚀 Altseason Bot V2 online!")
     try:
         await app.bot.send_message(chat_id=CHAT_ID, text="✅ *Altseason Bot V2 Online!* 🚀\n\n/initadmin per caricare il tuo portfolio\n/help per la guida completa", parse_mode="Markdown")
@@ -5916,7 +6146,7 @@ async def main():
             await app.updater.start_webhook(listen="0.0.0.0", port=PORT, url_path="/webhook", webhook_url=f"{WEBHOOK_URL}/webhook")
             log.info(f"Webhook: {WEBHOOK_URL}/webhook")
         else:
-            await app.updater.start_polling()
+            await app.updater.start_polling(error_callback=_polling_error_cb)  # PATCH-04: rileva 409
             log.info("Polling attivo")
         asyncio.create_task(auto_monitor(app))
         # --- XRPL GAP2B RLUSD PAIR COLLECTOR (auto-patch) ---
@@ -5934,8 +6164,8 @@ async def main():
         # --- END XRPL GAP2B RLUSD PAIR COLLECTOR ---
         # alert_loop (sistema alert operativo legacy) DISATTIVATO - vedi nota import sopra
         log.info("Sistema alert legacy disattivato (alerts.py non avviato)")
-        while True:
-            await asyncio.sleep(3600)
+        await _si["stop"].wait()  # PATCH-04: attivo fino a SIGTERM o perdita di leadership
+    return await _single_instance_finish(_si)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()) or 0)  # PATCH-04: codice 3 = leadership persa
