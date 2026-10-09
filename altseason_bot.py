@@ -666,7 +666,8 @@ def _ohlc_cache_get(cg_id, rds):
                     "total_volumes": [[0, v] for v in saved.get("vols", [])],
                 })
                 if parsed and ts > 0 and (best is None or ts > best["fetched_at"]):
-                    best = {"closes": parsed[0], "vols": parsed[1], "fetched_at": ts}
+                    best = {"closes": parsed[0], "vols": parsed[1], "fetched_at": ts,
+                            "ts": _ohlc_ts_valid(saved.get("ts"), len(parsed[0]))}  # PATCH-06
         except Exception as e:
             log.debug("get_ohlc: cache Redis non leggibile (%s)", e)
     return best
@@ -699,11 +700,33 @@ def _ohlc_set_cooldown(rds, now, retry_after):
             log.debug("get_ohlc: salvataggio cooldown Redis fallito (%s)", e)
     return secs
 
+# PATCH-06 OHLC-TS
+def _ohlc_ts_valid(ts, n):
+    """Lista di timestamp (ms) valida per n punti: stessa lunghezza, finiti, > 0, strettamente crescenti.
+    Altrimenti None (la serie resta utilizzabile, ma non allineabile)."""
+    try:
+        if not isinstance(ts, list) or len(ts) != n or n < 2:
+            return None
+        out = [float(t) for t in ts]
+        if any((not _math_ohlc.isfinite(t)) or t <= 0 for t in out):
+            return None
+        if any(b <= a for a, b in zip(out, out[1:])):
+            return None
+        return out
+    except (TypeError, ValueError):
+        return None
+
+def _ohlc_ts_from(data, n):
+    try:
+        return _ohlc_ts_valid([float(p[0]) for p in data.get("prices")], n)
+    except Exception:
+        return None
+
 def get_ohlc_meta(symbol="BTCUSDT"):
     """Storico (close + volume) con stato di freschezza.
     Ritorna {"closes", "vols", "fetched_at", "age", "status"} con
     status in {"fresh", "stale", "missing"}. Mai dati inventati: se manca, liste vuote."""
-    out = {"closes": [], "vols": [], "fetched_at": None, "age": None, "status": "missing"}
+    out = {"closes": [], "vols": [], "fetched_at": None, "age": None, "status": "missing", "ts": []}
     cg_id = _CG_OHLC_IDS.get(symbol)
     if not cg_id:
         return out
@@ -719,12 +742,13 @@ def get_ohlc_meta(symbol="BTCUSDT"):
     def _serve(entry, status):
         out["closes"] = list(entry["closes"])
         out["vols"] = list(entry["vols"])
+        out["ts"] = list(entry.get("ts") or [])  # PATCH-06
         out["fetched_at"] = entry["fetched_at"]
         out["age"] = max(0.0, now - entry["fetched_at"])
         out["status"] = status
         return out
 
-    if cached and (now - cached["fetched_at"]) <= _OHLC_FRESH_TTL:
+    if cached and (now - cached["fetched_at"]) <= _OHLC_FRESH_TTL and cached.get("ts"):  # PATCH-06: senza timestamp non e' fresca
         return _serve(cached, "fresh")
 
     if now >= _OHLC_BACKOFF.get(cg_id, 0) and not _ohlc_in_cooldown(rds, now):
@@ -745,17 +769,20 @@ def get_ohlc_meta(symbol="BTCUSDT"):
                 log.warning("get_ohlc: CoinGecko HTTP 429 per %s: pausa %ss, uso cache se disponibile.", symbol, secs)
             else:
                 r.raise_for_status()
-                parsed = _ohlc_extract(r.json())
+                _payload = r.json()
+                parsed = _ohlc_extract(_payload)
                 if parsed is None:
                     raise ValueError("serie storica incompleta o non valida")
-                entry = {"closes": parsed[0], "vols": parsed[1], "fetched_at": time.time()}
+                entry = {"closes": parsed[0], "vols": parsed[1], "fetched_at": time.time(),
+                         "ts": _ohlc_ts_from(_payload, len(parsed[0]))}  # PATCH-06
                 _OHLC_RAM[cg_id] = entry
                 _OHLC_BACKOFF.pop(cg_id, None)
                 if rds:
                     try:
                         rds.setex(
                             f"market:ohlc:v1:{cg_id}", _OHLC_REDIS_TTL,
-                            json.dumps({"closes": entry["closes"], "vols": entry["vols"], "fetched_at": entry["fetched_at"]}),
+                            json.dumps({"closes": entry["closes"], "vols": entry["vols"], "fetched_at": entry["fetched_at"],
+                                        "ts": entry["ts"]}),
                         )
                     except Exception as e:
                         log.warning("get_ohlc: salvataggio cache Redis fallito (%s)", e)
@@ -940,7 +967,23 @@ def calc_macd(closes):
 _TREND_CACHE = {"data": None, "ts": 0}
 _TREND_CACHE_TTL = 3600  # 1h: oltre questo, lo stale e' troppo vecchio per essere usato
 
+_TREND_MEMO = {"t": 0.0, "v": None}
+_TREND_MEMO_TTL = 15          # secondi: stessi dati per tutte le chiamate dello stesso messaggio
+_TREND_MEMO_LOCK = threading.Lock()
+
 def get_trend_7d():
+    """Trend 7 giorni con riuso del risultato (PATCH-06): una sola elaborazione ogni 15 s."""
+    import copy as _copy_t
+    with _TREND_MEMO_LOCK:
+        now = time.time()
+        if _TREND_MEMO["v"] is not None and 0 <= now - _TREND_MEMO["t"] < _TREND_MEMO_TTL:
+            return _copy_t.deepcopy(_TREND_MEMO["v"])
+        out = _get_trend_7d_compute()
+        _TREND_MEMO["t"] = time.time()
+        _TREND_MEMO["v"] = _copy_t.deepcopy(out)
+        return out
+
+def _get_trend_7d_compute():
     """Trend a 7 giorni di ETH/BTC e dei prezzi principali, da get_ohlc (CoinGecko).
     Nessuna chiamata extra: riusa lo storico gia scaricato per RSI/MACD.
     Il trend dominance NON e incluso (storico globale CoinGecko a pagamento).
