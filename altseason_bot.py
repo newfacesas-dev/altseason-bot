@@ -587,26 +587,168 @@ def get_fg():
 
 _CG_OHLC_IDS = {"BTCUSDT": "bitcoin", "ETHUSDT": "ethereum", "SOLUSDT": "solana", "XRPUSDT": "ripple"}
 
-def get_ohlc(symbol="BTCUSDT", limit=30):
-    """Dati storici (close + volume) da CoinGecko market_chart.
-    Binance e' geo-bloccato da Railway (451); CoinGecko no.
-    Ritorna (closes, vols) come prima. Chiede 60gg per margine su RSI/MACD."""
+# PATCH-01 OHLC-CACHE
+# Storico CoinGecko con cache persistente, cooldown condiviso e stato di freschezza.
+import math as _math_ohlc
+
+_OHLC_FRESH_TTL = 1800        # entro 30 min: nessuna richiesta di rete
+_OHLC_MAX_STALE = 21600       # oltre 6 h il dato non viene piu' servito
+_OHLC_BACKOFF_SECS = 60       # dopo un errore non-429: pausa per simbolo
+_OHLC_COOLDOWN_DEFAULT = 120
+_OHLC_COOLDOWN_MIN = 30
+_OHLC_COOLDOWN_MAX = 900
+_OHLC_REDIS_TTL = 86400
+_OHLC_COOLDOWN_KEY = "market:coingecko:cooldown"
+_OHLC_COOLDOWN_READ_KEYS = (_OHLC_COOLDOWN_KEY, "market:coingecko:prices:cooldown")
+_OHLC_RAM = {}                # cg_id -> {"closes", "vols", "fetched_at"}
+_OHLC_BACKOFF = {}            # cg_id -> epoch fino a cui non riprovare
+_OHLC_COOLDOWN_RAM = {"until": 0.0}
+
+def _ohlc_extract(data):
+    """Valida la risposta market_chart. Ritorna (closes, volumes) oppure None.
+    Una serie con buchi, None, NaN o prezzi <= 0 viene scartata per intero."""
+    try:
+        prices = data.get("prices")
+        vols = data.get("total_volumes") or []
+        if not isinstance(prices, list) or not isinstance(vols, list):
+            return None
+        if not all(isinstance(p, (list, tuple)) and len(p) >= 2 for p in prices):
+            return None
+        if not all(isinstance(v, (list, tuple)) and len(v) >= 2 for v in vols):
+            return None
+        closes = [float(p[1]) for p in prices]
+        volumes = [float(v[1]) for v in vols]
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if len(closes) < 8:
+        return None
+    if any((not _math_ohlc.isfinite(c)) or c <= 0 for c in closes):
+        return None
+    if any((not _math_ohlc.isfinite(v)) or v < 0 for v in volumes):
+        return None
+    return closes, volumes
+
+def _ohlc_cache_get(cg_id, rds):
+    best = _OHLC_RAM.get(cg_id)
+    if rds:
+        try:
+            raw = rds.get(f"market:ohlc:v1:{cg_id}")
+            if raw:
+                saved = json.loads(raw)
+                ts = float(saved["fetched_at"])
+                parsed = _ohlc_extract({
+                    "prices": [[0, c] for c in saved["closes"]],
+                    "total_volumes": [[0, v] for v in saved.get("vols", [])],
+                })
+                if parsed and ts > 0 and (best is None or ts > best["fetched_at"]):
+                    best = {"closes": parsed[0], "vols": parsed[1], "fetched_at": ts}
+        except Exception as e:
+            log.debug("get_ohlc: cache Redis non leggibile (%s)", e)
+    return best
+
+def _ohlc_in_cooldown(rds, now):
+    if now < _OHLC_COOLDOWN_RAM["until"]:
+        return True
+    if rds:
+        try:
+            for key in _OHLC_COOLDOWN_READ_KEYS:
+                if rds.exists(key):
+                    return True
+        except Exception as e:
+            log.debug("get_ohlc: controllo cooldown Redis non disponibile (%s)", e)
+    return False
+
+def _ohlc_set_cooldown(rds, now, retry_after):
+    secs = _OHLC_COOLDOWN_DEFAULT
+    try:
+        if retry_after is not None:
+            secs = int(float(retry_after))
+            secs = max(_OHLC_COOLDOWN_MIN, min(_OHLC_COOLDOWN_MAX, secs))
+    except (TypeError, ValueError):
+        secs = _OHLC_COOLDOWN_DEFAULT
+    _OHLC_COOLDOWN_RAM["until"] = now + secs
+    if rds:
+        try:
+            rds.setex(_OHLC_COOLDOWN_KEY, secs, "1")
+        except Exception as e:
+            log.debug("get_ohlc: salvataggio cooldown Redis fallito (%s)", e)
+    return secs
+
+def get_ohlc_meta(symbol="BTCUSDT"):
+    """Storico (close + volume) con stato di freschezza.
+    Ritorna {"closes", "vols", "fetched_at", "age", "status"} con
+    status in {"fresh", "stale", "missing"}. Mai dati inventati: se manca, liste vuote."""
+    out = {"closes": [], "vols": [], "fetched_at": None, "age": None, "status": "missing"}
     cg_id = _CG_OHLC_IDS.get(symbol)
     if not cg_id:
-        return [], []
+        return out
+    now = time.time()
     try:
-        url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days=60&interval=daily"
-        r = requests.get(url, timeout=12)
-        r.raise_for_status()
-        data = r.json()
-        prices = data.get("prices", [])
-        vols = data.get("total_volumes", [])
-        closes = [float(p[1]) for p in prices if isinstance(p, (list, tuple)) and len(p) >= 2]
-        volumes = [float(v[1]) for v in vols if isinstance(v, (list, tuple)) and len(v) >= 2]
-        return closes, volumes
-    except Exception as e:
-        log.warning("get_ohlc: errore CoinGecko per %s (%s). Indicatori non disponibili.", symbol, e)
-        return [], []
+        rds = get_redis()
+    except Exception:
+        rds = None
+    cached = _ohlc_cache_get(cg_id, rds)
+    if cached and (now - cached["fetched_at"]) < -60:
+        cached = None  # timestamp nel futuro: dato non affidabile
+
+    def _serve(entry, status):
+        out["closes"] = list(entry["closes"])
+        out["vols"] = list(entry["vols"])
+        out["fetched_at"] = entry["fetched_at"]
+        out["age"] = max(0.0, now - entry["fetched_at"])
+        out["status"] = status
+        return out
+
+    if cached and (now - cached["fetched_at"]) <= _OHLC_FRESH_TTL:
+        return _serve(cached, "fresh")
+
+    if now >= _OHLC_BACKOFF.get(cg_id, 0) and not _ohlc_in_cooldown(rds, now):
+        try:
+            url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days=60&interval=daily"
+            headers = {}
+            api_key = os.environ.get("COINGECKO_API_KEY", "").strip()
+            if api_key:
+                headers["x-cg-demo-api-key"] = api_key
+            r = requests.get(url, headers=headers, timeout=12)
+            if r.status_code == 429:
+                retry_after = None
+                try:
+                    retry_after = r.headers.get("Retry-After")
+                except Exception:
+                    retry_after = None
+                secs = _ohlc_set_cooldown(rds, now, retry_after)
+                log.warning("get_ohlc: CoinGecko HTTP 429 per %s: pausa %ss, uso cache se disponibile.", symbol, secs)
+            else:
+                r.raise_for_status()
+                parsed = _ohlc_extract(r.json())
+                if parsed is None:
+                    raise ValueError("serie storica incompleta o non valida")
+                entry = {"closes": parsed[0], "vols": parsed[1], "fetched_at": time.time()}
+                _OHLC_RAM[cg_id] = entry
+                _OHLC_BACKOFF.pop(cg_id, None)
+                if rds:
+                    try:
+                        rds.setex(
+                            f"market:ohlc:v1:{cg_id}", _OHLC_REDIS_TTL,
+                            json.dumps({"closes": entry["closes"], "vols": entry["vols"], "fetched_at": entry["fetched_at"]}),
+                        )
+                    except Exception as e:
+                        log.warning("get_ohlc: salvataggio cache Redis fallito (%s)", e)
+                return _serve(entry, "fresh")
+        except Exception as e:
+            _OHLC_BACKOFF[cg_id] = now + _OHLC_BACKOFF_SECS
+            log.warning("get_ohlc: errore CoinGecko per %s (%s). Pausa %ss.", symbol, e, _OHLC_BACKOFF_SECS)
+
+    if cached and (now - cached["fetched_at"]) <= _OHLC_MAX_STALE:
+        return _serve(cached, "stale")
+    return out
+
+def get_ohlc(symbol="BTCUSDT", limit=30):
+    """Dati storici (close + volume) da CoinGecko market_chart, con cache (PATCH-01).
+    Firma e ritorno invariati: (closes, vols). Chi deve sapere se il dato e' vecchio
+    usa get_ohlc_meta(). Binance e' geo-bloccato da Railway (451); CoinGecko no."""
+    meta = get_ohlc_meta(symbol)
+    return meta["closes"], meta["vols"]
 
 def calc_rsi(closes, period=14):
     if len(closes) < period + 1: return None
@@ -640,8 +782,10 @@ def get_trend_7d():
     import time as _time
     out = {}
     try:
-        btc_closes, _ = get_ohlc("BTCUSDT")
-        eth_closes, _ = get_ohlc("ETHUSDT")
+        _m_btc = get_ohlc_meta("BTCUSDT")
+        _m_eth = get_ohlc_meta("ETHUSDT")
+        btc_closes, eth_closes = _m_btc["closes"], _m_eth["closes"]
+        _ohlc_stale = "stale" in (_m_btc["status"], _m_eth["status"])  # PATCH-01
         if len(btc_closes) >= 8 and len(eth_closes) >= 8 and btc_closes[-1] and btc_closes[-8]:
             ratio_oggi = eth_closes[-1] / btc_closes[-1]
             ratio_7gg = eth_closes[-8] / btc_closes[-8]
@@ -649,6 +793,8 @@ def get_trend_7d():
                 var = (ratio_oggi - ratio_7gg) / ratio_7gg * 100
                 desc = "in recupero" if var > 1.5 else "in calo" if var < -1.5 else "stabile"
                 out["ethbtc"] = {"oggi": ratio_oggi, "var7d": var, "desc": desc}
+                if _ohlc_stale:
+                    out["ethbtc"]["stale"] = True  # PATCH-01: storico non fresco
         if len(btc_closes) >= 8 and btc_closes[-8]:
             out["btc"] = (btc_closes[-1] - btc_closes[-8]) / btc_closes[-8] * 100
         if len(eth_closes) >= 8 and eth_closes[-8]:
@@ -657,10 +803,10 @@ def get_trend_7d():
         log.warning(f"get_trend_7d error: {e}")
 
     # CACHE: se abbiamo ethbtc fresco, salviamo. Altrimenti proviamo il fallback stale.
-    if out.get("ethbtc"):
+    if out.get("ethbtc") and not out["ethbtc"].get("stale"):
         _TREND_CACHE["data"] = out["ethbtc"]
         _TREND_CACHE["ts"] = _time.time()
-    else:
+    elif not out.get("ethbtc"):
         # fallback: usa l'ultimo ethbtc valido se non troppo vecchio
         if _TREND_CACHE["data"] and (_time.time() - _TREND_CACHE["ts"]) < _TREND_CACHE_TTL:
             eb = dict(_TREND_CACHE["data"])
