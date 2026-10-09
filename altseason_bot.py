@@ -416,24 +416,41 @@ def get_uid(update):
 # API DATI
 # ============================================================
 def get_global():
-    if 'g' in _cache and time.time() - _cache['g']['t'] < CACHE_TTL:
+    # PATCH-05 CG-SHARED: cache RAM -> Redis persistente -> rete (con cooldown condiviso) -> ultimo dato reale
+    now = time.time()
+    if 'g' in _cache and now - _cache['g']['t'] < CACHE_TTL:
         return _cache['g']['d']
+    saved = _cg_store_get(_GLOBAL_KEY)
+    if saved and _global_valid(saved[0]) and 0 <= now - saved[1] < CACHE_TTL:
+        _cache['g'] = {'d': saved[0], 't': saved[1]}
+        return saved[0]
     try:
-        time.sleep(1)
-        r = requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
-        r.raise_for_status()
-        d = r.json()["data"]
+        d = _cg_fetch_json("https://api.coingecko.com/api/v3/global", timeout=10)["data"]
         tot = d["total_market_cap"]["usd"]
         btcm = d["market_cap_percentage"]["btc"] / 100 * tot
         ethm = d["market_cap_percentage"].get("eth", 0) / 100 * tot
         result = {"dom": d["market_cap_percentage"]["btc"], "dom_eth": d["market_cap_percentage"].get("eth", 0), "mcap": tot/1e12, "total2": (tot-btcm)/1e9, "total3": (tot-btcm-ethm)/1e9}
-        _cache['g'] = {'d': result, 't': time.time()}
+        if not _global_valid(result):
+            raise ValueError("risposta /global non valida")
+        fetched = time.time()
+        _cache['g'] = {'d': result, 't': fetched}
+        _cg_store_set(_GLOBAL_KEY, result, fetched, _GLOBAL_REDIS_TTL)
         return result
+    except CGUnavailable as e:
+        log.info("get_global: CoinGecko non interrogato (%s). Uso l'ultimo dato reale se disponibile.", e)
     except Exception as e:
-        log.warning("get_global: errore CoinGecko (%s). Uso ultima cache se disponibile.", e)
-        if 'g' in _cache:
-            return _cache['g']['d']
-        return {"dom": 58, "dom_eth": 0, "mcap": 2.5, "total2": 0, "total3": 0}
+        log.warning("get_global: errore CoinGecko (%s). Uso l'ultimo dato reale se disponibile.", e)
+    best = None
+    if 'g' in _cache:
+        best = (_cache['g']['t'], _cache['g']['d'])
+    if saved and _global_valid(saved[0]) and (best is None or saved[1] > best[0]):
+        best = (saved[1], saved[0])
+    if best:
+        log.warning("get_global: uso dato di %d minuti fa.", int(max(0, now - best[0]) // 60))
+        _cache['g'] = {'d': best[1], 't': best[0]}
+        return best[1]
+    log.warning("get_global: DATO NON DISPONIBILE, uso il valore di ripiego storico (dom 58).")
+    return {"dom": 58, "dom_eth": 0, "mcap": 2.5, "total2": 0, "total3": 0}
 
 def _prices_fallback():
     """Recupera i prezzi migliori disponibili senza aggiornarne la data."""
@@ -477,6 +494,10 @@ def get_prices():
     if "p" in _cache and now - _cache["p"]["t"] < CACHE_TTL:
         return _cache["p"]["d"]
 
+    _pf = _prices_redis_fresh(now)  # PATCH-05: dopo un riavvio la cache Redis fresca evita la richiesta
+    if _pf is not None:
+        return _pf
+
     cooldown_until = _cache.get("_prices_cooldown_until", 0)
     if now < cooldown_until:
         return _prices_fallback()
@@ -484,13 +505,13 @@ def get_prices():
     rds = None
     try:
         rds = get_redis()
-        if rds and rds.exists("market:coingecko:prices:cooldown"):
+        if _ohlc_in_cooldown(rds, now):  # PATCH-05: cooldown condiviso con tutti gli endpoint
             return _prices_fallback()
     except Exception as e:
         log.debug("Controllo cooldown Redis non disponibile: %s", e)
 
     try:
-        time.sleep(2)
+        _cg_pace()  # PATCH-05: al posto di time.sleep(2) fisso
         ids = ",".join(ASSETS.values())
         url = (
             "https" + "://" + "api.coingecko.com"
@@ -499,9 +520,13 @@ def get_prices():
             + "&include_24hr_change=true&include_market_cap=true"
             + "&include_24hr_vol=true"
         )
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers=_cg_headers(), timeout=10)
 
         if response.status_code == 429:
+            try:
+                _ohlc_set_cooldown(rds, time.time(), response.headers.get("Retry-After"))  # PATCH-05
+            except Exception:
+                pass
             _cache["_prices_cooldown_until"] = time.time() + 120
             try:
                 if rds:
@@ -750,6 +775,148 @@ def get_ohlc(symbol="BTCUSDT", limit=30):
     meta = get_ohlc_meta(symbol)
     return meta["closes"], meta["vols"]
 
+# PATCH-05 CG-SHARED
+# Accesso unico a CoinGecko: cooldown condiviso (Redis+RAM), chiave Demo, pacing, cache persistente.
+_CG_PACE_SECS = 0.5
+_CG_PACE = {"last": 0.0}
+_CG_PACE_LOCK = threading.Lock()
+_GLOBAL_KEY = "market:global:v1"
+_GLOBAL_REDIS_TTL = 604800    # 7 giorni: serve come ultimo dato reale dopo un riavvio
+_PRICES_KEY = "market:prices:v1"
+_ROT_REDIS_KEY = "market:rot:v1:"
+_ROT_REDIS_TTL = 604800
+_ROT_MAX_STALE = 86400        # oltre 24 h lo storico di rotazione non viene piu' servito
+_ROT_BACKOFF_SECS = 60
+_ROT_BACKOFF = {}
+
+
+class CGUnavailable(Exception):
+    """CoinGecko non va interrogato ora (cooldown attivo o HTTP 429)."""
+
+
+def _cg_headers():
+    h = {}
+    k = os.environ.get("COINGECKO_API_KEY", "").strip()
+    if k:
+        h["x-cg-demo-api-key"] = k
+    return h
+
+
+def _cg_redis():
+    try:
+        return get_redis()
+    except Exception:
+        return None
+
+
+def _cg_pace():
+    """Distanzia le richieste di almeno _CG_PACE_SECS (di norma non aspetta)."""
+    with _CG_PACE_LOCK:
+        wait = _CG_PACE["last"] + _CG_PACE_SECS - time.time()
+        if 0 < wait <= _CG_PACE_SECS:
+            time.sleep(wait)
+        _CG_PACE["last"] = time.time()
+
+
+def _cg_fetch_json(url, timeout=12):
+    """GET JSON con cooldown condiviso. Solleva CGUnavailable se in cooldown o 429,
+    altre eccezioni per errori di rete/HTTP/JSON. Mai valori inventati."""
+    rds = _cg_redis()
+    now = time.time()
+    if _ohlc_in_cooldown(rds, now):
+        raise CGUnavailable("cooldown CoinGecko attivo")
+    _cg_pace()
+    r = requests.get(url, headers=_cg_headers(), timeout=timeout)
+    if r.status_code == 429:
+        ra = None
+        try:
+            ra = r.headers.get("Retry-After")
+        except Exception:
+            ra = None
+        secs = _ohlc_set_cooldown(rds, time.time(), ra)
+        raise CGUnavailable(f"HTTP 429 (pausa {secs}s)")
+    r.raise_for_status()
+    return r.json()
+
+
+def _cg_store_get(key):
+    """Legge {"data":..., "fetched_at":...} da Redis. Ritorna (data, fetched_at) o None."""
+    rds = _cg_redis()
+    if not rds:
+        return None
+    try:
+        raw = rds.get(key)
+        if not raw:
+            return None
+        saved = json.loads(raw)
+        ts = float(saved["fetched_at"])
+        data = saved["data"]
+        if ts <= 0 or data is None:
+            return None
+        return data, ts
+    except Exception as e:
+        log.debug("cache Redis %s non leggibile (%s)", key, e)
+        return None
+
+
+def _cg_store_set(key, data, fetched_at, ttl):
+    rds = _cg_redis()
+    if not rds:
+        return
+    try:
+        rds.setex(key, ttl, json.dumps({"data": data, "fetched_at": fetched_at}))
+    except Exception as e:
+        log.warning("salvataggio cache Redis %s fallito (%s)", key, e)
+
+
+def _global_valid(d):
+    try:
+        return (isinstance(d, dict) and 0 < float(d["dom"]) < 100 and float(d["mcap"]) > 0
+                and all(k in d for k in ("dom_eth", "total2", "total3")))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _prices_redis_fresh(now):
+    """Prezzi dalla cache Redis se piu' recenti di CACHE_TTL (dopo un riavvio: nessuna richiesta)."""
+    saved = _cg_store_get_prices()
+    if saved and 0 <= now - saved[1] < CACHE_TTL:
+        _cache["p"] = {"d": saved[0], "t": saved[1]}
+        return saved[0]
+    return None
+
+
+def _cg_store_get_prices():
+    rds = _cg_redis()
+    if not rds:
+        return None
+    try:
+        raw = rds.get(_PRICES_KEY)
+        if not raw:
+            return None
+        saved = json.loads(raw)
+        data = saved.get("data")
+        ts = float(saved.get("fetched_at", 0))
+        if not isinstance(data, dict) or ts <= 0:
+            return None
+        if not any(isinstance(v, dict) and isinstance(v.get("price"), (int, float))
+                   and not isinstance(v.get("price"), bool) and v["price"] > 0 for v in data.values()):
+            return None
+        return data, ts
+    except Exception as e:
+        log.debug("cache prezzi Redis non leggibile (%s)", e)
+        return None
+
+
+def _rot_series_ok(closes):
+    try:
+        return (isinstance(closes, list) and len(closes) >= 8
+                and all(isinstance(c, (int, float)) and not isinstance(c, bool)
+                        and _math_ohlc.isfinite(c) and c > 0 for c in closes))
+    except Exception:
+        return False
+
+
 def calc_rsi(closes, period=14):
     if len(closes) < period + 1: return None
     s = pd.Series(closes)
@@ -943,9 +1110,7 @@ def get_derivatives_coingecko():
     Prende il primo ticker perpetuo per BTC/ETH/SOL/XRP. OI in USD."""
     symbols = ('BTC', 'ETH', 'SOL', 'XRP')
     url = 'https://api.coingecko.com/api/v3/derivatives'
-    r = requests.get(url, timeout=12)
-    r.raise_for_status()
-    data = r.json()
+    data = _cg_fetch_json(url, timeout=12)  # PATCH-05: cooldown condiviso + chiave Demo
     result = {}
     for d in data:
         if not isinstance(d, dict) or d.get('contract_type') != 'perpetual':
@@ -1168,36 +1333,51 @@ _ROT_CACHE_TTL = 43200  # 12 ore (>= 6h richiesto). Storici 7/30gg cambiano lent
 
 def _rot_get_history(cg_id):
     """Storico prezzi (closes) di una coin, con cache 12h e tolleranza errori.
-    Ritorna lista closes oppure None. In caso di 429/errore usa cache se esiste."""
-    import time as _t
-    now = _t.time()
-    # cache valida?
+    Ritorna lista closes oppure None. PATCH-05: cache Redis persistente, cooldown condiviso,
+    backoff per coin, riuso dello storico OHLC; oltre 24 h il dato non viene piu' servito."""
+    now = time.time()
+    # (a) coin gia' scaricate dalla cache OHLC (bitcoin/ethereum/solana/ripple): nessuna richiesta in piu'.
+    # Stessa serie finale di days=30 (31 punti): _rot_perf legge dalla fine, quindi il risultato e' identico.
+    for _sym, _cid in _CG_OHLC_IDS.items():
+        if _cid == cg_id:
+            _m = get_ohlc_meta(_sym)
+            if len(_m["closes"]) >= 8:
+                return _m["closes"][-31:]
+            break
     cached = _rot_cache.get(cg_id)
+    if cached and not (-60 <= now - cached[0] <= _ROT_MAX_STALE):
+        cached = None  # futuro o troppo vecchio
+    saved = _cg_store_get(_ROT_REDIS_KEY + cg_id)
+    if saved and _rot_series_ok(saved[0]) and -60 <= now - saved[1] <= _ROT_MAX_STALE:
+        if cached is None or saved[1] > cached[0]:
+            cached = (saved[1], saved[0])
+            _rot_cache[cg_id] = cached
     if cached and (now - cached[0]) < _ROT_CACHE_TTL:
         return cached[1]
-    # scarico
+
+    def _stale():
+        return cached[1] if cached else None
+
+    if now < _ROT_BACKOFF.get(cg_id, 0):
+        return _stale()
     try:
         url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days=30&interval=daily"
-        r = requests.get(url, timeout=12)
-        if r.status_code == 429:
-            # rate limit: uso l'ultimo cached valido se esiste (anche se scaduto)
-            if cached:
-                return cached[1]
-            return None
-        r.raise_for_status()
-        prices = r.json().get("prices", [])
+        prices = _cg_fetch_json(url, timeout=12).get("prices", [])
         closes = [float(p[1]) for p in prices if isinstance(p, (list, tuple)) and len(p) >= 2]
-        if len(closes) >= 8:
-            _rot_cache[cg_id] = (now, closes)
-            return closes
-        # pochi dati: se ho cache vecchia, meglio quella
-        if cached:
-            return cached[1]
-        return None
-    except Exception:
-        if cached:
-            return cached[1]
-        return None
+        if not _rot_series_ok(closes):
+            raise ValueError("serie storica incompleta o non valida")
+        fetched = time.time()
+        _rot_cache[cg_id] = (fetched, closes)
+        _ROT_BACKOFF.pop(cg_id, None)
+        _cg_store_set(_ROT_REDIS_KEY + cg_id, closes, fetched, _ROT_REDIS_TTL)
+        return closes
+    except CGUnavailable as e:
+        log.info("_rot_get_history(%s): CoinGecko non interrogato (%s).", cg_id, e)
+        return _stale()
+    except Exception as e:
+        _ROT_BACKOFF[cg_id] = now + _ROT_BACKOFF_SECS
+        log.warning("_rot_get_history(%s): errore CoinGecko (%s). Pausa %ss.", cg_id, e, _ROT_BACKOFF_SECS)
+        return _stale()
 
 def _rot_perf(closes, giorni):
     """Variazione % su 'giorni' (7 o 30). closes[-1]=oggi. None se dati insuff."""
