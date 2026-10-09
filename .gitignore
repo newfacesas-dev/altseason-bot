@@ -19,3 +19,7 @@ test_stablecoin.py
 __pycache__/
 *.pyc
 requirements_openai.txt
+
+# Codici di recupero privati
+github-recovery-codes.txt
+railway-recovery-codes.txt

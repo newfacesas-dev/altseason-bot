@@ -4343,78 +4343,154 @@ _ER_STATI = {
     "EXIT ZONE": "PREPARAZIONE STRATEGICA",
 }
 
+def _exit_risk_cache_fresh(key, max_age=600):
+    """Verifica che la fonte abbia una cache recente ottenuta con successo."""
+    entry = _cache.get(key)
+    if not isinstance(entry, dict):
+        return False
+    try:
+        age = time.time() - entry["t"]
+        return 0 <= age <= max_age and bool(entry.get("d"))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def compute_exit_risk(fg=None, rot=None, p=None, trend=None):
-    """Calcola l'Exit Risk Score 0-100. 4 fattori pesati, dichiarati e non validati.
-    Mai una soglia di vendita: solo lettura del livello di rischio ciclo."""
+    """Exit Risk descrittivo: distingue punteggio e copertura dei dati."""
+    import math
+
     punti = 0
+    copertura = 0
+    mancanti = []
 
-    fg_val = None
-    try:
-        fg_val = (fg or {}).get("v")
-    except Exception:
-        pass
-    if fg_val is not None and fg_val >= 80:
-        punti += _ER_PESI["fear_estremo"]
+    # 1. Fear & Greed: 30 punti
+    fg_val = fg.get("v") if isinstance(fg, dict) else None
+    if isinstance(fg_val, (int, float)) and not isinstance(fg_val, bool) and math.isfinite(fg_val) and 0 <= fg_val <= 100:
+        copertura += 30
+        if fg_val >= 80:
+            punti += 30
+    else:
+        mancanti.append("Fear & Greed")
 
-    rot_state = None
-    try:
-        rot_state = (rot or {}).get("state")
-    except Exception:
-        pass
-    if rot_state in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"):
-        punti += _ER_PESI["rotation_euforica"]
+    # 2. Rotazione: 30 punti
+    stati_validi = {
+        "BTC_LED", "ETH_ROTATION", "LARGE_CAP_ROTATION",
+        "MID_CAP_ROTATION", "MEME_EUPHORIA",
+        "DISTRIBUTION_WARNING", "RISK_OFF",
+    }
+    stato_rot = rot.get("state") if isinstance(rot, dict) else None
+    conf_rot = rot.get("confidence") if isinstance(rot, dict) else None
+    if stato_rot in stati_validi and conf_rot in ("HIGH", "MEDIUM"):
+        copertura += 30
+        if stato_rot in ("MEME_EUPHORIA", "DISTRIBUTION_WARNING"):
+            punti += 30
+    else:
+        mancanti.append("Rotazione verificabile")
 
-    # ampiezza 24h: % alt positive, riusa la stessa logica del Market Score (>60% = forte)
-    ampiezza_estrema = False
-    try:
-        if p:
-            alts = [s for s in p if s != "BTC"]
-            valid = [s for s in alts if p[s].get("price", 0) > 0]
-            if valid:
-                pos = sum(1 for s in valid if p[s].get("ch", 0) > 0)
-                pct = pos / len(valid) * 100
-                ampiezza_estrema = pct > 80
-    except Exception:
-        pass
-    if ampiezza_estrema:
-        punti += _ER_PESI["ampiezza_estrema"]
+    # 3. Ampiezza altcoin: 20 punti
+    valid = []
+    if isinstance(p, dict):
+        for sym, data in p.items():
+            if sym == "BTC" or not isinstance(data, dict):
+                continue
+            prezzo = data.get("price")
+            cambio = data.get("ch")
+            if (
+                isinstance(prezzo, (int, float))
+                and not isinstance(prezzo, bool)
+                and math.isfinite(prezzo)
+                and prezzo > 0
+                and isinstance(cambio, (int, float))
+                and not isinstance(cambio, bool)
+                and math.isfinite(cambio)
+            ):
+                valid.append(cambio)
 
-    ethbtc_forte = False
-    try:
-        eth = (trend or {}).get("ethbtc")
-        if eth and eth.get("var7d", 0) > 8:  # forte rialzo, soglia dichiarata
-            ethbtc_forte = True
-    except Exception:
-        pass
-    if ethbtc_forte:
-        punti += _ER_PESI["ethbtc_forte_rialzo"]
+    # Lo zero può rappresentare un dato CoinGecko mancante.
+    # Copertura minima provvisoria: 80% del paniere configurato.
+    totale_altcoin = max(len(ASSETS) - 1, 0)
+    valid = [ch for ch in valid if ch != 0]
+    soglia = math.ceil(totale_altcoin * 0.80)
 
-    score = max(0, min(100, punti))
-    fascia = None
-    for lo, hi, nome in _ER_FASCE:
-        if lo <= score <= hi:
-            fascia = nome
-            break
+    if totale_altcoin > 0 and len(valid) >= soglia:
+        copertura += 20
+        if sum(ch > 0 for ch in valid) / len(valid) > 0.80:
+            punti += 20
+    else:
+        mancanti.append(
+            f"Ampiezza altcoin ({len(valid)}/{totale_altcoin} dati utilizzabili)"
+        )
+
+    # 4. ETH/BTC a 7 giorni: 20 punti
+    eth = trend.get("ethbtc") if isinstance(trend, dict) else None
+    var7d = eth.get("var7d") if isinstance(eth, dict) else None
+    if (
+        isinstance(var7d, (int, float))
+        and not isinstance(var7d, bool)
+        and math.isfinite(var7d)
+        and not eth.get("stale", False)
+    ):
+        copertura += 20
+        if var7d > 8:
+            punti += 20
+    else:
+        mancanti.append("ETH/BTC 7 giorni")
+
+    completo = copertura == 100
+    fascia = "NON VALUTABILE"
+    if completo:
+        for lo, hi, nome in _ER_FASCE:
+            if lo <= punti <= hi:
+                fascia = nome
+                break
 
     return {
-        "score": score,
+        "score": punti,
+        "copertura": copertura,
         "fascia": fascia,
-        "lettura": _ER_LETTURE.get(fascia, "n/d"),
-        "stato": _ER_STATI.get(fascia),  # None per fasce basse, e' corretto
+        "lettura": (
+            _ER_LETTURE.get(fascia, "n/d")
+            if completo
+            else "Valutazione incompleta: non assegnare una fase di ciclo."
+        ),
+        "stato": _ER_STATI.get(fascia) if completo else None,
+        "dati_mancanti": mancanti,
     }
 
 def _fmt_exit_risk(er):
-    """Formatta il blocco Exit Risk. Mai 'vendi', mai size."""
+    """Formatta Exit Risk distinguendo score, copertura e dati mancanti."""
     if not er:
         return "EXIT RISK\nDati non disponibili."
+
+    copertura = er.get("copertura", 0)
+    completo = copertura == 100
+    score = er.get("score")
+
     righe = [
         "EXIT RISK",
-        f"Exit Risk Score: {er.get('score', 'n/d')}/100",
-        f"Fase: {er.get('fascia', 'n/d')}",
+        f"Copertura dati: {copertura}/100",
+        (
+            f"Exit Risk Score: {score}/100"
+            if completo
+            else f"Segnali rilevati: {score}/100 (punteggio parziale)"
+        ),
+        f"Fase: {er.get('fascia', 'NON VALUTABILE')}",
         f"Lettura: {er.get('lettura', 'n/d')}",
     ]
+
     if er.get("stato"):
         righe.append(f"Stato: {er['stato']}")
+
+    mancanti = er.get("dati_mancanti", [])
+    if mancanti:
+        righe.append("Indicatori non verificabili: " + ", ".join(mancanti))
+
+    if not completo:
+        righe.append(
+            "ATTENZIONE: valutazione incompleta. "
+            "Il punteggio parziale non indica un rischio basso."
+        )
+
     return chr(10).join(righe)
 
 # ============================================================
@@ -4486,7 +4562,17 @@ async def cmd_rotation_risk(u, c):
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
         _ri = compute_rotation_intelligence(_rot)
-        _er = compute_exit_risk(fg=fg, rot=_rot, p=None, trend=_trend)
+        _prices = get_prices()
+        # Escludi i fallback e le cache non aggiornate dal calcolo Exit Risk.
+        _fg_risk = fg if _exit_risk_cache_fresh("fg") else None
+        _prices_risk = _prices if _exit_risk_cache_fresh("p") else None
+        _trend_risk = _trend
+        if (_trend or {}).get("ethbtc", {}).get("stale"):
+            _trend_risk = dict(_trend)
+            _trend_risk.pop("ethbtc", None)
+        _er = compute_exit_risk(
+            fg=_fg_risk, rot=_rot, p=_prices_risk, trend=_trend_risk
+        )
         _asc = compute_asset_speed_context(portfolio_coins)
         righe = [
             "\U0001f9ed ROTATION & RISK", "",
