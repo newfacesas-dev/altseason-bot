@@ -409,6 +409,18 @@ def list_users():
     except: pass
     return []
 
+# PATCH-07 ASYNC-HANDLERS
+# Esegue una funzione sincrona (HTTP, OpenAI, pipeline) fuori dall'event loop.
+from concurrent.futures import ThreadPoolExecutor as _TPE_aio
+_AIO_EXEC = _TPE_aio(max_workers=4, thread_name_prefix="aio")
+_AIO_EXEC_BG = _TPE_aio(max_workers=1, thread_name_prefix="aio-bg")  # solo auto_monitor
+
+async def _aio(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(_AIO_EXEC, lambda: fn(*args))
+
+async def _aio_bg(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(_AIO_EXEC_BG, lambda: fn(*args))
+
 def get_uid(update):
     return str(update.message.chat_id)
 
@@ -2796,7 +2808,7 @@ async def cmd_help(u, c):
 async def cmd_status(u, c):
     await u.message.reply_text("⏳ Recupero dati...", reply_markup=KEYBOARD)
     try:
-        g = get_global(); p = get_prices(); fg = get_fg()
+        g = (await _aio(lambda: get_global())); p = (await _aio(lambda: get_prices())); fg = (await _aio(lambda: get_fg()))
         ph, desc, level = phase(g["dom"])
         eth_btc = p["ETH"]["price"] / p["BTC"]["price"] if p["BTC"]["price"] else 0
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -2813,7 +2825,7 @@ async def cmd_status(u, c):
 
 async def cmd_phase(u, c):
     try:
-        g = get_global(); ph, desc, level = phase(g["dom"])
+        g = (await _aio(lambda: get_global())); ph, desc, level = phase(g["dom"])
         actions = {
             "MONITORA": "1️⃣ Tieni tutto\n2️⃣ Aspetta BTC Dom <52%\n3️⃣ Non vendere ancora",
             "AZIONE": "1️⃣ Ruota verso altcoin\n2️⃣ Vendi 25% quando +100%\n3️⃣ Monitora XRP pump tardivo",
@@ -2826,7 +2838,7 @@ async def cmd_phase(u, c):
 
 async def cmd_feargreed(u, c):
     try:
-        fg = get_fg(); v = fg["v"]
+        fg = (await _aio(lambda: get_fg())); v = fg["v"]
         desc = "Paura estrema — COMPRA 🛒" if v <= 25 else "Paura — Accumula" if v <= 45 else "Neutro" if v <= 55 else "Avidità — Attenzione" if v <= 75 else "Avidità estrema — VENDI ⚠️"
         msg = f"😱 *FEAR & GREED*\n\n{fg['em']} `{v}/100 — {fg['lbl']}`\n\n_{desc}_"
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -2836,7 +2848,7 @@ async def cmd_feargreed(u, c):
 async def cmd_rsimacd(u, c):
     await u.message.reply_text("⏳ Calcolo indicatori...", reply_markup=KEYBOARD)
     try:
-        inds = get_indicators()
+        inds = (await _aio(lambda: get_indicators()))
         lines = ["📉 *RSI & MACD*\n"]
         for sym in ["BTC", "ETH"]:
             ind = inds.get(sym, {})
@@ -2859,7 +2871,7 @@ async def cmd_rsimacd(u, c):
 
 async def cmd_top(u, c):
     try:
-        p = get_prices()
+        p = (await _aio(lambda: get_prices()))
         s = sorted(p.items(), key=lambda x: x[1]["ch"], reverse=True)
         lines = ["🏆 *TOP PERFORMER 24h*\n"]
         for i, (sym, d) in enumerate(s[:5], 1):
@@ -2872,7 +2884,7 @@ async def cmd_top(u, c):
 async def cmd_forex(u, c):
     await u.message.reply_text("⏳ Recupero dati forex...", reply_markup=KEYBOARD)
     try:
-        data = get_forex()
+        data = (await _aio(lambda: get_forex()))
         if not data:
             await u.message.reply_text("❌ Dati forex non disponibili", reply_markup=KEYBOARD)
             return
@@ -2925,7 +2937,7 @@ async def cmd_news(u, c):
                     f"?auth_token={cryptopanic_token}"
                     "&currencies=BTC,ETH,XRP,SOL&kind=news&public=true"
                 )
-                r = requests.get(url, timeout=10, headers={"User-Agent": "AltseasonBot/1.0"})
+                r = (await _aio(lambda: requests.get(url, timeout=10, headers={"User-Agent": "AltseasonBot/1.0"})))
                 if r.ok:
                     for item in r.json().get("results", [])[:6]:
                         item_title = (item.get("title") or "").strip()
@@ -2948,7 +2960,7 @@ async def cmd_news(u, c):
                 if len(news_items) >= 6:
                     break
                 try:
-                    r = requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                    r = (await _aio(lambda: requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})))
                     if not r.ok:
                         continue
                     root = ET.fromstring(r.content)
@@ -2982,7 +2994,7 @@ async def cmd_news(u, c):
                 if d:
                     blocco += f" ({d})"
                 blocco += "\n"
-            sintesi = get_news_summary(blocco, lang)
+            sintesi = (await _aio(lambda: get_news_summary(blocco, lang)))
             if sintesi and len(sintesi) > 900:
                 sintesi = sintesi[:900].rsplit(".", 1)[0] + "."
         except Exception as e:
@@ -3274,10 +3286,10 @@ def _sanitize_ai_analysis_v3(report_text):
 async def cmd_timeline(u, c):
     """Pannello FASE ATTUALE (descrittivo): legge lo stato del Rotation Engine e spiega la fase corrente."""
     try:
-        g = get_global(); fg = get_fg()
-        _stable = get_stablecoins()
-        _trend = get_trend_7d()
-        _rot = compute_rotation_state(g, _trend, _stable)
+        g = (await _aio(lambda: get_global())); fg = (await _aio(lambda: get_fg()))
+        _stable = (await _aio(lambda: get_stablecoins()))
+        _trend = (await _aio(lambda: get_trend_7d()))
+        _rot = (await _aio(lambda: compute_rotation_state(g, _trend, _stable)))
         msg = _fmt_timeline_fase(rot=_rot, fg=fg, g=g, trend=_trend)
         await u.message.reply_text(msg, reply_markup=KEYBOARD)
     except Exception as e:
@@ -3408,8 +3420,8 @@ async def cmd_portfolio(u, c):
         await u.message.reply_text("💼 Portfolio vuoto!\n\nUsa /add per aggiungere le tue coin\noppure /reset per caricare il portfolio di default", reply_markup=KEYBOARD)
         return
     try:
-        prices = get_prices()
-        forex = get_forex()  # UNA sola volta per l'intero rendering, mai per singola coin
+        prices = (await _aio(lambda: get_prices()))
+        forex = (await _aio(lambda: get_forex()))  # UNA sola volta per l'intero rendering, mai per singola coin
         eurusd = _get_valid_eurusd_rate(forex)
         eur_ok = eurusd is not None
         cur_sym = "€" if eur_ok else "$"
@@ -3532,7 +3544,7 @@ async def cmd_resetbaseline(u, c):
         await u.message.reply_text("💼 Portfolio vuoto, nessuna baseline da impostare.", reply_markup=KEYBOARD)
         return
     try:
-        prices = get_prices()
+        prices = (await _aio(lambda: get_prices()))
     except Exception as e:
         await u.message.reply_text(f"❌ Impossibile recuperare i prezzi: {e}", reply_markup=KEYBOARD)
         return
@@ -3553,7 +3565,7 @@ async def cmd_resetbaseline(u, c):
     # _get_valid_eurusd_rate/_usd_to_eur gia' esistenti, non modificate.
     # 'valid'/'pending_resetbaseline' restano in USD, invariati: la
     # conversione EUR e' esclusivamente qui, per la sola visualizzazione.
-    forex = get_forex()
+    forex = (await _aio(lambda: get_forex()))
     eurusd = _get_valid_eurusd_rate(forex)
     eur_ok = eurusd is not None
     cur_sym = "€" if eur_ok else "$"
@@ -3641,7 +3653,7 @@ async def cmd_reset(u, c):
         import copy as _copy
         _pf = _copy.deepcopy(ADMIN_PORTFOLIO)
         try:
-            _prezzi = get_prices()
+            _prezzi = (await _aio(lambda: get_prices()))
             for _sym, _pos in _pf.items():
                 if _pos.get("buy") is None:
                     _pr = _prezzi.get(_sym, {}).get("price", 0)
@@ -5163,17 +5175,17 @@ async def cmd_rotation_risk(u, c):
     Completamente isolato dall'AI Analysis. Nessuna istruzione operativa, nessuna size,
     nessuna execution window."""
     try:
-        g = get_global(); fg = get_fg()
-        _stable = get_stablecoins()
-        _trend = get_trend_7d()
-        _rot = compute_rotation_state(g, _trend, _stable)
+        g = (await _aio(lambda: get_global())); fg = (await _aio(lambda: get_fg()))
+        _stable = (await _aio(lambda: get_stablecoins()))
+        _trend = (await _aio(lambda: get_trend_7d()))
+        _rot = (await _aio(lambda: compute_rotation_state(g, _trend, _stable)))
         uid = get_uid(u)
         portfolio = load_user(uid).get("portfolio", {})
         portfolio_coins = list(portfolio.keys())
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
         _ri = compute_rotation_intelligence(_rot)
-        _prices = get_prices()
+        _prices = (await _aio(lambda: get_prices()))
         # Escludi i fallback e le cache non aggiornate dal calcolo Exit Risk.
         _fg_risk = fg if _exit_risk_cache_fresh("fg") else None
         _prices_risk = _prices if _exit_risk_cache_fresh("p") else None
@@ -5563,10 +5575,10 @@ def _fmt_sentiment_context(sc):
 async def cmd_stoploss(u, c):
     """Sentiment & Market Context (descrittivo, non operativo)."""
     try:
-        g = get_global(); fg = get_fg()
-        _stable = get_stablecoins()
-        _trend = get_trend_7d()
-        _rot = compute_rotation_state(g, _trend, _stable)
+        g = (await _aio(lambda: get_global())); fg = (await _aio(lambda: get_fg()))
+        _stable = (await _aio(lambda: get_stablecoins()))
+        _trend = (await _aio(lambda: get_trend_7d()))
+        _rot = (await _aio(lambda: compute_rotation_state(g, _trend, _stable)))
         sc = compute_sentiment_context(fg=fg, rot=_rot, g=g, trend=_trend, stable=_stable)
         msg = _fmt_sentiment_context(sc)
         await u.message.reply_text(msg, reply_markup=KEYBOARD)
@@ -5681,7 +5693,7 @@ async def cmd_price(u, c):
         await u.message.reply_text("❌ Asset non disponibile", reply_markup=KEYBOARD)
         return
     try:
-        p = get_prices()[s]
+        p = (await _aio(lambda: get_prices()))[s]
         a = "🟢" if p["ch"] >= 0 else "🔴"
         msg = f"{a} *{s}*\n\n💵 `${p['price']:,.4f}`\n📈 24h: `{p['ch']:+.2f}%`\n💎 MCap: `${p['mcap']/1e9:.1f}B`"
         await u.message.reply_text(msg, parse_mode="Markdown", reply_markup=KEYBOARD)
@@ -5836,7 +5848,7 @@ async def wizard_qty(update, context):
         context.user_data["wizard_qty"] = qty
         coin = context.user_data["wizard_coin"]
         try:
-            prices = get_prices()
+            prices = (await _aio(lambda: get_prices()))
             current = prices.get(coin, {}).get("price", 0)
             price_hint = f"\n\n💡 Prezzo attuale: `${current:,.4f}`" if current else ""
         except:
@@ -5853,7 +5865,7 @@ async def wizard_price(update, context):
         coin = context.user_data["wizard_coin"]
         qty = context.user_data["wizard_qty"]
         if price_input == 0:
-            prices = get_prices()
+            prices = (await _aio(lambda: get_prices()))
             buy_price = prices.get(coin, {}).get("price", 0)
         else:
             buy_price = price_input
@@ -5937,7 +5949,7 @@ async def handle_text(u, c):
         ud["ai_msgs"] = used + 1
         save_user(uid, ud)
         await u.message.reply_text(f"🤖 Sto analizzando... ({used+1}/{limit})", reply_markup=KEYBOARD)
-        g = get_global(); p = get_prices(); fg = get_fg()
+        g = (await _aio(lambda: get_global())); p = (await _aio(lambda: get_prices())); fg = (await _aio(lambda: get_fg()))
         ph, desc, level = phase(g["dom"])
         ctx = (f"Fase: {ph} ({level})\nBTC Dom: {g['dom']:.2f}%\n"
                f"Fear&Greed: {fg['v']} {fg['lbl']}\n"
@@ -5950,14 +5962,14 @@ async def handle_text(u, c):
                f"Volumi 24h: BTC {_fmt_vol(p['BTC']['vol'])}, ETH {_fmt_vol(p['ETH']['vol'])}, SOL {_fmt_vol(p['SOL']['vol'])}, XRP {_fmt_vol(p['XRP']['vol'])}, DOGE {_fmt_vol(p['DOGE']['vol'])}, BNB {_fmt_vol(p['BNB']['vol'])}, BONK {_fmt_vol(p['BONK']['vol'])}"
                + chr(10) +
                f"Data: {datetime.now().strftime('%d/%m/%Y')} MAGGIO 2026")
-        _stable = get_stablecoins()
+        _stable = (await _aio(lambda: get_stablecoins()))
         ctx = compute_altseason_score(g, p, fg, _stable) + chr(10) + chr(10) + ctx
         ctx = ctx + chr(10) + _fmt_stable(_stable)
-        ctx = ctx + chr(10) + _fmt_deriv(get_derivatives())
-        ctx = ctx + chr(10) + _fmt_trend(get_trend_7d())
-        ctx = ctx + chr(10) + _fmt_rotation(compute_rotation_state(g, get_trend_7d(), _stable))
+        ctx = ctx + chr(10) + _fmt_deriv((await _aio(lambda: get_derivatives())))
+        ctx = ctx + chr(10) + _fmt_trend((await _aio(lambda: get_trend_7d())))
+        ctx = ctx + chr(10) + _fmt_rotation((await _aio(lambda: compute_rotation_state(g, get_trend_7d(), _stable))))
         try:
-            _pctx = compute_portfolio_context(load_user(uid).get("portfolio", {}), rot=compute_rotation_state(g, get_trend_7d(), _stable), g=g, trend=get_trend_7d(), stable=_stable, fg=fg, prices=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+            _pctx = compute_portfolio_context(load_user(uid).get("portfolio", {}), rot=(await _aio(lambda: compute_rotation_state(g, get_trend_7d(), _stable))), g=g, trend=(await _aio(lambda: get_trend_7d())), stable=_stable, fg=fg, prices=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
             ctx = ctx + chr(10) + chr(10) + chr(128204) + " " + _fmt_portfolio_context(_pctx)
         except Exception as _e_pctx:
             log.warning(f"Portfolio context error (non bloccante): {_e_pctx}")
@@ -5966,16 +5978,16 @@ async def handle_text(u, c):
         # chiamata AI. Se fallisce, MARKET STATE non viene iniettato (fallback sicuro:
         # il bot continua con il comportamento attuale, nessun crash).
         try:
-            _rot_pre = compute_rotation_state(g, get_trend_7d(), _stable)
-            _sc_pre = compute_sentiment_context(fg=fg, rot=_rot_pre, g=g, trend=get_trend_7d(), stable=_stable)
+            _rot_pre = (await _aio(lambda: compute_rotation_state(g, get_trend_7d(), _stable)))
+            _sc_pre = compute_sentiment_context(fg=fg, rot=_rot_pre, g=g, trend=(await _aio(lambda: get_trend_7d())), stable=_stable)
             _bias_emoji_pre, _bias_label_pre = compute_bias(_sc_pre.get("scenario"), _sc_pre.get("signal_strength"), _sc_pre.get("rot_state"), _sc_pre.get("fg"), _sc_pre.get("stable_flow"))
-            _ms_pre = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+            _ms_pre = compute_market_score(g=g, fg=fg, trend=(await _aio(lambda: get_trend_7d())), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
             _div_text_pre = _fmt_divergenza_regime(_ms_pre, _rot_pre.get("state") if _rot_pre else None)
             _market_state_pre = compute_market_state(ms=_ms_pre, rot=_rot_pre, bias_emoji=_bias_emoji_pre, bias_label=_bias_label_pre, divergenza_text=_div_text_pre)
             ctx = _fmt_market_state(_market_state_pre) + chr(10) + chr(10) + ctx
         except Exception as _e_mkstate:
             log.warning(f"MARKET STATE error (non bloccante, fallback a comportamento attuale): {_e_mkstate}")
-        response = get_claude_response(t, ctx, uid)
+        response = (await _aio(lambda: get_claude_response(t, ctx, uid)))
         try:
             _score_text_pre = compute_altseason_score(g, p, fg, _stable)
             _conf_analisi_pre = _estrai_confidenza_analisi(_score_text_pre)
@@ -5985,8 +5997,8 @@ async def handle_text(u, c):
         except Exception as _e_sez12:
             log.warning(f"Sezione 1/2 deterministica error (fallback a Fase 1): {_e_sez12}")
         try:
-            _rot_bias = compute_rotation_state(g, get_trend_7d(), _stable)
-            _sc_bias = compute_sentiment_context(fg=fg, rot=_rot_bias, g=g, trend=get_trend_7d(), stable=_stable)
+            _rot_bias = (await _aio(lambda: compute_rotation_state(g, get_trend_7d(), _stable)))
+            _sc_bias = compute_sentiment_context(fg=fg, rot=_rot_bias, g=g, trend=(await _aio(lambda: get_trend_7d())), stable=_stable)
             _b_emoji, _b_label = compute_bias(_sc_bias.get("scenario"), _sc_bias.get("signal_strength"), _sc_bias.get("rot_state"), _sc_bias.get("fg"), _sc_bias.get("stable_flow"))
             # FIX cleanup Fase 2: NON appendere piu il Bias in fondo qui.
             # La Sezione 1 (gia Python-generated) lo include gia. Evita duplicazione/conflitto col dedup.
@@ -6008,7 +6020,7 @@ async def handle_text(u, c):
         followup = ""
         response = _sanitize_ai_analysis_v3(response)
         try:
-            _ms = compute_market_score(g=g, fg=fg, trend=get_trend_7d(), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+            _ms = compute_market_score(g=g, fg=fg, trend=(await _aio(lambda: get_trend_7d())), stable=_stable, p=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
             _ms_text = _fmt_market_score(_ms)
             # FIX cleanup Fase 2: NON re-inserire il Market Score qui.
             # La Sezione 1 (gia Python-generated da _fmt_sezione1_stato_mercato) lo include gia.
@@ -6039,7 +6051,7 @@ async def handle_text(u, c):
                 await u.message.reply_text("\U0001f916 AI Analysis\n\n" + response + followup, reply_markup=kb(uid))
             except Exception as _e_plain:
                 log.error(f"Invio analisi fallito anche in testo semplice: {_e_plain}")
-        salva_snapshot(g, p, fg, _stable, get_derivatives(), get_trend_7d(), ctx, response, uid)
+        (await _aio(lambda: salva_snapshot(g, p, fg, _stable, get_derivatives(), get_trend_7d(), ctx, response, uid)))
     except Exception as e:
         await u.message.reply_text(f"❌ {e}", reply_markup=KEYBOARD)
 
@@ -6072,9 +6084,9 @@ async def auto_monitor(app):
             if hour == 8 and today != last_briefing_day:
                 last_briefing_day = today
                 try:
-                    g = get_global()
-                    p = get_prices()
-                    fg = get_fg()
+                    g = (await _aio_bg(lambda: get_global()))
+                    p = (await _aio_bg(lambda: get_prices()))
+                    fg = (await _aio_bg(lambda: get_fg()))
                     ph, desc, level = phase(g["dom"])
                     date_str = now.strftime("%d/%m/%Y")
                     dom = g['dom']
@@ -6106,7 +6118,7 @@ async def auto_monitor(app):
                     try:
                         _pf_admin = load_user(ADMIN_ID).get("portfolio", {})
                         if _pf_admin:
-                            _pctx_b = compute_portfolio_context(_pf_admin, rot=compute_rotation_state(g, get_trend_7d(), get_stablecoins()), g=g, trend=get_trend_7d(), stable=get_stablecoins(), fg=fg, prices=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
+                            _pctx_b = compute_portfolio_context(_pf_admin, rot=(await _aio_bg(lambda: compute_rotation_state(g, get_trend_7d(), get_stablecoins()))), g=g, trend=(await _aio_bg(lambda: get_trend_7d())), stable=(await _aio_bg(lambda: get_stablecoins())), fg=fg, prices=p, leggi_snapshot_func=_leggi_ultimi_snapshot)
                             _briefing_admin = briefing + "\n\n" + chr(128204) + " " + _fmt_portfolio_context(_pctx_b)
                     except Exception as _e_nb:
                         log.warning("Nota portafoglio briefing error: " + str(_e_nb))
@@ -6127,16 +6139,16 @@ async def auto_monitor(app):
                 sfg = None
                 s_rot = None
                 try:
-                    sg = get_global(); sp = get_prices(); sfg = get_fg()
-                    s_stable = get_stablecoins()
+                    sg = (await _aio_bg(lambda: get_global())); sp = (await _aio_bg(lambda: get_prices())); sfg = (await _aio_bg(lambda: get_fg()))
+                    s_stable = (await _aio_bg(lambda: get_stablecoins()))
                     s_ctx = compute_altseason_score(sg, sp, sfg, s_stable)
                     s_ctx = s_ctx + chr(10) + _fmt_stable(s_stable)
-                    s_ctx = s_ctx + chr(10) + _fmt_deriv(get_derivatives())
-                    s_ctx = s_ctx + chr(10) + _fmt_trend(get_trend_7d())
-                    s_rot = compute_rotation_state(sg, get_trend_7d(), s_stable)
+                    s_ctx = s_ctx + chr(10) + _fmt_deriv((await _aio_bg(lambda: get_derivatives())))
+                    s_ctx = s_ctx + chr(10) + _fmt_trend((await _aio_bg(lambda: get_trend_7d())))
+                    s_rot = (await _aio_bg(lambda: compute_rotation_state(sg, get_trend_7d(), s_stable)))
                     s_ctx = s_ctx + chr(10) + _fmt_rotation(s_rot)
-                    s_resp = get_claude_response("Analisi automatica giornaliera", s_ctx, ADMIN_ID)
-                    salva_snapshot_auto(sg, sp, sfg, s_stable, get_derivatives(), get_trend_7d(), s_ctx, s_resp)
+                    s_resp = (await _aio_bg(lambda: get_claude_response("Analisi automatica giornaliera", s_ctx, ADMIN_ID)))
+                    (await _aio_bg(lambda: salva_snapshot_auto(sg, sp, sfg, s_stable, get_derivatives(), get_trend_7d(), s_ctx, s_resp)))
                     log.info("Snapshot automatico giornaliero salvato")
                 except Exception as e:
                     log.error(f"Snapshot automatico error: {e}")
@@ -6145,10 +6157,10 @@ async def auto_monitor(app):
                 # assegnarli) — nessun nuovo fetch, nessun secondo calcolo
                 # del Rotation Engine.
                 try:
-                    _xrpl_run_daily_pipeline(rot=s_rot, fg=sfg)
+                    (await _aio_bg(lambda: _xrpl_run_daily_pipeline(rot=s_rot, fg=sfg)))
                 except Exception as _xrpl_e:
                     log.warning(f"[XRPL] chiamata pipeline giornaliera fallita (non bloccante): {_xrpl_e}")
-            g = get_global(); p = get_prices(); fg = get_fg()
+            g = (await _aio_bg(lambda: get_global())); p = (await _aio_bg(lambda: get_prices())); fg = (await _aio_bg(lambda: get_fg()))
             ph, desc, level = phase(g["dom"])
             # Check alerts per ogni utente
             _p_fresh = prices_are_fresh(p)  # PATCH-02
@@ -6177,7 +6189,7 @@ async def auto_monitor(app):
                 except: pass
             # State Change Alert (informativo, solo admin, max 1/24h)
             try:
-                _rot_sca = compute_rotation_state(g, get_trend_7d(), get_stablecoins())
+                _rot_sca = (await _aio_bg(lambda: compute_rotation_state(g, get_trend_7d(), get_stablecoins())))
                 _sca = compute_state_change_alert(_rot_sca, _leggi_ultimi_snapshot)
                 if _sca.get("invia"):
                     try:
