@@ -5700,7 +5700,36 @@ async def auto_monitor(app):
 # ============================================================
 # WEB SERVER
 # ============================================================
-DASHBOARD_PWD = os.environ.get("DASHBOARD_PWD", "Stratega2026!!")
+# PATCH-00 ADMIN-AUTH
+# Segreto delle route /admin/*: SOLO da variabile d'ambiente (Railway), nessun
+# valore predefinito. Se manca o e' troppo corto le route restano chiuse (503).
+import hmac as _hmac
+_ADMIN_SECRET_MIN_LEN = 16
+_ADMIN_PLANS = ("free", "basic", "pro")
+ADMIN_API_SECRET = os.environ.get("ADMIN_API_SECRET", "").strip()
+
+def _admin_api_enabled():
+    return len(ADMIN_API_SECRET) >= _ADMIN_SECRET_MIN_LEN
+
+def _admin_check(headers):
+    """Ritorna (ok, status_http, messaggio). Fail-closed.
+    Il segreto e' accettato solo da header, mai da query string (finirebbe nei log)."""
+    if not _admin_api_enabled():
+        return False, 503, "admin API disabled"
+    provided = ""
+    try:
+        auth = headers.get("Authorization", "") or ""
+        if auth[:7].lower() == "bearer ":
+            provided = auth[7:].strip()
+        if not provided:
+            provided = (headers.get("X-Admin-Secret", "") or "").strip()
+    except Exception:
+        provided = ""
+    if provided and _hmac.compare_digest(
+        provided.encode("utf-8", "replace"), ADMIN_API_SECRET.encode("utf-8")
+    ):
+        return True, 200, ""
+    return False, 401, "unauthorized"
 
 class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -5708,7 +5737,22 @@ class WebHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
-        
+
+        # PATCH-00 ADMIN-AUTH: gate unico per tutto cio' che inizia con /admin
+        if path.startswith("/admin"):
+            _ok, _status, _msg = _admin_check(self.headers)
+            if not _ok:
+                _body = json.dumps({"error": _msg}).encode()
+                self.send_response(_status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                if _status == 401:
+                    self.send_header("WWW-Authenticate", 'Bearer realm="admin"')
+                self.send_header("Content-Length", str(len(_body)))
+                self.end_headers()
+                self.wfile.write(_body)
+                return
+
         if path == "/" or path == "/dashboard":
             # Serve dashboard HTML
             dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
@@ -5727,10 +5771,8 @@ class WebHandler(BaseHTTPRequestHandler):
         
         elif path == "/admin/users":
             # API per lista utenti
-            pwd = params.get("pwd", [""])[0]
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
                 users_list = list_users()
@@ -5761,10 +5803,18 @@ class WebHandler(BaseHTTPRequestHandler):
         
         elif path == "/admin/setplan":
             uid = params.get("uid", [""])[0]
-            plan = params.get("plan", ["free"])[0]
+            plan = params.get("plan", [""])[0]  # PATCH-00: nessun piano implicito
+            import re as _re_admin
+            if not _re_admin.fullmatch(r"-?\d{1,20}", uid) or plan not in _ADMIN_PLANS:
+                _body = json.dumps({"error": "invalid uid or plan"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(_body)))
+                self.end_headers()
+                self.wfile.write(_body)
+                return
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
                 if uid:
@@ -5780,7 +5830,6 @@ class WebHandler(BaseHTTPRequestHandler):
             uid = params.get("uid", [""])[0]
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
                 if uid:
@@ -5805,6 +5854,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
 def start_web():
     port = int(os.environ.get('PORT', 8080))
+    if not _admin_api_enabled():
+        log.warning("ADMIN_API_SECRET assente o < %d caratteri: route /admin/* DISABILITATE", _ADMIN_SECRET_MIN_LEN)
     HTTPServer(('', port), WebHandler).serve_forever()
 
 # ============================================================

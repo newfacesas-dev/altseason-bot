@@ -181,52 +181,50 @@ tr:hover td { background: #1a2540; }
 </div>
 
 <script>
-const ADMIN_PASSWORD = 'Stratega2026!!';
+/* PATCH-00 ADMIN-AUTH */
+// Il segreto non e' piu' nel codice: lo inserisce l'operatore al login e resta solo in memoria.
+let ADMIN_SECRET = '';
+function adminHeaders() { return { 'Authorization': 'Bearer ' + ADMIN_SECRET }; }
 const BOT_API = 'https://altseason-bot-production.up.railway.app';
 let allUsers = [];
 let chartsInitialized = false;
 let plansChartInstance = null;
 let revenueChartInstance = null;
 
-function doLogin() {
-    const pwd = document.getElementById('pwd-input').value;
-    if (pwd === ADMIN_PASSWORD) {
+async function doLogin() {
+    ADMIN_SECRET = document.getElementById('pwd-input').value;
+    document.getElementById('pwd-input').value = '';
+    const ok = await loadData();
+    if (ok) {
+        document.getElementById('login-error').style.display = 'none';
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('dashboard').style.display = 'block';
-        sessionStorage.setItem('admin_logged', '1');
-        loadData();
     } else {
+        ADMIN_SECRET = '';
         document.getElementById('login-error').style.display = 'block';
-        document.getElementById('pwd-input').value = '';
     }
 }
 
 function doLogout() {
-    sessionStorage.removeItem('admin_logged');
+    ADMIN_SECRET = '';
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('dashboard').style.display = 'none';
 }
 
-if (sessionStorage.getItem('admin_logged')) {
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'block';
-    loadData();
-}
-
 async function loadData() {
+    // Nessun dato demo: se il server rifiuta (401/503) o non risponde, il login fallisce.
     try {
-        const res = await fetch(`${BOT_API}/admin/users`);
+        const res = await fetch(`${BOT_API}/admin/users`, { headers: adminHeaders() });
+        if (!res.ok) return false;
         const data = await res.json();
         allUsers = data.users || [];
         renderDashboard(data);
     } catch(e) {
-        // Demo data se API non disponibile
-        const demo = generateDemoData();
-        allUsers = demo.users;
-        renderDashboard(demo);
+        return false;
     }
     document.getElementById('loading').style.display = 'none';
     document.getElementById('content').style.display = 'block';
+    return true;
 }
 
 function generateDemoData() {
@@ -353,7 +351,7 @@ async function setPlan() {
     const plan = document.getElementById('setplan-plan').value;
     if (!uid) return;
     try {
-        await fetch(`${BOT_API}/admin/setplan?uid=${uid}&plan=${plan}&pwd=${ADMIN_PASSWORD}`);
+        await fetch(`${BOT_API}/admin/setplan?uid=${uid}&plan=${plan}`, { headers: adminHeaders() });
     } catch(e) {}
     showResult('setplan-result');
     loadData();
@@ -361,7 +359,7 @@ async function setPlan() {
 
 async function quickUpgrade(uid) {
     try {
-        await fetch(`${BOT_API}/admin/setplan?uid=${uid}&plan=pro&pwd=${ADMIN_PASSWORD}`);
+        await fetch(`${BOT_API}/admin/setplan?uid=${uid}&plan=pro`, { headers: adminHeaders() });
     } catch(e) {}
     loadData();
 }
@@ -369,7 +367,7 @@ async function quickUpgrade(uid) {
 async function resetAI() {
     const uid = document.getElementById('resetai-uid').value.trim();
     try {
-        await fetch(`${BOT_API}/admin/resetai?uid=${uid}&pwd=${ADMIN_PASSWORD}`);
+        await fetch(`${BOT_API}/admin/resetai?uid=${uid}`, { headers: adminHeaders() });
     } catch(e) {}
     showResult('resetai-result');
     loadData();
@@ -377,7 +375,7 @@ async function resetAI() {
 
 async function quickReset(uid) {
     try {
-        await fetch(`${BOT_API}/admin/resetai?uid=${uid}&pwd=${ADMIN_PASSWORD}`);
+        await fetch(`${BOT_API}/admin/resetai?uid=${uid}`, { headers: adminHeaders() });
     } catch(e) {}
     loadData();
 }
