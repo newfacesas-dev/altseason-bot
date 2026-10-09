@@ -435,26 +435,140 @@ def get_global():
             return _cache['g']['d']
         return {"dom": 58, "dom_eth": 0, "mcap": 2.5, "total2": 0, "total3": 0}
 
+def _prices_fallback():
+    """Recupera i prezzi migliori disponibili senza aggiornarne la data."""
+    candidates = []
+
+    entry = _cache.get("p")
+    if isinstance(entry, dict) and isinstance(entry.get("d"), dict):
+        try:
+            candidates.append((float(entry["t"]), entry["d"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    try:
+        rds = get_redis()
+        if rds:
+            raw = rds.get("market:prices:v1")
+            if raw:
+                saved = json.loads(raw)
+                data = saved.get("data")
+                fetched_at = float(saved.get("fetched_at", 0))
+                if isinstance(data, dict) and fetched_at > 0:
+                    candidates.append((fetched_at, data))
+    except Exception as e:
+        log.debug("Cache Redis prezzi non disponibile: %s", e)
+
+    if candidates:
+        fetched_at, data = max(candidates, key=lambda item: item[0])
+        _cache["p"] = {"d": data, "t": fetched_at}
+        return data
+
+    return {
+        sym: {"price": 0, "ch": 0, "mcap": 0, "vol": 0}
+        for sym in ASSETS
+    }
+
+
 def get_prices():
-    if 'p' in _cache and time.time() - _cache['p']['t'] < CACHE_TTL:
-        return _cache['p']['d']
+    """Prezzi CoinGecko con cache RAM/Redis e protezione dal rate limit."""
+    now = time.time()
+
+    if "p" in _cache and now - _cache["p"]["t"] < CACHE_TTL:
+        return _cache["p"]["d"]
+
+    cooldown_until = _cache.get("_prices_cooldown_until", 0)
+    if now < cooldown_until:
+        return _prices_fallback()
+
+    rds = None
+    try:
+        rds = get_redis()
+        if rds and rds.exists("market:coingecko:prices:cooldown"):
+            return _prices_fallback()
+    except Exception as e:
+        log.debug("Controllo cooldown Redis non disponibile: %s", e)
+
     try:
         time.sleep(2)
         ids = ",".join(ASSETS.values())
-        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true", timeout=10)
-        r.raise_for_status()
-        raw = r.json()
+        url = (
+            "https" + "://" + "api.coingecko.com"
+            + "/api/v3/simple/price"
+            + f"?ids={ids}&vs_currencies=usd"
+            + "&include_24hr_change=true&include_market_cap=true"
+            + "&include_24hr_vol=true"
+        )
+        response = requests.get(url, timeout=10)
+
+        if response.status_code == 429:
+            _cache["_prices_cooldown_until"] = time.time() + 120
+            try:
+                if rds:
+                    rds.setex("market:coingecko:prices:cooldown", 120, "1")
+            except Exception as e:
+                log.debug("Salvataggio cooldown Redis fallito: %s", e)
+            log.warning(
+                "CoinGecko HTTP 429: pausa di 120 secondi; uso cache se disponibile."
+            )
+            return _prices_fallback()
+
+        response.raise_for_status()
+        raw = response.json()
         result = {}
+
         for sym, cid in ASSETS.items():
-            d = raw.get(cid, {})
-            result[sym] = {"price": d.get("usd", 0), "ch": d.get("usd_24h_change", 0), "mcap": d.get("usd_market_cap", 0), "vol": d.get("usd_24h_vol", 0)}
-        _cache['p'] = {'d': result, 't': time.time()}
+            data = raw.get(cid, {})
+            result[sym] = {
+                "price": data.get("usd", 0),
+                "ch": data.get("usd_24h_change", 0),
+                "mcap": data.get("usd_market_cap", 0),
+                "vol": data.get("usd_24h_vol", 0),
+            }
+
+        # Non memorizzare risposte con copertura prezzi insufficiente.
+        valid_prices = sum(
+            1 for item in result.values()
+            if isinstance(item.get("price"), (int, float))
+            and not isinstance(item.get("price"), bool)
+            and item["price"] > 0
+        )
+        minimum_valid = max(1, (len(ASSETS) * 8 + 9) // 10)
+
+        if valid_prices < minimum_valid:
+            log.warning(
+                "CoinGecko: risposta incompleta (%s/%s prezzi validi). "
+                "Uso cache precedente senza aggiornarne il timestamp.",
+                valid_prices, len(ASSETS),
+            )
+            return _prices_fallback()
+
+        fetched_at = time.time()
+        _cache["p"] = {"d": result, "t": fetched_at}
+        _cache.pop("_prices_cooldown_until", None)
+
+        try:
+            if rds and any(
+                isinstance(data.get("price"), (int, float))
+                and data["price"] > 0
+                for data in result.values()
+            ):
+                rds.setex(
+                    "market:prices:v1",
+                    86400,
+                    json.dumps({"data": result, "fetched_at": fetched_at}),
+                )
+                rds.delete("market:coingecko:prices:cooldown")
+        except Exception as e:
+            log.warning("Salvataggio cache prezzi Redis fallito: %s", e)
+
         return result
+
     except Exception as e:
-        log.warning("get_prices: errore CoinGecko (%s). Uso ultima cache se disponibile.", e)
-        if 'p' in _cache:
-            return _cache['p']['d']
-        return {s: {"price": 0, "ch": 0, "mcap": 0, "vol": 0} for s in ASSETS}
+        log.warning(
+            "get_prices: errore CoinGecko (%s). Uso cache se disponibile.", e
+        )
+        return _prices_fallback()
 
 def get_fg():
     if 'fg' in _cache and time.time() - _cache['fg']['t'] < CACHE_TTL:
