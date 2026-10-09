@@ -2390,13 +2390,82 @@ Massimo 250-350 parole. Sii compatto e operativo. Non inventare dati: se mancano
     except Exception as e:
         return f'Errore AI: {e}'
 
+# PATCH-02 ALERT-GUARD
+import math as _math_pa
+
+ALERT_PRICE_MAX_AGE = 900   # gli alert di prezzo usano solo prezzi piu' giovani di 15 min
+_ALERTS_PAUSE_STATE = {"paused": False}
+
+def prices_age(p):
+    """Eta' in secondi dei prezzi `p` (oggetto restituito da get_prices), oppure None
+    se non sono attribuibili alla cache (es. dizionario di zeri del cold start)."""
+    entry = _cache.get("p")
+    if not isinstance(entry, dict) or entry.get("d") is not p:
+        return None
+    try:
+        age = time.time() - float(entry["t"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return age if age >= -60 else None  # timestamp nel futuro: non affidabile
+
+def prices_are_fresh(p, max_age=ALERT_PRICE_MAX_AGE):
+    age = prices_age(p)
+    return age is not None and age <= max_age
+
+def _finite_positive(v):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v) if _math_pa.isfinite(v) and v > 0 else None
+
+def price_value(prices, sym):
+    """Prezzo float finito > 0, altrimenti None (mai 0, mai None propagato)."""
+    try:
+        return _finite_positive(prices[sym]["price"])
+    except (KeyError, TypeError, IndexError):
+        return None
+
+def change_value(prices, sym):
+    """Variazione 24h float finita (anche 0 o negativa), altrimenti None."""
+    try:
+        v = prices[sym]["ch"]
+    except (KeyError, TypeError, IndexError):
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not _math_pa.isfinite(v):
+        return None
+    return float(v)
+
+def _alerts_pause_log(fresh, age):
+    if not fresh and not _ALERTS_PAUSE_STATE["paused"]:
+        _ALERTS_PAUSE_STATE["paused"] = True
+        log.warning("Alert di prezzo SOSPESI: prezzi non freschi (eta' %s s). Gli alert restano salvati.",
+                    "n/d" if age is None else int(age))
+    elif fresh and _ALERTS_PAUSE_STATE["paused"]:
+        _ALERTS_PAUSE_STATE["paused"] = False
+        log.info("Alert di prezzo RIPRESI: prezzi di nuovo freschi.")
+
+def _briefing_price_line(label, prices, sym, fmt, fresh):
+    pr = price_value(prices, sym)
+    if not fresh or pr is None:
+        return "\u2022 " + label + ": `n/d`"
+    ch = change_value(prices, sym)
+    ch_txt = " (" + "{:+.1f}".format(ch) + "%)" if ch is not None else ""
+    return "\u2022 " + label + ": `$" + format(pr, fmt) + "`" + ch_txt
+
 def check_alerts_user(chat_id, prices):
+    # PATCH-02: senza prezzi attendibili non si valuta nulla e gli alert restano intatti.
+    if not isinstance(prices, dict) or not prices:
+        return []
     ud = load_user(chat_id)
     triggered, remaining = [], []
     for a in ud.get("alerts", []):
-        sym, target, above = a["sym"], a["price"], a["above"]
-        cur = prices.get(sym, {}).get("price", 0)
-        if cur == 0: remaining.append(a); continue
+        try:
+            sym, target, above = a["sym"], a["price"], a["above"]
+            cur = price_value(prices, sym)
+            target = _finite_positive(target)
+        except Exception:
+            remaining.append(a); continue
+        if cur is None or target is None:
+            remaining.append(a); continue
         hit = (above and cur >= target) or (not above and cur <= target)
         if hit:
             d = "↗️" if above else "↘️"
@@ -5727,14 +5796,7 @@ async def auto_monitor(app):
                     ph, desc, level = phase(g["dom"])
                     date_str = now.strftime("%d/%m/%Y")
                     dom = g['dom']
-                    btc_p = p['BTC']['price']
-                    btc_c = p['BTC']['ch']
-                    eth_p = p['ETH']['price']
-                    eth_c = p['ETH']['ch']
-                    xrp_p = p['XRP']['price']
-                    xrp_c = p['XRP']['ch']
-                    sol_p = p['SOL']['price']
-                    sol_c = p['SOL']['ch']
+                    _p_fresh_b = prices_are_fresh(p)  # PATCH-02
                     fg_v = fg['v']
                     fg_lbl = fg['lbl']
                     fg_em = fg['em']
@@ -5749,10 +5811,11 @@ async def auto_monitor(app):
                         "\u2022 Fear&Greed: " + fg_em + " `" + str(fg_v) + " - " + fg_lbl + "`",
                         "",
                         "\U0001f4b0 *PREZZI*",
-                        "\u2022 BTC: `$" + "{:,.0f}".format(btc_p) + "` (" + "{:+.1f}".format(btc_c) + "%)",
-                        "\u2022 ETH: `$" + "{:,.0f}".format(eth_p) + "` (" + "{:+.1f}".format(eth_c) + "%)",
-                        "\u2022 XRP: `$" + "{:,.4f}".format(xrp_p) + "` (" + "{:+.1f}".format(xrp_c) + "%)",
-                        "\u2022 SOL: `$" + "{:,.1f}".format(sol_p) + "` (" + "{:+.1f}".format(sol_c) + "%)",
+                        _briefing_price_line("BTC", p, "BTC", ",.0f", _p_fresh_b),
+                        _briefing_price_line("ETH", p, "ETH", ",.0f", _p_fresh_b),
+                        _briefing_price_line("XRP", p, "XRP", ",.4f", _p_fresh_b),
+                        _briefing_price_line("SOL", p, "SOL", ",.1f", _p_fresh_b),
+                        *([] if _p_fresh_b else ["_Prezzi non aggiornati: fonte dati momentaneamente non raggiungibile_"]),
                         "",
                         "\U0001f4a1 Scrivi qualsiasi domanda al tuo AI consulente!",
                     ]
@@ -5806,9 +5869,11 @@ async def auto_monitor(app):
             g = get_global(); p = get_prices(); fg = get_fg()
             ph, desc, level = phase(g["dom"])
             # Check alerts per ogni utente
+            _p_fresh = prices_are_fresh(p)  # PATCH-02
+            _alerts_pause_log(_p_fresh, prices_age(p))
             users = list_users()
             for cid in users:
-                triggered = check_alerts_user(cid, p)
+                triggered = check_alerts_user(cid, p if _p_fresh else None)
                 for msg in triggered:
                     try:
                         await app.bot.send_message(chat_id=int(cid), text=msg, parse_mode="Markdown")
@@ -5821,7 +5886,9 @@ async def auto_monitor(app):
                 except: pass
                 last_phase = level
             # Meme mania alert
-            memes = [s for s in ["DOGE","BONK","PEPE","SHIB"] if p.get(s, {}).get("ch", 0) > 8]
+            memes = [s for s in ["DOGE","BONK","PEPE","SHIB"]
+                     if _p_fresh and price_value(p, s) is not None
+                     and change_value(p, s) is not None and change_value(p, s) > 8]  # PATCH-02
             if len(memes) >= 2:
                 try:
                     await app.bot.send_message(chat_id=CHAT_ID, text=f"🎰 *MEME MANIA!* {', '.join(memes)} tutti >8%\n⚠️ Segnale euforia!", parse_mode="Markdown")
