@@ -4666,9 +4666,11 @@ def _fmt_rotation_intelligence(ri):
     if not ri:
         return "ROTATION INTELLIGENCE\nDati non disponibili."
     cat_disp = _RI_NOMI_DISPLAY.get(ri.get("categoria"), "n/d")
+    # PATCH-03B RI-WORDING: avviso forte solo se mancano dati a livello di categoria o di score
+    _grave = ri.get("score") is None or bool(ri.get("categorie_senza_dati"))
     if ri.get("score") is None:
         score_txt = "n/d (dati insufficienti)"
-    elif ri.get("parziale"):
+    elif ri.get("parziale") and _grave:
         score_txt = f"{ri['score']}/100 (parziale)"
     else:
         score_txt = f"{ri['score']}/100"
@@ -4680,11 +4682,18 @@ def _fmt_rotation_intelligence(ri):
         f"Stato: {ri.get('stato', 'n/d')}",
     ]
     # PATCH-03: copertura e dati non verificabili (nessuna riga extra a dati completi)
-    if ri.get("parziale") or ri.get("score") is None:
+    if _grave:
         righe.append(f"Copertura dati: {ri.get('copertura', 0)}/100")
         if ri.get("dati_mancanti"):
             righe.append("Indicatori non verificabili: " + ", ".join(ri["dati_mancanti"]))
         righe.append("ATTENZIONE: valutazione incompleta. Un punteggio basso o assente non indica assenza di rotazione.")
+    elif ri.get("parziale") and ri.get("dati_parziali"):
+        import re as _re_ri
+        _brevi = []
+        for _g in ri["dati_parziali"]:
+            _m = _re_ri.match(r"\s*([A-Za-z0-9_]+)\s*:\s*(\d+/\d+)", str(_g))
+            _brevi.append(f"{_m.group(1)} {_m.group(2)}" if _m else str(_g).strip())
+        righe.append("Nota: mancano dati a 7 giorni per alcune coin (" + ", ".join(_brevi) + ")")
     righe.append("Finestra di osservazione: 3-7 giorni")
     return chr(10).join(righe)
 
