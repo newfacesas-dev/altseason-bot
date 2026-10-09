@@ -4574,25 +4574,52 @@ _RI_NOMI_DISPLAY = {
     "ETH": "ETH", "LARGE": "LARGE CAP", "MID": "MID CAP", "AI": "AI", "MEME": "MEME", "BTC": "BTC",
 }
 
+# PATCH-03 RI-DATA-VS-SIGNAL
+_RI_LETTURA_INCOMPLETA = "Valutazione incompleta: non e' possibile stabilire se esista una rotazione."
+
 def compute_rotation_intelligence(rot):
     """Calcola il Rotation Score categoriale (0-100), confrontando la categoria
     piu' forte con BTC (baseline). Deterministico, nessun asset-specifico.
     Soglia di normalizzazione dichiarata: ogni 2 punti percentuali di differenza
-    di forza_7d = ~10 punti di score, cap a 100. Non validata statisticamente."""
+    di forza_7d = ~10 punti di score, cap a 100. Non validata statisticamente.
+    PATCH-03: distingue ASSENZA DI SEGNALI (dati completi, score 0 reale) da
+    ASSENZA DI DATI (score None / stato DATI INSUFFICIENTI o DATI PARZIALI)."""
+    import math as _m_ri
     out = {
         "categoria": None, "score": None, "lettura": None, "stato": None,
         "dati_mancanti": [],
+        "parziale": False, "copertura": 0, "categorie_senza_dati": [], "dati_parziali": [],
     }
     forza = {}
+    dati_parziali = []
     try:
-        forza = (rot or {}).get("dettagli", {}).get("forza_7d", {}) or {}
+        _dett = (rot or {}).get("dettagli", {}) or {}
+        forza = _dett.get("forza_7d", {}) or {}
+        dati_parziali = [str(x) for x in (_dett.get("dati_mancanti") or [])]
     except Exception:
+        forza, dati_parziali = {}, []
+    if not isinstance(forza, dict):
         forza = {}
+    # solo valori numerici finiti: il resto e' un dato mancante, non uno zero
+    forza = {
+        k: v for k, v in forza.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and _m_ri.isfinite(v)
+    }
 
-    if not forza or "BTC" not in forza:
-        out["dati_mancanti"].append("Rotation Engine forza_7d")
-        out["stato"] = "CONFERMA NON PRESENTE"
-        out["lettura"] = _RI_LETTURE["BTC"]
+    senza_dati = [c for c in _RI_CATEGORIE if c not in forza]
+    out["categorie_senza_dati"] = senza_dati
+    out["dati_parziali"] = dati_parziali
+    out["copertura"] = round((len(_RI_CATEGORIE) - len(senza_dati)) / len(_RI_CATEGORIE) * 100)
+
+    if "BTC" not in forza:
+        out["dati_mancanti"].append("BTC (baseline di confronto)")
+        out["stato"] = "DATI INSUFFICIENTI"
+        out["lettura"] = _RI_LETTURA_INCOMPLETA
+        return out
+    if len(senza_dati) == len(_RI_CATEGORIE):
+        out["dati_mancanti"].append("Categorie da confrontare: " + ", ".join(senza_dati))
+        out["stato"] = "DATI INSUFFICIENTI"
+        out["lettura"] = _RI_LETTURA_INCOMPLETA
         return out
 
     forza_btc = forza.get("BTC", 0)
@@ -4620,6 +4647,18 @@ def compute_rotation_intelligence(rot):
     out["score"] = score
     out["lettura"] = _RI_LETTURE.get(migliore_categoria, _RI_LETTURE["BTC"])
     out["stato"] = stato
+
+    # PATCH-03: dati incompleti
+    if senza_dati:
+        out["dati_mancanti"].append("Categorie senza dati: " + ", ".join(senza_dati))
+    if dati_parziali:
+        out["dati_mancanti"].append("Coin senza dati: " + "; ".join(dati_parziali))
+    if senza_dati or dati_parziali:
+        out["parziale"] = True
+    if senza_dati and stato == "CONFERMA NON PRESENTE":
+        # con categorie cieche l'assenza di conferma non e' dimostrabile
+        out["stato"] = "DATI PARZIALI"
+        out["lettura"] = _RI_LETTURA_INCOMPLETA
     return out
 
 def _fmt_rotation_intelligence(ri):
@@ -4627,15 +4666,26 @@ def _fmt_rotation_intelligence(ri):
     if not ri:
         return "ROTATION INTELLIGENCE\nDati non disponibili."
     cat_disp = _RI_NOMI_DISPLAY.get(ri.get("categoria"), "n/d")
-    score_txt = f"{ri['score']}/100" if ri.get("score") is not None else "n/d"
+    if ri.get("score") is None:
+        score_txt = "n/d (dati insufficienti)"
+    elif ri.get("parziale"):
+        score_txt = f"{ri['score']}/100 (parziale)"
+    else:
+        score_txt = f"{ri['score']}/100"
     righe = [
         "ROTATION INTELLIGENCE",
         f"Categoria in evidenza: {cat_disp}",
         f"Rotation Score: {score_txt}",
         f"Lettura: {ri.get('lettura', 'n/d')}",
         f"Stato: {ri.get('stato', 'n/d')}",
-        "Finestra di osservazione: 3-7 giorni",
     ]
+    # PATCH-03: copertura e dati non verificabili (nessuna riga extra a dati completi)
+    if ri.get("parziale") or ri.get("score") is None:
+        righe.append(f"Copertura dati: {ri.get('copertura', 0)}/100")
+        if ri.get("dati_mancanti"):
+            righe.append("Indicatori non verificabili: " + ", ".join(ri["dati_mancanti"]))
+        righe.append("ATTENZIONE: valutazione incompleta. Un punteggio basso o assente non indica assenza di rotazione.")
+    righe.append("Finestra di osservazione: 3-7 giorni")
     return chr(10).join(righe)
 
 # ============================================================
