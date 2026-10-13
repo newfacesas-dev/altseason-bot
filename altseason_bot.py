@@ -3412,6 +3412,172 @@ def _resetbaseline_build_plan(portfolio, prices):
     return valid, skipped
 
 
+# --- BASELINE FX FIXED (auto-patch) ---
+# Baseline FISSA in EUR: 'buy' resta in USD (invariato), ma al momento del
+# reset si salva anche 'baseline_fx' (EUR/USD, 1 EUR = X USD). La baseline in
+# EUR e' sempre buy/baseline_fx (non cambia mai); il valore corrente e'
+# prezzo/cambio_di_oggi. Mai un cambio inventato: se manca, N/D.
+_ECB_FX_CACHE = {"ts": 0.0, "val": None}
+
+
+def _fx_valid(rate):
+    """Cambio EUR/USD plausibile: numero >0 e tra 0.5 e 2.0."""
+    try:
+        r = float(rate)
+    except (TypeError, ValueError):
+        return False
+    return 0.5 <= r <= 2.0
+
+
+def _fetch_ecb_eurusd():
+    """Cambio ufficiale BCE via Frankfurter (bloccante, cache 300s).
+    Ritorna {"rate", "source": "ecb", "date": "YYYY-MM-DD"} o None."""
+    now = time.time()
+    if _ECB_FX_CACHE["val"] is not None and now - _ECB_FX_CACHE["ts"] < 300:
+        return _ECB_FX_CACHE["val"]
+    try:
+        r = requests.get(
+            "https://api.frankfurter.dev/v1/latest",
+            params={"from": "EUR", "to": "USD"},
+            timeout=8,
+        )
+        r.raise_for_status()
+        d = r.json()
+        rate = d["rates"]["USD"]
+        if _fx_valid(rate):
+            val = {"rate": float(rate), "source": "ecb", "date": str(d.get("date", ""))}
+            _ECB_FX_CACHE["ts"] = now
+            _ECB_FX_CACHE["val"] = val
+            return val
+    except Exception as e:
+        log.warning("[FX] BCE/Frankfurter non disponibile: %s", e)
+    return None
+
+
+async def _get_eurusd_info(forex):
+    """Cambio EUR/USD: prima Yahoo (dal dict forex gia' letto), poi BCE.
+    Ritorna {"rate", "source", "date"} o None se entrambe falliscono."""
+    y = _get_valid_eurusd_rate(forex)
+    if y is not None and _fx_valid(y):
+        return {"rate": float(y), "source": "yahoo", "date": None}
+    return await _aio(lambda: _fetch_ecb_eurusd())
+
+
+def _fx_source_label(source, date):
+    if source == "ecb":
+        try:
+            d = datetime.strptime(str(date), "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            d = str(date or "")
+        return ("BCE " + d).strip()
+    if source == "yahoo":
+        return "Yahoo"
+    if source == "manual":
+        return "inserito a mano"
+    return str(source or "n/d")
+
+
+def _fmt_fx_info(info):
+    return "Cambio EUR/USD: `{:.4f}` ({})".format(
+        info["rate"], _fx_source_label(info.get("source"), info.get("date"))
+    )
+
+
+def _position_view(qty, buy_usd, baseline_fx, price_usd, fx_now):
+    """Vista di una posizione. Se fx_now e' valido -> EUR: baseline =
+    buy/baseline_fx (fissa), corrente = prezzo/fx_now. Se la baseline USD e'
+    valida ma manca baseline_fx -> baseline N/D (missing_fx=True), MAI il
+    cambio di oggi al posto di quello storico. Se fx_now non e' valido ->
+    USD (baseline = buy). qty non viene mai modificata."""
+    eur = _fx_valid(fx_now)
+    buy_ok = _resetbaseline_validate_price(buy_usd)
+    out = {
+        "currency": "EUR" if eur else "USD",
+        "cur_price": None, "cur_value": None,
+        "base_price": None, "base_value": None,
+        "pnl": None, "pnl_pct": None,
+        "baseline_valid": False, "missing_fx": False,
+    }
+    if eur:
+        out["cur_price"] = price_usd / float(fx_now)
+    else:
+        out["cur_price"] = price_usd
+    out["cur_value"] = qty * out["cur_price"]
+    if not buy_ok:
+        return out
+    if eur:
+        if not _fx_valid(baseline_fx):
+            out["missing_fx"] = True
+            return out
+        out["base_price"] = float(buy_usd) / float(baseline_fx)
+    else:
+        out["base_price"] = float(buy_usd)
+    out["base_value"] = qty * out["base_price"]
+    out["pnl"] = out["cur_value"] - out["base_value"]
+    out["pnl_pct"] = (out["pnl"] / out["base_value"] * 100) if out["base_value"] > 0 else None
+    out["baseline_valid"] = True
+    return out
+
+
+def _apply_baselinefx(portfolio, rate):
+    """Imposta baseline_fx SOLO sulle posizioni con baseline USD valida,
+    baseline_at presente e baseline_fx ancora assente. Non tocca qty/buy.
+    Ritorna (filled, already, no_baseline) come liste di simboli."""
+    filled, already, no_baseline = [], [], []
+    for sym, pos in portfolio.items():
+        if not (_resetbaseline_validate_price(pos.get("buy")) and pos.get("baseline_at")):
+            no_baseline.append(sym)
+        elif _fx_valid(pos.get("baseline_fx")):
+            already.append(sym)
+        else:
+            pos["baseline_fx"] = float(rate)
+            pos["baseline_fx_source"] = "manual"
+            filled.append(sym)
+    return sorted(filled), sorted(already), sorted(no_baseline)
+
+
+async def cmd_baselinefx(u, c):
+    """Admin: /baselinefx 1.1664 — compila UNA volta il cambio storico delle
+    posizioni gia' in portfolio che non lo hanno (baseline precedente al
+    cambio fisso). Non modifica qty ne' buy."""
+    uid = get_uid(u)
+    if uid != ADMIN_ID:
+        await u.message.reply_text("❌ Comando riservato all'amministratore.", reply_markup=KEYBOARD)
+        return
+    args = getattr(c, "args", None) or []
+    if len(args) != 1:
+        await u.message.reply_text("Uso: /baselinefx 1.1664\n(cambio EUR/USD del giorno della baseline)", reply_markup=KEYBOARD)
+        return
+    try:
+        rate = float(str(args[0]).replace(",", "."))
+    except ValueError:
+        rate = None
+    if rate is None or not _fx_valid(rate):
+        await u.message.reply_text("❌ Cambio non valido (atteso un numero tra 0.5 e 2.0, es. 1.1664).", reply_markup=KEYBOARD)
+        return
+    ud = load_user(uid)
+    pf = ud.get("portfolio", {})
+    filled, already, no_baseline = _apply_baselinefx(pf, rate)
+    if filled:
+        ud["portfolio"] = pf
+        save_user(uid, ud)
+    lines = ["✅ *CAMBIO BASELINE IMPOSTATO*" if filled else "ℹ️ *Nessuna posizione aggiornata*"]
+    if filled:
+        lines.append("\nCambio `{:.4f}` salvato su: {}".format(rate, ", ".join(filled)))
+        for sym in filled:
+            try:
+                d = datetime.fromisoformat(pf[sym]["baseline_at"]).strftime("%d/%m/%Y")
+            except Exception:
+                d = "?"
+            lines.append("• {}: baseline del {}".format(sym, d))
+    if already:
+        lines.append("\nGia' con cambio (non toccate): " + ", ".join(already))
+    if no_baseline:
+        lines.append("\nSenza baseline datata (restano N/D in EUR): " + ", ".join(no_baseline))
+    await u.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=KEYBOARD)
+# --- END BASELINE FX FIXED ---
+
+
 async def cmd_portfolio(u, c):
     uid = get_uid(u)
     ud = load_user(uid)
@@ -3422,19 +3588,23 @@ async def cmd_portfolio(u, c):
     try:
         prices = (await _aio(lambda: get_prices()))
         forex = (await _aio(lambda: get_forex()))  # UNA sola volta per l'intero rendering, mai per singola coin
-        eurusd = _get_valid_eurusd_rate(forex)
+        fx_info = await _get_eurusd_info(forex)
+        eurusd = fx_info["rate"] if fx_info else None
         eur_ok = eurusd is not None
         cur_sym = "€" if eur_ok else "$"
 
         lines = ["💼 *PORTFOLIO*\n"]
         if not eur_ok:
-            lines.append("⚠️ Cambio EUR/USD non disponibile — valori visualizzati in USD\n")
+            lines.append("⚠️ Cambio EUR/USD non disponibile (Yahoo e BCE) — valori visualizzati in USD\n")
+        else:
+            lines.append(_fmt_fx_info(fx_info) + "\n")
 
-        total_current_usd = 0.0
-        total_baseline_usd = 0.0
-        total_pnl_usd = 0.0
+        total_current = 0.0
+        total_baseline = 0.0
+        total_pnl = 0.0
         n_valid = 0
         n_priced = 0
+        n_missing_fx = 0
 
         for sym, pos in sorted(pf.items()):
             pr = prices.get(sym, {}).get("price", 0)
@@ -3443,27 +3613,22 @@ async def cmd_portfolio(u, c):
             n_priced += 1
             qty = pos["qty"]
             buy = pos.get("buy")
-            calc = _pnl_position(qty, buy, pr)
-            total_current_usd += calc["current_value_usd"]
-
-            price_disp = pr if not eur_ok else _usd_to_eur(pr, eurusd)
-            cur_disp = calc["current_value_usd"] if not eur_ok else _usd_to_eur(calc["current_value_usd"], eurusd)
+            v = _position_view(qty, buy, pos.get("baseline_fx"), pr, eurusd)
+            total_current += v["cur_value"]
 
             lines.append(f"\n🔹 *{sym}*")
             lines.append(f"Quantità: `{_fmt_qty(qty)} {sym}`")
-            lines.append(f"Prezzo attuale: `{cur_sym}{_fmt_price_dynamic(price_disp)}`")
-            lines.append(f"Valore posizione: `{cur_sym}{cur_disp:,.2f}`")
+            lines.append(f"Prezzo attuale: `{cur_sym}{_fmt_price_dynamic(v['cur_price'])}`")
+            lines.append(f"Valore posizione: `{cur_sym}{v['cur_value']:,.2f}`")
 
-            if calc["baseline_valid"]:
+            if v["baseline_valid"]:
                 n_valid += 1
-                total_baseline_usd += calc["initial_value_usd"]
-                total_pnl_usd += calc["pnl_usd"]
-                baseline_price_disp = buy if not eur_ok else _usd_to_eur(buy, eurusd)
-                pnl_disp = calc["pnl_usd"] if not eur_ok else _usd_to_eur(calc["pnl_usd"], eurusd)
-                pct = calc["pnl_pct"] if calc["pnl_pct"] is not None else 0.0
-                a = "🟢" if calc["pnl_usd"] >= 0 else "🔴"
-                lines.append(f"Prezzo baseline: `{cur_sym}{_fmt_price_dynamic(baseline_price_disp)}`")
-                lines.append(f"{a} P&L: `{cur_sym}{pnl_disp:+,.2f}` (`{pct:+.1f}%`)")
+                total_baseline += v["base_value"]
+                total_pnl += v["pnl"]
+                pct = v["pnl_pct"] if v["pnl_pct"] is not None else 0.0
+                a = "🟢" if v["pnl"] >= 0 else "🔴"
+                lines.append(f"Prezzo baseline: `{cur_sym}{_fmt_price_dynamic(v['base_price'])}`")
+                lines.append(f"{a} P&L: `{cur_sym}{v['pnl']:+,.2f}` (`{pct:+.1f}%`)")
                 baseline_at = pos.get("baseline_at")
                 if baseline_at:
                     try:
@@ -3472,23 +3637,26 @@ async def cmd_portfolio(u, c):
                     except Exception:
                         pass
             else:
-                lines.append("Prezzo baseline: `NON DISPONIBILE`")
+                if v["missing_fx"]:
+                    n_missing_fx += 1
+                    lines.append("Prezzo baseline: `N/D (cambio storico mancante)`")
+                else:
+                    lines.append("Prezzo baseline: `NON DISPONIBILE`")
                 lines.append("P&L: `N/D`")
 
-        tot_current_disp = total_current_usd if not eur_ok else _usd_to_eur(total_current_usd, eurusd)
         lines.append("\n💼 *TOTALE PORTAFOGLIO*")
-        lines.append(f"Valore attuale: `{cur_sym}{tot_current_disp:,.2f}`")
+        lines.append(f"Valore attuale: `{cur_sym}{total_current:,.2f}`")
         if n_valid > 0:
-            tot_baseline_disp = total_baseline_usd if not eur_ok else _usd_to_eur(total_baseline_usd, eurusd)
-            tot_pnl_disp = total_pnl_usd if not eur_ok else _usd_to_eur(total_pnl_usd, eurusd)
-            tot_pct = (total_pnl_usd / total_baseline_usd * 100) if total_baseline_usd > 0 else 0.0
-            a = "🟢" if total_pnl_usd >= 0 else "🔴"
-            lines.append(f"Valore baseline: `{cur_sym}{tot_baseline_disp:,.2f}`")
-            lines.append(f"{a} P&L: `{cur_sym}{tot_pnl_disp:+,.2f}` (`{tot_pct:+.1f}%`)")
+            tot_pct = (total_pnl / total_baseline * 100) if total_baseline > 0 else 0.0
+            a = "🟢" if total_pnl >= 0 else "🔴"
+            lines.append(f"Valore baseline: `{cur_sym}{total_baseline:,.2f}`")
+            lines.append(f"{a} P&L: `{cur_sym}{total_pnl:+,.2f}` (`{tot_pct:+.1f}%`)")
         else:
             lines.append("P&L: `N/D` (nessuna posizione con baseline valida)")
         if n_valid < n_priced:
             lines.append(f"\n_P&L calcolato su {n_valid}/{n_priced} posizioni con baseline valida_")
+        if n_missing_fx:
+            lines.append(f"_{n_missing_fx} posizioni senza cambio storico: usa /baselinefx_")
         lines.append(f"\n_Valori letti dal sistema alle {datetime.now(_ROME_TZ).strftime('%H:%M')}_")
 
         # Telegram limita ogni messaggio a 4096 caratteri.
@@ -3557,35 +3725,46 @@ async def cmd_resetbaseline(u, c):
         )
         return
 
+    # --- RESETBASELINE FIXED FX (auto-patch) ---
+    # Il cambio EUR/USD al momento del reset e' OBBLIGATORIO: viene salvato
+    # insieme alla baseline (baseline_fx) per renderla fissa in EUR. Se non
+    # e' disponibile (Yahoo e BCE), il reset viene rifiutato.
+    forex = (await _aio(lambda: get_forex()))
+    fx_info = await _get_eurusd_info(forex)
+    if fx_info is None:
+        await u.message.reply_text(
+            "❌ Cambio EUR/USD non disponibile (Yahoo e BCE). Reset annullato: la baseline fissa in EUR richiede il cambio del momento. Nessuna modifica effettuata.",
+            reply_markup=KEYBOARD,
+        )
+        return
+    eurusd = fx_info["rate"]
+
     baseline_at = datetime.now(_ROME_TZ).isoformat()
-    c.user_data["pending_resetbaseline"] = {"prices": valid, "baseline_at": baseline_at}
+    c.user_data["pending_resetbaseline"] = {
+        "prices": valid,
+        "baseline_at": baseline_at,
+        "fx": eurusd,
+        "fx_source": fx_info.get("source"),
+        "fx_date": fx_info.get("date"),
+    }
 
     # --- RESETBASELINE PREVIEW EUR (auto-patch) ---
-    # get_forex() chiamato UNA sola volta, solo per l'anteprima. Riusa
-    # _get_valid_eurusd_rate/_usd_to_eur gia' esistenti, non modificate.
-    # 'valid'/'pending_resetbaseline' restano in USD, invariati: la
-    # conversione EUR e' esclusivamente qui, per la sola visualizzazione.
-    forex = (await _aio(lambda: get_forex()))
-    eurusd = _get_valid_eurusd_rate(forex)
-    eur_ok = eurusd is not None
-    cur_sym = "€" if eur_ok else "$"
-
-    def _preview_disp(v):
-        return v if not eur_ok else _usd_to_eur(v, eurusd)
-
+    # 'valid'/'pending_resetbaseline' restano in USD (+ cambio salvato):
+    # la conversione EUR e' solo per la visualizzazione.
     lines = ["🔄 *ANTEPRIMA RESET BASELINE*\n"]
-    if not eur_ok:
-        lines.append("⚠️ Cambio EUR/USD non disponibile — anteprima visualizzata in USD\n")
+    lines.append(_fmt_fx_info(fx_info) + "\n")
     for sym, new_price in sorted(valid.items()):
         old_buy = pf[sym].get("buy")
-        old_valid = _resetbaseline_validate_price(old_buy)
-        old_disp = _preview_disp(old_buy) if old_valid else None
-        new_disp = _preview_disp(new_price)
-        old_str = f"{cur_sym}{_fmt_price_dynamic(old_disp)}" if old_disp is not None else "N/D"
+        old_fx = pf[sym].get("baseline_fx")
+        if _resetbaseline_validate_price(old_buy) and _fx_valid(old_fx):
+            old_str = "€" + _fmt_price_dynamic(float(old_buy) / float(old_fx))
+        else:
+            old_str = "N/D"
+        new_eur = new_price / eurusd
         lines.append(f"\n🔹 *{sym}*")
         lines.append(f"Quantità: `{_fmt_qty(pf[sym]['qty'])} {sym}`")
         lines.append(f"Baseline precedente: `{old_str}`")
-        lines.append(f"Nuova baseline: `{cur_sym}{_fmt_price_dynamic(new_disp)}`")
+        lines.append(f"Nuova baseline: `€{_fmt_price_dynamic(new_eur)}`")
     if skipped:
         lines.append(f"\n⚠️ Saltate (prezzo non disponibile): {', '.join(sorted(skipped))}")
     lines.append(f"\n_Prezzi letti dal sistema alle {datetime.now(_ROME_TZ).strftime('%H:%M')}_")
@@ -3617,6 +3796,13 @@ async def resetbaseline_callback(update, context):
         await query.edit_message_text("❌ Nessuna operazione di reset in sospeso (forse scaduta). Ripeti /resetbaseline.")
         return
 
+    fx_saved = pending.get("fx")
+    if not _fx_valid(fx_saved):
+        context.user_data.pop("pending_resetbaseline", None)
+        await query.edit_message_text("❌ Cambio EUR/USD mancante nell'operazione in sospeso. Ripeti /resetbaseline. Nessuna modifica effettuata.")
+        return
+    fx_label = _fx_source_label(pending.get("fx_source"), pending.get("fx_date"))
+
     ud = load_user(uid)
     pf = ud.get("portfolio", {})
     reset_syms = []
@@ -3626,6 +3812,9 @@ async def resetbaseline_callback(update, context):
         pf[sym]["buy"] = new_price
         pf[sym]["baseline_at"] = pending["baseline_at"]
         pf[sym]["baseline_source"] = "coingecko"
+        pf[sym]["baseline_fx"] = float(fx_saved)
+        pf[sym]["baseline_fx_source"] = pending.get("fx_source") or "unknown"
+        pf[sym]["baseline_fx_date"] = pending.get("fx_date")
         reset_syms.append(sym)
     ud["portfolio"] = pf
     save_user(uid, ud)
@@ -3641,6 +3830,7 @@ async def resetbaseline_callback(update, context):
         "✅ *BASELINE RESETTATA*",
         f"\n{len(reset_syms)} posizioni aggiornate: {', '.join(sorted(reset_syms)) if reset_syms else '-'}",
         f"Baseline impostata: `{ts_str}`",
+        f"Cambio EUR/USD salvato: `{float(fx_saved):.4f}` ({fx_label})",
         "\nIl P&L di queste posizioni riparte da 0% da questo momento.",
     ]
     await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
@@ -6610,7 +6800,7 @@ async def main():
         ("phase", cmd_phase), ("feargreed", cmd_feargreed), ("rsimacd", cmd_rsimacd),
         ("top", cmd_top), ("forex", cmd_forex), ("news", cmd_news),
         ("timeline", cmd_timeline), ("price", cmd_price),
-        ("portfolio", cmd_portfolio), ("reset", cmd_reset), ("resetbaseline", cmd_resetbaseline),
+        ("portfolio", cmd_portfolio), ("reset", cmd_reset), ("resetbaseline", cmd_resetbaseline), ("baselinefx", cmd_baselinefx),
         ("addcoin", cmd_addcoin), ("removecoin", cmd_removecoin),
         ("alert", cmd_alert), ("alerts", cmd_alerts),
         ("delalert", cmd_delalert), ("setup", cmd_setup),
